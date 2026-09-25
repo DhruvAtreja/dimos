@@ -37,9 +37,9 @@ from collections.abc import Callable
 from pathlib import Path
 from typing import Any
 
-from dimos.evals.agents.typesafe_policy import Box2D, load_scene
 from dimos.evals.environments.dimsim import DimSimEnvironment
 from dimos.evals.scorers import ramp
+from dimos.evals.suites.lib.nav_scene import Box2D, load_scene
 from dimos.evals.types import EvalCase, Outcome, Suite, recording
 
 SCENE = Path(__file__).parent / "scenes" / "apartment_detections.json"

@@ -20,9 +20,9 @@ from pathlib import Path
 import pytest
 
 from dimos.evals.agents.lib.trajectory_builder import TrajectoryBuilder
-from dimos.evals.agents.typesafe_policy import derive_goal_label, load_scene, scene_labels
 from dimos.evals.environments.habitat import HabitatEnvironment
 from dimos.evals.suites import typesafe_habitat_hm3d as hm3d, typesafe_habitat_hssd as hssd
+from dimos.evals.suites.lib.nav_scene import derive_goal_label, load_scene, scene_labels
 from dimos.evals.suites.typesafe_nav import positions, reached
 from dimos.evals.types import Outcome
 from dimos.memory.store.sqlite import SqliteStore

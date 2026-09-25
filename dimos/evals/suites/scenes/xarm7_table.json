@@ -1,0 +1,43 @@
+{
+  "frame_id": "world",
+  "source": "data/xarm7/scene.xml",
+  "units": "metres; +z is up",
+  "floor": {
+    "z": 0.0
+  },
+  "robot": {
+    "arm": "xArm7 with a two-finger gripper, fixed to a pedestal at the origin",
+    "base_xyz": [0.0, 0.0, 0.12],
+    "pedestal": {"shape": "cylinder", "radius_m": 0.06, "top_z": 0.12}
+  },
+  "table": {
+    "top_z": 0.13,
+    "min_xy": [0.30, -0.20],
+    "max_xy": [0.60, 0.20],
+    "legs": {"shape": "cylinder", "radius_m": 0.02, "at_xy": [[0.32, -0.18], [0.58, -0.18], [0.32, 0.18], [0.58, 0.18]]}
+  },
+  "objects": [
+    {
+      "label": "apple",
+      "aliases": ["red sphere", "ball"],
+      "shape": "sphere",
+      "radius_m": 0.04,
+      "start_xyz": [0.40, 0.08, 0.17]
+    },
+    {
+      "label": "orange",
+      "aliases": ["orange sphere"],
+      "shape": "sphere",
+      "radius_m": 0.045,
+      "start_xyz": [0.45, -0.08, 0.175]
+    },
+    {
+      "label": "cup",
+      "aliases": ["cylinder", "beige cylinder"],
+      "shape": "cylinder",
+      "radius_m": 0.035,
+      "height_m": 0.12,
+      "start_xyz": [0.50, 0.0, 0.19]
+    }
+  ]
+}

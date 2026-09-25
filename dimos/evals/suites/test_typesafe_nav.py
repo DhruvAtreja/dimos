@@ -22,8 +22,8 @@ from pathlib import Path
 import pytest
 
 from dimos.evals.agents.lib.trajectory_builder import TrajectoryBuilder
-from dimos.evals.agents.typesafe_policy import derive_goal_label, load_scene, scene_labels
 from dimos.evals.scorers import ramp
+from dimos.evals.suites.lib.nav_scene import derive_goal_label, load_scene, scene_labels
 from dimos.evals.suites.typesafe_nav import (
     ARRIVAL_BAND_M,
     CASES,

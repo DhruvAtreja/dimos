@@ -16,7 +16,7 @@
 Habitat scene file.
 
 A scene file is a ground-truth snapshot of the house in the layout
-``dimos.evals.agents.typesafe_policy.load_scene`` reads (labelled
+``dimos.evals.suites.lib.nav_scene.load_scene`` reads (labelled
 ``center_xyz`` / ``size_xyz`` boxes in the ROS world frame), the same one the
 Habitat navigation benchmark ships. The agent needs it as
 ``--set scene_json=<the same file>``.

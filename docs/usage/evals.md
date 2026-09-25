@@ -467,6 +467,15 @@ values, so a case can retune a module without a new blueprint.
 smoke, a lift and a move; `mujoco_xarm_pick_cylinder` is its one-question
 form with the viewer open.
 
+`dimos.evals.suites.typesafe_xarm` drives the same scene with the TypeSafe (Jev)
+policy, `dimos.evals.agents.typesafe_policy`, instead of an LLM agent. Each
+tick the policy sends Jev the end-effector pose, every object's position in the
+end-effector frame and the static scene file (`suites/scenes/xarm7_table.json`,
+the MuJoCo model transcribed: table, floor, objects); Jev picks one step along
+an end-effector axis, `open`, `close` or `stop`, and the policy runs it as one
+`move_to_pose` (wrist held pointing down) or `set_gripper` call. Needs
+`TYPESAFE_API_KEY`.
+
 ## Running
 
 - **CLI**: `dimos evals run <dotted.suite> --agent <agent-module> [--set model=gpt-4o] [--tags nav] [--limit 5]`
