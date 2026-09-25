@@ -16,6 +16,8 @@
 
 from __future__ import annotations
 
+import threading
+import time
 from types import SimpleNamespace
 import uuid
 
@@ -289,3 +291,29 @@ class TestConnect:
         a = ShmMujocoAdapter(dof=ARM_DOF, address="/fake/scene.xml")
         # SHM was never created — attach must time out.
         assert a.connect() is False
+
+    def test_connect_follows_buffers_recreated_after_a_stale_attach(self, shm_key, monkeypatch):
+        """A killed run leaves buffers behind; the sim module unlinks and recreates
+        them at start. An adapter that attached to the leftovers must end up on the
+        live set, not poll a dead ready flag until it times out."""
+        monkeypatch.setattr(adapter_mod, "shm_key_from_path", lambda _: shm_key)
+        monkeypatch.setattr(adapter_mod, "_READY_WAIT_TIMEOUT_S", 5.0)
+        monkeypatch.setattr(adapter_mod, "_READY_WAIT_POLL_S", 0.02)
+        monkeypatch.setattr(adapter_mod, "_READY_REATTACH_S", 0.1, raising=False)
+
+        stale = ManipShmWriter(shm_key)  # leftovers: exist, never signal ready
+        a = ShmMujocoAdapter(dof=ARM_DOF, address="/fake/scene.xml")
+        outcome: dict[str, bool] = {}
+        t = threading.Thread(target=lambda: outcome.__setitem__("ok", a.connect()))
+        t.start()
+        time.sleep(0.3)  # attached to the leftovers by now
+        fresh = ManipShmWriter(shm_key)  # the sim module starting: unlink + recreate
+        fresh.signal_ready(num_joints=ARM_DOF)
+        t.join(10.0)
+        try:
+            assert outcome.get("ok") is True
+            assert a.is_connected()
+        finally:
+            a.disconnect()
+            fresh.cleanup()
+            stale.cleanup()

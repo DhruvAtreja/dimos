@@ -39,6 +39,8 @@ _READY_WAIT_TIMEOUT_S = 60.0
 _READY_WAIT_POLL_S = 0.1
 _ATTACH_RETRY_TIMEOUT_S = 30.0
 _ATTACH_RETRY_POLL_S = 0.2
+# While waiting for ready, re-open the buffers this often (see connect()).
+_READY_REATTACH_S = 2.0
 
 
 class ShmMujocoAdapter:
@@ -73,30 +75,30 @@ class ShmMujocoAdapter:
         self._effort_mode_warned = False
 
     def connect(self) -> bool:
-        deadline = time.monotonic() + _ATTACH_RETRY_TIMEOUT_S
-        while True:
-            try:
-                self._shm = ManipShmReader(self._shm_key)
-                break
-            except FileNotFoundError:
-                if time.monotonic() > deadline:
-                    logger.error(
-                        "SHM buffers not found",
-                        address=self._address,
-                        shm_key=self._shm_key,
-                        timeout_s=_ATTACH_RETRY_TIMEOUT_S,
-                    )
-                    return False
-                time.sleep(_ATTACH_RETRY_POLL_S)
+        self._shm = self._attach(time.monotonic() + _ATTACH_RETRY_TIMEOUT_S)
+        if self._shm is None:
+            return False
 
         # Wait for sim module to signal ready.
         deadline = time.monotonic() + _READY_WAIT_TIMEOUT_S
+        reattach_at = time.monotonic() + _READY_REATTACH_S
         while not self._shm.is_ready():
-            if time.monotonic() > deadline:
+            now = time.monotonic()
+            if now > deadline:
                 logger.error("sim module not ready", timeout_s=_READY_WAIT_TIMEOUT_S)
                 self._shm.cleanup()
                 self._shm = None
                 return False
+            if now >= reattach_at:
+                # The sim module unlinks buffers left by a killed run and creates
+                # fresh ones when it starts. An attach that landed in between holds
+                # the dead set, whose ready flag never flips: re-open by name and
+                # follow the live one.
+                self._shm.cleanup()
+                self._shm = self._attach(deadline)
+                if self._shm is None:
+                    return False
+                reattach_at = now + _READY_REATTACH_S
             time.sleep(_READY_WAIT_POLL_S)
 
         if self._shm.num_joints() != self._dof:
@@ -121,6 +123,22 @@ class ShmMujocoAdapter:
             gripper_range=self._gripper_range if self._gripper_dof else None,
         )
         return True
+
+    def _attach(self, deadline: float) -> ManipShmReader | None:
+        """Open the sim module's buffers by name, retrying until ``deadline``."""
+        while True:
+            try:
+                return ManipShmReader(self._shm_key)
+            except FileNotFoundError:
+                if time.monotonic() > deadline:
+                    logger.error(
+                        "SHM buffers not found",
+                        address=self._address,
+                        shm_key=self._shm_key,
+                        timeout_s=_ATTACH_RETRY_TIMEOUT_S,
+                    )
+                    return None
+                time.sleep(_ATTACH_RETRY_POLL_S)
 
     def disconnect(self) -> None:
         try:
