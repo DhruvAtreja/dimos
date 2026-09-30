@@ -75,12 +75,11 @@ _FEEDBACK_DISCOVERY_TIMEOUT_S = 5.0
 R1PRO_UPPER_BODY_JOINTS: list[str] = [coordinator_name(j) for j in UPPER_BODY_JOINTS]
 assert len(R1PRO_UPPER_BODY_JOINTS) == _NUM_MOTORS
 
-# JPEG color streams: stream name → ROS topic.
+# JPEG color streams: stream name → ROS topic. Wrist colour is not here: the
+# blueprints read it straight off V4L2 (see ``wrist_cameras``).
 _COLOR_CAMERAS: dict[str, str] = {
     "head_left_color": "/hdas/camera_head/left_raw/image_raw_color/compressed",
     "head_right_color": "/hdas/camera_head/right_raw/image_raw_color/compressed",
-    "wrist_left_color": "/hdas/camera_wrist_left/color/image_raw/compressed",
-    "wrist_right_color": "/hdas/camera_wrist_right/color/image_raw/compressed",
 }
 
 # Raw-image depth streams, gated by config.enable_wrist_depth.
@@ -175,9 +174,7 @@ class R1ProConnection(Module):
     head_right_color: Out[CompressedImage]
     head_depth: Out[Image]
     lidar: Out[PointCloud2]
-    wrist_left_color: Out[CompressedImage]
     wrist_left_depth: Out[Image]
-    wrist_right_color: Out[CompressedImage]
     wrist_right_depth: Out[Image]
 
     def __init__(self, **kwargs: Any) -> None:

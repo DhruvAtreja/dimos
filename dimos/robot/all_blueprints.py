@@ -355,6 +355,7 @@ all_modules = {
     "twist-teleop-module": "dimos.teleop.webxr.extensions.TwistTeleopModule",
     "unitree-g1-skill-container": "dimos.robot.unitree.g1.skill_container.UnitreeG1SkillContainer",
     "unitree-skill-container": "dimos.robot.unitree.unitree_skill_container.UnitreeSkillContainer",
+    "v4-l2-camera-module": "dimos.hardware.sensors.camera.v4l2_camera.V4L2CameraModule",
     "video-arm-teleop-module": "dimos.teleop.webxr.extensions.VideoArmTeleopModule",
     "virtual-mid360": "dimos.hardware.sensors.lidar.virtual_mid360.module.VirtualMid360",
     "vlm-agent": "dimos.agents.vlm_agent.VLMAgent",
@@ -367,5 +368,7 @@ all_modules = {
     "world-belief-module": "dimos.experimental.world_belief.worldbelief_module.WorldBeliefModule",
     "world-belief-recorder": "dimos.experimental.world_belief.worldbelief_recorder.WorldBeliefRecorder",
     "wrist-camera": "dimos.teleop.hosted.blueprints.cloudflare.WristCamera",
+    "wrist-left-camera": "dimos.robot.galaxea.r1pro.wrist_cameras.WristLeftCamera",
+    "wrist-right-camera": "dimos.robot.galaxea.r1pro.wrist_cameras.WristRightCamera",
     "zed-camera": "dimos.hardware.sensors.camera.zed.camera.ZEDCamera",
 }

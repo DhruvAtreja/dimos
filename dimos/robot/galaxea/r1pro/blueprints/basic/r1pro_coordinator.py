@@ -45,6 +45,12 @@ from dimos.msgs.sensor_msgs.MotorCommandArray import MotorCommandArray
 from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
 from dimos.protocol.pubsub.impl.zenohpubsub import QOS_LATEST_WINS, Topic as ZenohTopic, Zenoh
 from dimos.robot.galaxea.r1pro.connection import R1PRO_UPPER_BODY_JOINTS, R1ProConnection
+from dimos.robot.galaxea.r1pro.wrist_cameras import (
+    WRIST_LEFT_V4L2,
+    WRIST_RIGHT_V4L2,
+    WristLeftCamera,
+    WristRightCamera,
+)
 from dimos.visualization.rerun.bridge import RerunBridgeModule
 from dimos.visualization.rerun.websocket_server import RerunWebSocketServer
 
@@ -162,7 +168,7 @@ def r1pro_control(
     *,
     tasks: Sequence[TaskConfig] | None = None,
 ) -> Blueprint:
-    """R1ProConnection and ControlCoordinator.
+    """R1ProConnection, ControlCoordinator and the wrist colour cameras.
 
     ``tasks`` overrides the default task set (whole-body trajectory + chassis
     velocity); transports and remappings stay identical either way.
@@ -184,6 +190,8 @@ def r1pro_control(
     return (
         autoconnect(
             R1ProConnection.blueprint(),
+            WristLeftCamera.blueprint(device=WRIST_LEFT_V4L2, frame_id="wrist_left_optical"),
+            WristRightCamera.blueprint(device=WRIST_RIGHT_V4L2, frame_id="wrist_right_optical"),
             ControlCoordinator.blueprint(
                 tick_rate=100,
                 hardware=[
@@ -208,6 +216,8 @@ def r1pro_control(
             [
                 (R1ProConnection, "cmd_vel", "chassis_cmd_vel"),
                 (R1ProConnection, "odom", "chassis_odom"),
+                (WristLeftCamera, "image_out", "wrist_left_color"),
+                (WristRightCamera, "image_out", "wrist_right_color"),
             ]
         )
         .transports(
@@ -240,14 +250,14 @@ def r1pro_control(
                 ),
                 ("head_depth", Image): _zenoh_transport("/head_depth", Image, latest_wins=True),
                 ("lidar", PointCloud2): _zenoh_transport("/lidar", PointCloud2, latest_wins=True),
-                ("wrist_left_color", CompressedImage): _zenoh_transport(
-                    "/wrist_left_color", CompressedImage, latest_wins=True
+                ("wrist_left_color", Image): _zenoh_transport(
+                    "/wrist_left_color", Image, latest_wins=True
                 ),
                 ("wrist_left_depth", Image): _zenoh_transport(
                     "/wrist_left_depth", Image, latest_wins=True
                 ),
-                ("wrist_right_color", CompressedImage): _zenoh_transport(
-                    "/wrist_right_color", CompressedImage, latest_wins=True
+                ("wrist_right_color", Image): _zenoh_transport(
+                    "/wrist_right_color", Image, latest_wins=True
                 ),
                 ("wrist_right_depth", Image): _zenoh_transport(
                     "/wrist_right_depth", Image, latest_wins=True
