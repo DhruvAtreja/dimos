@@ -31,7 +31,9 @@ holding the cameras; while it is, these modules log and retry.
 
 from __future__ import annotations
 
+from dimos.core.core import rpc
 from dimos.hardware.sensors.camera.v4l2_camera import V4L2CameraModule
+from dimos.robot.galaxea.r1pro.head_trigger import trigger_head_cameras
 
 # The VI port numbers are fixed by the device tree, so by-path pins each eye to
 # its GMSL link however the nodes are numbered.
@@ -48,8 +50,14 @@ HEAD_FOURCC = "UYVY"
 # Distinct classes only because blueprints can't yet run two instances of one
 # module (same reason as the wrist cameras).
 class HeadLeftCamera(V4L2CameraModule):
-    pass
+    @rpc
+    def start(self) -> None:
+        trigger_head_cameras(int(HEAD_FPS))
+        super().start()
 
 
 class HeadRightCamera(V4L2CameraModule):
-    pass
+    @rpc
+    def start(self) -> None:
+        trigger_head_cameras(int(HEAD_FPS))
+        super().start()
