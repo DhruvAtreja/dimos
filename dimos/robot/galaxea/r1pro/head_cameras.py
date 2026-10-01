@@ -62,14 +62,12 @@ _TRIGGER_LINKS = 0x0F
 # throwaway interpreter: the SDK leaves a reader thread behind, and its destructor crashes on
 # cameras it never opened.
 _TRIGGER_SCRIPT = """
-import ctypes, os, sys, time
+import ctypes, sys
 class Config(ctypes.Structure):
     _fields_ = [(name, ctypes.c_uint8) for name in ("sync_camera_num", "sync_freq", "sync_camera_bit_draw", "async_camera_num", "async_freq", "async_camera_bit_draw")] + [("async_camera_pos", ctypes.c_uint8 * 8)]
 sdk, links, hz = sys.argv[1], int(sys.argv[2]), int(sys.argv[3])
 camera = ctypes.create_string_buffer(1 << 16)
 ctypes.CDLL(sdk)._ZN6miivii12MvGmslCameraC1E23sync_out_a_cfg_client_t(camera, Config(bin(links).count("1"), hz, links))
-time.sleep(1)
-os._exit(0)
 """
 
 
