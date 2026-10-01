@@ -267,6 +267,8 @@ all_modules = {
     "gstreamer-camera-module": "dimos.hardware.sensors.camera.gstreamer.gstreamer_camera.GstreamerCameraModule",
     "habitat-connection": "dimos.simulation.habitat.connection.HabitatConnection",
     "hand-teleop-module": "dimos.teleop.webxr.extensions.HandTeleopModule",
+    "head-left-camera": "dimos.robot.galaxea.r1pro.head_cameras.HeadLeftCamera",
+    "head-right-camera": "dimos.robot.galaxea.r1pro.head_cameras.HeadRightCamera",
     "heuristic-grasp-module": "dimos.manipulation.grasping.heuristic_grasp.HeuristicGraspModule",
     "hosted-stats-module": "dimos.teleop.hosted.hosted_stats.HostedStatsModule",
     "joint-trajectory-controller": "dimos.manipulation.control.trajectory_controller.joint_trajectory_controller.JointTrajectoryController",

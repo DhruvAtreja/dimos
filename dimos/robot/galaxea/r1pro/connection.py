@@ -52,7 +52,6 @@ from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
 from dimos.msgs.geometry_msgs.Transform import Transform
 from dimos.msgs.geometry_msgs.Twist import Twist
 from dimos.msgs.nav_msgs.Odometry import Odometry
-from dimos.msgs.sensor_msgs.CompressedImage import CompressedImage
 from dimos.msgs.sensor_msgs.Image import Image
 from dimos.msgs.sensor_msgs.Imu import Imu
 from dimos.msgs.sensor_msgs.JointState import JointState
@@ -74,14 +73,6 @@ _FEEDBACK_DISCOVERY_TIMEOUT_S = 5.0
 
 R1PRO_UPPER_BODY_JOINTS: list[str] = [coordinator_name(j) for j in UPPER_BODY_JOINTS]
 assert len(R1PRO_UPPER_BODY_JOINTS) == _NUM_MOTORS
-
-# JPEG color streams: stream name → ROS topic. The wrist cameras are not here:
-# the blueprints read their colour and depth straight off V4L2 (see
-# ``wrist_cameras``).
-_COLOR_CAMERAS: dict[str, str] = {
-    "head_left_color": "/hdas/camera_head/left_raw/image_raw_color/compressed",
-    "head_right_color": "/hdas/camera_head/right_raw/image_raw_color/compressed",
-}
 
 _HEAD_DEPTH_TOPIC = "/hdas/camera_head/depth/depth_registered"
 _LIDAR_TOPIC = "/hdas/lidar_chassis_left"
@@ -137,8 +128,6 @@ class R1ProConnectionConfig(ModuleConfig):
     lidar_frame_id: str = Field(default="lidar_chassis_left_link")
     # Seconds between per-stream sensor-stats log lines (0 disables).
     sensor_stats_interval_s: float = Field(default=10.0)
-    # Max Hz per color camera (0 = no cap).
-    color_publish_hz: float = Field(default=5.0)
 
 
 class R1ProConnection(Module):
@@ -163,8 +152,6 @@ class R1ProConnection(Module):
     tf: Out[TFMessage]
 
     # Perception.
-    head_left_color: Out[CompressedImage]
-    head_right_color: Out[CompressedImage]
     head_depth: Out[Image]
     lidar: Out[PointCloud2]
 
@@ -355,7 +342,6 @@ class R1ProConnection(Module):
     def _setup_sensor_streams(self) -> None:
         try:
             from sensor_msgs.msg import (
-                CompressedImage as RosCompressedImage,
                 Image as RosImage,
                 Imu as RosImu,
                 PointCloud2 as RosPointCloud2,
@@ -389,9 +375,6 @@ class R1ProConnection(Module):
             self._sensor_workers.append(
                 Thread(target=worker, args=(stream, q, *args), daemon=True, name=f"r1pro-{stream}")
             )
-
-        for stream, topic in _COLOR_CAMERAS.items():
-            add_stream(stream, topic, RosCompressedImage, self._compressed_image_loop)
 
         add_stream("head_depth", _HEAD_DEPTH_TOPIC, RosImage, self._convert_loop, Image)
         add_stream("lidar", _LIDAR_TOPIC, RosPointCloud2, self._convert_loop, PointCloud2)
@@ -695,38 +678,6 @@ class R1ProConnection(Module):
                 next_tick = time.perf_counter()
 
     # Sensor workers
-
-    def _compressed_image_loop(self, stream: str, q: queue.Queue[Any]) -> None:
-        out: Out[CompressedImage] = getattr(self, stream)
-        hz = self.config.color_publish_hz
-        min_period = 1.0 / hz if hz > 0 else 0.0
-        last_pub = 0.0
-        while not self._sensor_stop.is_set():
-            try:
-                msg = q.get(timeout=0.5)
-            except queue.Empty:
-                continue
-            if msg is None:
-                break
-            t0 = time.perf_counter()
-            if min_period > 0.0 and t0 - last_pub < min_period:
-                continue
-            last_pub = t0
-            try:
-                stamp = msg.header.stamp
-                ts = stamp.sec + stamp.nanosec * 1e-9
-                out.publish(
-                    CompressedImage(
-                        data=bytes(msg.data),
-                        format="jpeg",
-                        frame_id=msg.header.frame_id or stream,
-                        ts=ts if ts > 0 else time.time(),
-                    )
-                )
-                self._record_decode(stream, (time.perf_counter() - t0) * 1e3, ok=True)
-            except Exception:
-                self._record_decode(stream, (time.perf_counter() - t0) * 1e3, ok=False)
-                logger.exception(f"R1Pro {stream} conversion error")
 
     def _convert_loop(self, stream: str, q: queue.Queue[Any], dimos_type: type) -> None:
         """ros_to_dimos passthrough worker (depth images, lidar)."""

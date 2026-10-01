@@ -37,7 +37,6 @@ from dimos.core.transport import ZenohTransport
 from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
 from dimos.msgs.geometry_msgs.Twist import Twist
 from dimos.msgs.nav_msgs.Odometry import Odometry
-from dimos.msgs.sensor_msgs.CompressedImage import CompressedImage
 from dimos.msgs.sensor_msgs.Image import Image
 from dimos.msgs.sensor_msgs.Imu import Imu
 from dimos.msgs.sensor_msgs.JointState import JointState
@@ -45,6 +44,16 @@ from dimos.msgs.sensor_msgs.MotorCommandArray import MotorCommandArray
 from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
 from dimos.protocol.pubsub.impl.zenohpubsub import QOS_LATEST_WINS, Topic as ZenohTopic, Zenoh
 from dimos.robot.galaxea.r1pro.connection import R1PRO_UPPER_BODY_JOINTS, R1ProConnection
+from dimos.robot.galaxea.r1pro.head_cameras import (
+    HEAD_FOURCC,
+    HEAD_FPS,
+    HEAD_HEIGHT,
+    HEAD_LEFT_V4L2,
+    HEAD_RIGHT_V4L2,
+    HEAD_WIDTH,
+    HeadLeftCamera,
+    HeadRightCamera,
+)
 from dimos.robot.galaxea.r1pro.wrist_cameras import (
     WRIST_LEFT_COLOR_V4L2,
     WRIST_LEFT_DEPTH_V4L2,
@@ -168,6 +177,15 @@ def _zenoh_transport(
     )
 
 
+def _head_cameras() -> list[Blueprint]:
+    """Both head eyes at the sensor's one real mode; see ``head_cameras``."""
+    mode = {"width": HEAD_WIDTH, "height": HEAD_HEIGHT, "fps": HEAD_FPS, "fourcc": HEAD_FOURCC}
+    return [
+        HeadLeftCamera.blueprint(device=HEAD_LEFT_V4L2, frame_id="head_left_optical", **mode),
+        HeadRightCamera.blueprint(device=HEAD_RIGHT_V4L2, frame_id="head_right_optical", **mode),
+    ]
+
+
 def _wrist_cameras(depth: bool) -> list[Blueprint]:
     """Wrist colour at 848x480, or colour 640x480 + depth 848x480 per wrist.
 
@@ -202,7 +220,7 @@ def r1pro_control(
     tasks: Sequence[TaskConfig] | None = None,
     wrist_depth: bool = False,
 ) -> Blueprint:
-    """R1ProConnection, ControlCoordinator and the wrist cameras.
+    """R1ProConnection, ControlCoordinator and the head and wrist cameras.
 
     ``tasks`` overrides the default task set (whole-body trajectory + chassis
     velocity); transports and remappings stay identical either way.
@@ -226,6 +244,7 @@ def r1pro_control(
     return (
         autoconnect(
             R1ProConnection.blueprint(),
+            *_head_cameras(),
             *_wrist_cameras(wrist_depth),
             ControlCoordinator.blueprint(
                 tick_rate=100,
@@ -251,6 +270,8 @@ def r1pro_control(
             [
                 (R1ProConnection, "cmd_vel", "chassis_cmd_vel"),
                 (R1ProConnection, "odom", "chassis_odom"),
+                (HeadLeftCamera, "image_out", "head_left_color"),
+                (HeadRightCamera, "image_out", "head_right_color"),
                 (WristLeftCamera, "image_out", "wrist_left_color"),
                 (WristRightCamera, "image_out", "wrist_right_color"),
                 (WristLeftColorDepth, "color_out", "wrist_left_color"),
@@ -281,11 +302,11 @@ def r1pro_control(
                 ("cmd_vel", Twist): _zenoh_transport("/cmd_vel", Twist),
                 ("twist_command", Twist): _zenoh_transport("/cmd_vel", Twist),
                 # Sensor pass-throughs.
-                ("head_left_color", CompressedImage): _zenoh_transport(
-                    "/head_left_color", CompressedImage, latest_wins=True
+                ("head_left_color", Image): _zenoh_transport(
+                    "/head_left_color", Image, latest_wins=True
                 ),
-                ("head_right_color", CompressedImage): _zenoh_transport(
-                    "/head_right_color", CompressedImage, latest_wins=True
+                ("head_right_color", Image): _zenoh_transport(
+                    "/head_right_color", Image, latest_wins=True
                 ),
                 ("head_depth", Image): _zenoh_transport("/head_depth", Image, latest_wins=True),
                 ("lidar", PointCloud2): _zenoh_transport("/lidar", PointCloud2, latest_wins=True),

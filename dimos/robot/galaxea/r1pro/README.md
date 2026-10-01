@@ -118,6 +118,39 @@ dimos run r1pro-manipulation \
   --wristrightcolordepth.fps 15
 ```
 
+## Head cameras
+
+The head is a stereo pair of GMSL2 cameras (SENSING SG3S-ISX031C-GMSL2F, a
+Sony ISX031 with its own ISP) behind a MAX96724 deserializer on the Jetson. It
+is not a ZED and gives no depth. dimos reads both eyes straight off V4L2, as it
+does the wrists, not through Galaxea's `signal_camera` node.
+
+**Stop Galaxea's head camera driver first.** It starts at boot and holds both
+cameras. It runs in the `hdas` tmux session, in the pane running
+`start_signal_camera_head.sh`. Press Ctrl-C there, or:
+
+```bash
+tmux send-keys -t hdas:1.2 C-c   # pane index as found on our robot; check with tmux list-panes -a
+```
+
+To give the cameras back to it, run `./start_signal_camera_head.sh` in that
+pane.
+
+| Eye | Device | Topic | Frame id |
+| --- | --- | --- | --- |
+| left | `/dev/v4l/by-path/platform-tegra-capture-vi-video-index0` | `head_left_color` | `head_left_optical` |
+| right | `/dev/v4l/by-path/platform-tegra-capture-vi-video-index10` | `head_right_color` | `head_right_optical` |
+
+Both run at 1920x1536 UYVY @ 30 fps, published as BGR `Image`. That is the
+sensor's only real mode: the driver also lists smaller sizes and 60 fps, but a
+smaller size is a corrupted crop and 60 fps still delivers 30. The viewer
+shows each eye at 5 Hz.
+
+Galaxea's stereo calibration for this mode is on the robot in
+`/opt/galaxea/body/stereo.yaml` (intrinsics, extrinsics, rectification;
+120 mm baseline), and each eye's intrinsics are also published on
+`/calib/head_{left,right}/camera_info`.
+
 ## Blueprints
 
 ```bash
