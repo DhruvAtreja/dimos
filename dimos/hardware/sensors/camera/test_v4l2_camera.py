@@ -14,6 +14,7 @@
 
 from __future__ import annotations
 
+import time
 from types import SimpleNamespace
 from typing import Any, cast
 from unittest.mock import MagicMock
@@ -22,7 +23,11 @@ import numpy as np
 import pytest
 
 from dimos.core.module import Module
-from dimos.hardware.sensors.camera.v4l2_camera import V4L2CameraModule, capture_source
+from dimos.hardware.sensors.camera.v4l2_camera import (
+    CaptureClock,
+    V4L2CameraModule,
+    capture_source,
+)
 from dimos.msgs.sensor_msgs.Image import ImageFormat
 
 
@@ -133,3 +138,37 @@ def test_device_held_by_another_process_does_not_raise(module: V4L2CameraModule)
     assert module._open(_fake_cv2(cap)) is None
     assert cap.released
     assert _published(module).call_count == 0
+
+
+def test_capture_clock_keeps_the_spacing_of_driver_stamps() -> None:
+    """Delivery jitter must not leak into the stamps: the fastest read sets the offset."""
+    clock = CaptureClock()
+    wall = 1000.0  # wall clock minus CLOCK_MONOTONIC, s
+    # Driver clock 14 s ahead of CLOCK_MONOTONIC; frames delivered 9, 4, 7 ms late.
+    stamps = [
+        clock.stamp(capture, capture - 14.0 + delay, wall)
+        for capture, delay in ((100.0, 0.009), (100.0 + 1 / 30, 0.004), (100.0 + 2 / 30, 0.007))
+    ]
+
+    assert stamps[2] - stamps[1] == pytest.approx(1 / 30)
+    assert stamps[2] == pytest.approx(100.0 + 2 / 30 - 14.0 + 0.004 + wall)
+
+
+def test_frames_carry_the_driver_capture_time(module: V4L2CameraModule) -> None:
+    """Frames are spaced as the driver captured them, not as they were read."""
+    captured_ms: list[float] = []
+
+    class _StampedCapture(_FakeCapture):
+        def read(self) -> tuple[bool, np.ndarray[Any, Any] | None]:
+            time.sleep(1 / 30)
+            # Driver clock 14 s ahead of CLOCK_MONOTONIC; delivered 4 ms, then 9 ms late.
+            delay_s = 0.004 if not captured_ms else 0.009
+            self.props[0] = (time.monotonic() + 14.0 - delay_s) * 1e3  # CAP_PROP_POS_MSEC
+            captured_ms.append(self.props[0])
+            return super().read()
+
+    module._pump(_StampedCapture(reads=[True, True, False, False, False]))
+
+    first, second = (call[0][0].ts for call in _published(module).call_args_list)
+    assert second - first == pytest.approx((captured_ms[1] - captured_ms[0]) / 1e3, abs=1e-6)
+    assert second == pytest.approx(time.time(), abs=1.0)

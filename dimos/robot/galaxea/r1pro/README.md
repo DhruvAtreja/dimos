@@ -146,6 +146,13 @@ sensor's only real mode: the driver also lists smaller sizes and 60 fps, but a
 smaller size is a corrupted crop and 60 fps still delivers 30. The viewer
 shows each eye at 5 Hz.
 
+Each frame is stamped with the driver's capture time, so stamps are spaced
+exactly 1/30 s apart. The two eyes are not hardware-synchronised: each runs
+off its own clock, so one eye leads the other by anywhere from 0 to 16.7 ms
+and the gap drifts over minutes and changes when the cameras restart (5.7 ms,
+then 9.7 ms, on our robot). A stereo consumer should pair frames by stamp
+and allow for that gap. Both sensors are rolling shutter.
+
 Galaxea's stereo calibration for this mode is on the robot in
 `/opt/galaxea/body/stereo.yaml` (intrinsics, extrinsics, rectification;
 120 mm baseline), and each eye's intrinsics are also published on

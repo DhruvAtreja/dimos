@@ -56,6 +56,39 @@ def capture_source(device: str) -> int | str:
     return int(match.group(1)) if match else device
 
 
+# cv2.CAP_PROP_POS_MSEC: on the V4L2 backend, the driver's capture timestamp of
+# the frame last read, in milliseconds.
+_CAP_PROP_POS_MSEC = 0
+
+
+class CaptureClock:
+    """Turns a driver's capture timestamps into wall-clock time.
+
+    V4L2 stamps each frame when it is captured, on a clock the driver picks:
+    CLOCK_MONOTONIC for uvcvideo, a counter about 14 s ahead of it for the
+    Jetson's GMSL capture. The offset to CLOCK_MONOTONIC is taken as the
+    smallest gap seen between a frame's stamp and the moment it was read, so
+    stamps are exact relative to each other and late by at most the shortest
+    delivery delay. Use one clock per open device; a reopen may change clocks.
+    """
+
+    def __init__(self) -> None:
+        self._offset_s: float | None = None
+
+    def stamp(
+        self, capture_s: float, read_monotonic_s: float, wall_minus_monotonic_s: float
+    ) -> float:
+        """Wall-clock time (s) of a frame captured at ``capture_s`` on the driver clock.
+
+        ``read_monotonic_s`` is CLOCK_MONOTONIC (s) when the frame was read;
+        ``wall_minus_monotonic_s`` is ``time.time() - time.monotonic()`` now.
+        """
+        lag = read_monotonic_s - capture_s
+        if self._offset_s is None or lag < self._offset_s:
+            self._offset_s = lag
+        return capture_s + self._offset_s + wall_minus_monotonic_s
+
+
 class V4L2CameraConfig(ModuleConfig):
     # /dev/videoN, or better a /dev/v4l/by-path link, which pins the camera to
     # its USB port and survives the nodes being renumbered after a re-plug.
@@ -160,6 +193,7 @@ class V4L2CameraModule(Module):
     def _pump(self, cap: Any) -> None:
         """Read and publish until stopped or the device goes quiet."""
         missed = 0
+        clock = CaptureClock()
         # Publish is synchronous through every in-process subscriber, so its
         # duration is the cost of the whole chain hanging off this camera.
         frames = 0
@@ -175,13 +209,21 @@ class V4L2CameraModule(Module):
                     return
                 continue
             missed = 0
+            read_s = time.monotonic()
+            capture_ms = cap.get(_CAP_PROP_POS_MSEC)
+            # A backend without capture timestamps reports 0; stamp on arrival.
+            ts = (
+                clock.stamp(capture_ms / 1e3, read_s, time.time() - time.monotonic())
+                if capture_ms > 0
+                else time.time()
+            )
             t0 = time.perf_counter()
             self.image_out.publish(
                 Image.from_numpy(
                     frame,
                     format=ImageFormat.BGR,
                     frame_id=self.config.frame_id,
-                    ts=time.time(),
+                    ts=ts,
                 )
             )
             dt = time.perf_counter() - t0
