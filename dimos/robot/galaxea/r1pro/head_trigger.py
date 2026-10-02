@@ -66,7 +66,10 @@ def trigger_head_cameras(hz: int) -> None:
     if not os.path.exists(MIIVII_GMSL_SDK):
         logger.warning("no MIIVII GMSL SDK at %s; head cameras stay free-running", MIIVII_GMSL_SDK)
         return
-    subprocess.run([sys.executable, "-m", __name__, str(hz)], check=True, timeout=10)
+    try:
+        subprocess.run([sys.executable, "-m", __name__, str(hz)], check=True, timeout=10)
+    except (subprocess.CalledProcessError, subprocess.TimeoutExpired) as error:
+        logger.warning("head camera trigger not set (%s); head cameras stay free-running", error)
 
 
 if __name__ == "__main__":
