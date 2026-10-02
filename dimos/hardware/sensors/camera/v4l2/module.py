@@ -22,6 +22,7 @@ reopened on any failure, so a camera held by another process logs and waits.
 
 from __future__ import annotations
 
+from pathlib import Path
 from typing import TYPE_CHECKING
 
 from pydantic import Field
@@ -33,7 +34,8 @@ from dimos.msgs.sensor_msgs.CompressedImage import CompressedImage
 
 
 class V4L2CameraConfig(NativeModuleConfig):
-    cwd: str | None = "rust"
+    # Absolute: a relative cwd resolves against the concrete subclass's file, wherever that lives.
+    cwd: str | None = str(Path(__file__).parent / "rust")
     executable: str = str(DIMOS_PROJECT_ROOT / "target" / "release" / "v4l2_camera")
     build_command: str | None = "cargo build --release"
     stdin_config: bool = True
