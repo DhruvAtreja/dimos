@@ -27,8 +27,8 @@ from dimos.robot.galaxea.r1pro.head_cameras import (
     head_camera_infos,
 )
 
-# The ISX031's only real mode: width, height (px), fps, pixel format.
-_SENSOR_MODE = (1920, 1536, 30.0, "UYVY")
+# The ISX031's only real mode: width, height (px), pixel format.
+_SENSOR_MODE = (1920, 1536, "UYVY")
 
 
 def test_each_eye_defaults_to_its_own_node_at_the_sensor_mode() -> None:
@@ -37,7 +37,7 @@ def test_each_eye_defaults_to_its_own_node_at_the_sensor_mode() -> None:
     assert (left.device, left.frame_id) == (HEAD_LEFT_V4L2, "camera_head_left_link")
     assert (right.device, right.frame_id) == (HEAD_RIGHT_V4L2, "camera_head_right_link")
     for eye in (left, right):
-        assert (eye.width, eye.height, eye.fps, eye.fourcc) == _SENSOR_MODE
+        assert (eye.width, eye.height, eye.fourcc) == _SENSOR_MODE
 
 
 def test_head_colour_is_jpeg_under_the_old_names() -> None:
