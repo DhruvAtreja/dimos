@@ -28,8 +28,15 @@ the blueprint down with it.
 
 from __future__ import annotations
 
+from collections.abc import Callable
+import ctypes
+import functools
+import mmap
 import os
+import platform
 import re
+import struct
+import sys
 import threading
 import time
 from typing import Any
@@ -37,6 +44,7 @@ from typing import Any
 from dimos.core.core import rpc
 from dimos.core.module import Module, ModuleConfig
 from dimos.core.stream import Out
+from dimos.msgs.sensor_msgs.CompressedImage import CompressedImage
 from dimos.msgs.sensor_msgs.Image import Image, ImageFormat
 from dimos.utils.logging_config import setup_logger
 
@@ -61,32 +69,72 @@ def capture_source(device: str) -> int | str:
 _CAP_PROP_POS_MSEC = 0
 
 
-class CaptureClock:
-    """Turns a driver's capture timestamps into wall-clock time.
+@functools.cache
+def _soc_counter_reader() -> Callable[[], float] | None:
+    """Seconds on the ARM generic timer (CNTVCT_EL0), or None off Linux on 64-bit ARM.
 
-    V4L2 stamps each frame when it is captured, on a clock the driver picks:
-    CLOCK_MONOTONIC for uvcvideo, a counter about 14 s ahead of it for the
-    Jetson's GMSL capture. The offset to CLOCK_MONOTONIC is taken as the
-    smallest gap seen between a frame's stamp and the moment it was read, so
-    stamps are exact relative to each other and late by at most the shortest
-    delivery delay. Use one clock per open device; a reopen may change clocks.
+    Python cannot issue ``mrs``, so this maps two four-instruction routines into an
+    executable page and calls them through ctypes; making the page executable has the
+    kernel sync the instruction cache.
+    """
+    if sys.platform != "linux" or platform.machine() != "aarch64":
+        return None
+    isb, ret = 0xD5033FDF, 0xD65F03C0
+    read_counter = (isb, 0xD53BE040, ret, 0)  # mrs x0, cntvct_el0
+    read_frequency = (isb, 0xD53BE000, ret, 0)  # mrs x0, cntfrq_el0
+    page = mmap.mmap(-1, mmap.PAGESIZE, prot=mmap.PROT_READ | mmap.PROT_WRITE)
+    page.write(struct.pack("<8I", *read_counter, *read_frequency))
+    address = ctypes.addressof(ctypes.c_char.from_buffer(page))
+    libc = ctypes.CDLL(None, use_errno=True)
+    if libc.mprotect(ctypes.c_void_p(address), mmap.PAGESIZE, mmap.PROT_READ | mmap.PROT_EXEC):
+        return None
+    routine = ctypes.CFUNCTYPE(ctypes.c_uint64)
+    counter, frequency = routine(address), routine(address + 16)
+    hz = float(frequency())
+    _soc_counter_reader.page = page  # type: ignore[attr-defined]  # keep the code mapped
+    return lambda: counter() / hz
+
+
+def _driver_clocks() -> list[Callable[[], float]]:
+    """Clocks a V4L2 driver may stamp frames on, as readers of now in seconds."""
+    soc_counter = _soc_counter_reader()
+    return [time.monotonic, *([soc_counter] if soc_counter else [])]
+
+
+class CaptureClock:
+    """Turns a driver's capture timestamps into wall-clock time, exactly.
+
+    V4L2 stamps each frame on a clock the driver picks: CLOCK_MONOTONIC for uvcvideo,
+    the SoC counter (about 14 s ahead) for the Jetson's GMSL capture, though its buffers
+    claim CLOCK_MONOTONIC. The first frame picks whichever clock reads within a second
+    after its stamp; each stamp is then moved onto the wall clock by that clock's offset,
+    re-read per frame between two reads of the clock and kept only when nothing ran in
+    between. Use one per open device; a reopen may change clocks.
     """
 
-    def __init__(self) -> None:
-        self._offset_s: float | None = None
+    # Longest gap between the two clock reads around the wall read for that offset to be trusted.
+    _MAX_BRACKET_S = 1e-4
 
-    def stamp(
-        self, capture_s: float, read_monotonic_s: float, wall_minus_monotonic_s: float
-    ) -> float:
-        """Wall-clock time (s) of a frame captured at ``capture_s`` on the driver clock.
+    def __init__(
+        self,
+        clocks: list[Callable[[], float]] | None = None,
+        wall: Callable[[], float] = time.time,
+    ) -> None:
+        self._clocks = _driver_clocks() if clocks is None else clocks
+        self._wall = wall
+        self._clock: Callable[[], float] | None = None
+        self._wall_minus_clock_s: float | None = None
 
-        ``read_monotonic_s`` is CLOCK_MONOTONIC (s) when the frame was read;
-        ``wall_minus_monotonic_s`` is ``time.time() - time.monotonic()`` now.
-        """
-        lag = read_monotonic_s - capture_s
-        if self._offset_s is None or lag < self._offset_s:
-            self._offset_s = lag
-        return capture_s + self._offset_s + wall_minus_monotonic_s
+    def stamp(self, capture_s: float) -> float | None:
+        """Wall-clock time (s) of a frame captured at ``capture_s``; None if no known clock matches."""
+        if self._clock is None:
+            self._clock = next((c for c in self._clocks if 0.0 <= c() - capture_s < 1.0), None)
+            if self._clock is None:
+                return None
+        before, wall, after = self._clock(), self._wall(), self._clock()
+        if self._wall_minus_clock_s is None or after - before < self._MAX_BRACKET_S:
+            self._wall_minus_clock_s = wall - (before + after) / 2
+        return capture_s + self._wall_minus_clock_s
 
 
 class V4L2CameraConfig(ModuleConfig):
@@ -105,14 +153,17 @@ class V4L2CameraConfig(ModuleConfig):
     max_missed_reads: int = 30
     # Log capture rate and publish cost this often; 0 disables.
     stats_period_s: float = 10.0
+    # JPEG quality (1-100) to publish frames compressed on jpeg_out; None publishes raw on image_out.
+    jpeg_quality: int | None = None
 
 
 class V4L2CameraModule(Module):
-    """Publish a UVC camera's colour stream as ``Image`` frames."""
+    """Publish a UVC camera's colour stream as raw ``Image`` frames, or as JPEG when ``jpeg_quality`` is set."""
 
     config: V4L2CameraConfig
 
     image_out: Out[Image]
+    jpeg_out: Out[CompressedImage]
 
     def __init__(self, **kwargs: Any) -> None:
         super().__init__(**kwargs)
@@ -138,8 +189,6 @@ class V4L2CameraModule(Module):
             self._thread.join(timeout=2.0)
             self._thread = None
         super().stop()
-
-    # ─── capture ────────────────────────────────────────────────────────
 
     def _run(self) -> None:
         import cv2
@@ -209,23 +258,19 @@ class V4L2CameraModule(Module):
                     return
                 continue
             missed = 0
-            read_s = time.monotonic()
             capture_ms = cap.get(_CAP_PROP_POS_MSEC)
-            # A backend without capture timestamps reports 0; stamp on arrival.
-            ts = (
-                clock.stamp(capture_ms / 1e3, read_s, time.time() - time.monotonic())
-                if capture_ms > 0
-                else time.time()
-            )
+            # A backend without capture timestamps reports 0, or one on an unknown clock; stamp on arrival.
+            ts = (clock.stamp(capture_ms / 1e3) if capture_ms > 0 else None) or time.time()
             t0 = time.perf_counter()
-            self.image_out.publish(
-                Image.from_numpy(
-                    frame,
-                    format=ImageFormat.BGR,
-                    frame_id=self.config.frame_id,
-                    ts=ts,
-                )
+            image = Image.from_numpy(
+                frame, format=ImageFormat.BGR, frame_id=self.config.frame_id, ts=ts
             )
+            if self.config.jpeg_quality is None:
+                self.image_out.publish(image)
+            else:
+                self.jpeg_out.publish(
+                    CompressedImage.from_image(image, quality=self.config.jpeg_quality)
+                )
             dt = time.perf_counter() - t0
             frames += 1
             publish_s += dt

@@ -54,11 +54,13 @@ def module(monkeypatch: pytest.MonkeyPatch) -> V4L2CameraModule:
             retry_s=0.0,
             max_missed_reads=3,
             stats_period_s=0.0,
+            jpeg_quality=None,
         )
 
     monkeypatch.setattr(Module, "__init__", _fake_init)
     module = V4L2CameraModule()
     module.image_out = MagicMock()
+    module.jpeg_out = MagicMock()
     return module
 
 
@@ -123,6 +125,20 @@ def test_frames_are_published_as_bgr_images(module: V4L2CameraModule) -> None:
     assert image.frame_id == "wrist_left_optical"
 
 
+def test_frames_are_published_as_jpeg_at_the_configured_quality(module: V4L2CameraModule) -> None:
+    module.config.jpeg_quality = 90
+    cap = _FakeCapture(reads=[True, True, False, False, False])
+
+    module._pump(cap)
+
+    assert _published(module).call_count == 0
+    jpegs = [call[0][0] for call in cast("MagicMock", module.jpeg_out.publish).call_args_list]
+    assert len(jpegs) == 2
+    assert jpegs[0].format == "jpeg" and jpegs[0].frame_id == "wrist_left_optical"
+    decoded = jpegs[0].decode()
+    assert (decoded.width, decoded.height) == (848, 480)
+
+
 def test_a_missed_read_between_frames_is_tolerated(module: V4L2CameraModule) -> None:
     cap = _FakeCapture(reads=[True, False, True, False, False, False])
 
@@ -140,35 +156,43 @@ def test_device_held_by_another_process_does_not_raise(module: V4L2CameraModule)
     assert _published(module).call_count == 0
 
 
-def test_capture_clock_keeps_the_spacing_of_driver_stamps() -> None:
-    """Delivery jitter must not leak into the stamps: the fastest read sets the offset."""
-    clock = CaptureClock()
-    wall = 1000.0  # wall clock minus CLOCK_MONOTONIC, s
-    # Driver clock 14 s ahead of CLOCK_MONOTONIC; frames delivered 9, 4, 7 ms late.
-    stamps = [
-        clock.stamp(capture, capture - 14.0 + delay, wall)
-        for capture, delay in ((100.0, 0.009), (100.0 + 1 / 30, 0.004), (100.0 + 2 / 30, 0.007))
-    ]
+def test_capture_clock_converts_the_driver_clock_exactly() -> None:
+    """Stamps move onto the wall clock by the driver clock's offset, not by when frames arrived."""
+    now = {"monotonic": 500.0}
+    monotonic = lambda: now["monotonic"]  # noqa: E731
+    soc_counter = lambda: now["monotonic"] + 14.0  # noqa: E731  # the Jetson's GMSL capture clock
+    wall = lambda: now["monotonic"] + 1000.0  # noqa: E731
+    clock = CaptureClock([monotonic, soc_counter], wall)
 
-    assert stamps[2] - stamps[1] == pytest.approx(1 / 30)
-    assert stamps[2] == pytest.approx(100.0 + 2 / 30 - 14.0 + 0.004 + wall)
+    stamps = []
+    for capture, delay in ((514.0, 0.030), (514.0 + 1 / 30, 0.009), (514.0 + 2 / 30, 0.050)):
+        now["monotonic"] = capture - 14.0 + delay
+        stamps.append(clock.stamp(capture))
+
+    # Frame k started at 500 + k/30 on CLOCK_MONOTONIC, however late it was read.
+    assert stamps == pytest.approx([1500.0, 1500.0 + 1 / 30, 1500.0 + 2 / 30], abs=1e-9)
+
+
+def test_capture_clock_gives_up_on_an_unknown_clock() -> None:
+    assert CaptureClock([lambda: 500.0], time.time).stamp(9999.0) is None
 
 
 def test_frames_carry_the_driver_capture_time(module: V4L2CameraModule) -> None:
-    """Frames are spaced as the driver captured them, not as they were read."""
-    captured_ms: list[float] = []
+    """Frames are stamped when the driver captured them, not when they were read."""
+    captured_s: list[float] = []
 
     class _StampedCapture(_FakeCapture):
         def read(self) -> tuple[bool, np.ndarray[Any, Any] | None]:
             time.sleep(1 / 30)
-            # Driver clock 14 s ahead of CLOCK_MONOTONIC; delivered 4 ms, then 9 ms late.
-            delay_s = 0.004 if not captured_ms else 0.009
-            self.props[0] = (time.monotonic() + 14.0 - delay_s) * 1e3  # CAP_PROP_POS_MSEC
-            captured_ms.append(self.props[0])
+            # uvcvideo stamps on CLOCK_MONOTONIC; this frame was captured 20 ms ago.
+            captured_s.append(time.monotonic() - 0.020)
+            self.props[0] = captured_s[-1] * 1e3  # CAP_PROP_POS_MSEC
             return super().read()
 
     module._pump(_StampedCapture(reads=[True, True, False, False, False]))
 
-    first, second = (call[0][0].ts for call in _published(module).call_args_list)
-    assert second - first == pytest.approx((captured_ms[1] - captured_ms[0]) / 1e3, abs=1e-6)
-    assert second == pytest.approx(time.time(), abs=1.0)
+    stamps = [call[0][0].ts for call in _published(module).call_args_list]
+    wall_minus_monotonic = time.time() - time.monotonic()
+    # Only the wall/monotonic offset is re-read per frame; on a loaded CI machine that pair can be preempted ~0.1 ms.
+    assert len(stamps) == 2
+    assert stamps == pytest.approx([c + wall_minus_monotonic for c in captured_s[:2]], abs=1e-3)
