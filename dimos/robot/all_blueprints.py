@@ -362,7 +362,7 @@ all_modules = {
     "type-safe-navigation-agent": "dimos.agents.typesafe.navigation.TypeSafeNavigationAgent",
     "unitree-g1-skill-container": "dimos.robot.unitree.g1.skill_container.UnitreeG1SkillContainer",
     "unitree-skill-container": "dimos.robot.unitree.unitree_skill_container.UnitreeSkillContainer",
-    "v4-l2-camera-module": "dimos.hardware.sensors.camera.v4l2_camera.V4L2CameraModule",
+    "v4-l2-camera": "dimos.hardware.sensors.camera.v4l2.module.V4L2Camera",
     "video-arm-teleop-module": "dimos.teleop.webxr.extensions.VideoArmTeleopModule",
     "virtual-mid360": "dimos.hardware.sensors.lidar.virtual_mid360.module.VirtualMid360",
     "vlm-agent": "dimos.agents.vlm_agent.VLMAgent",

@@ -17,8 +17,8 @@
 The head is a stereo pair of GMSL2 cameras (SENSING SG3S-ISX031C-GMSL2F, a Sony
 ISX031 with its own ISP) behind a MAX96724 deserializer on the Jetson. It is
 not a ZED. The ISP delivers finished UYVY frames to the Tegra VI, which exposes
-them as plain V4L2 capture nodes, so ``V4L2CameraModule`` reads them as it
-reads a UVC camera; nvarguscamerasrc does not apply, as it needs raw Bayer.
+them as plain V4L2 capture nodes, so the native ``V4L2Camera`` reads them and
+NVJPG encodes them; nvarguscamerasrc does not apply, as it needs raw Bayer.
 
 Only 1920x1536 at 30 fps is real. The driver lists smaller sizes and 60 fps,
 but a smaller size is a corrupted crop of the full frame and 60 fps still
@@ -38,7 +38,7 @@ from typing import Any
 from dimos.core.core import rpc
 from dimos.core.module import Module, ModuleConfig
 from dimos.core.stream import Out
-from dimos.hardware.sensors.camera.v4l2_camera import V4L2CameraConfig, V4L2CameraModule
+from dimos.hardware.sensors.camera.v4l2.module import V4L2Camera, V4L2CameraConfig
 from dimos.msgs.sensor_msgs.CameraInfo import CameraInfo
 from dimos.robot.galaxea.r1pro.head_trigger import trigger_head_cameras
 from dimos.utils.logging_config import setup_logger
@@ -53,6 +53,7 @@ HEAD_RIGHT_V4L2 = _HEAD_V4L2.format(index=10)
 
 HEAD_WIDTH = 1920
 HEAD_HEIGHT = 1536
+# The rate the ISX031 runs at, free or hardware-triggered.
 HEAD_FPS = 30.0
 HEAD_FOURCC = "UYVY"
 
@@ -68,11 +69,8 @@ class HeadLeftCameraConfig(V4L2CameraConfig):
     device: str = HEAD_LEFT_V4L2
     width: int = HEAD_WIDTH
     height: int = HEAD_HEIGHT
-    fps: float = HEAD_FPS
     fourcc: str = HEAD_FOURCC
     frame_id: str = HEAD_LEFT_FRAME
-    # Raw, both eyes would push ~0.5 GB/s over the transport; JPEG is ~20x smaller.
-    jpeg_quality: int | None = 90
 
 
 class HeadRightCameraConfig(HeadLeftCameraConfig):
@@ -82,7 +80,7 @@ class HeadRightCameraConfig(HeadLeftCameraConfig):
 
 # Distinct classes only because blueprints can't yet run two instances of one
 # module (same reason as the wrist cameras).
-class HeadLeftCamera(V4L2CameraModule):
+class HeadLeftCamera(V4L2Camera):
     config: HeadLeftCameraConfig
 
     @rpc
@@ -91,7 +89,7 @@ class HeadLeftCamera(V4L2CameraModule):
         super().start()
 
 
-class HeadRightCamera(V4L2CameraModule):
+class HeadRightCamera(V4L2Camera):
     config: HeadRightCameraConfig
 
     @rpc
