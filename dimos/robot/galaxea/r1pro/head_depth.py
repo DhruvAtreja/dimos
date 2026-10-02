@@ -36,6 +36,7 @@ def r1pro_head_depth(
     *,
     min_height_m: float | None = None,
     max_height_m: float | None = None,
+    lidar_history_s: float = LIDAR_HISTORY_S,
     **cloud: object,
 ) -> Blueprint:
     """Head depth anchored on Point-LIO's scans; height bounds (in base_link) gate only the cloud.
@@ -54,7 +55,7 @@ def r1pro_head_depth(
         world_frame=ODOM_FRAME,
         max_range_m=MAX_RANGE_M,
         tf_tolerance_s=TF_TOLERANCE_S,
-        lidar_history_s=LIDAR_HISTORY_S,
+        lidar_history_s=lidar_history_s,
         frame_id=HEAD_CAMERA_FRAME,
         **options,
     ).remappings(

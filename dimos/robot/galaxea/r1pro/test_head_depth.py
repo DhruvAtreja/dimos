@@ -34,6 +34,10 @@ def test_a_height_band_is_measured_from_base_link() -> None:
     )
 
 
+def test_the_lidar_history_is_configurable() -> None:
+    assert _kwargs(r1pro_head_depth(lidar_history_s=2.0))["lidar_history_s"] == 2.0
+
+
 def test_the_camera_and_the_lidar_are_the_connections_and_point_lios_streams() -> None:
     blueprint = r1pro_head_depth()
     key = blueprint._instance_key(Depth2DepthCloud)
