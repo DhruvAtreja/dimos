@@ -113,7 +113,6 @@ all_blueprints = {
     "r1pro-nav": "dimos.robot.galaxea.r1pro.blueprints.navigation.r1pro_nav:r1pro_nav",
     "r1pro-nav-lio": "dimos.robot.galaxea.r1pro.blueprints.navigation.r1pro_nav_lio:r1pro_nav_lio",
     "r1pro-planar-preview": "dimos.robot.galaxea.r1pro.blueprints.manipulation.r1pro_planar_preview:r1pro_planar_preview",
-    "r1pro-pointlio": "dimos.robot.galaxea.r1pro.blueprints.basic.r1pro_pointlio:r1pro_pointlio",
     "r1pro-teleop": "dimos.robot.galaxea.r1pro.blueprints.basic.r1pro_teleop:r1pro_teleop",
     "r1pro-viewer": "dimos.robot.galaxea.r1pro.blueprints.navigation.r1pro_viewer:r1pro_viewer",
     "real-sense-camera-vis": "dimos.hardware.sensors.camera.realsense.blueprints:real_sense_camera_vis",

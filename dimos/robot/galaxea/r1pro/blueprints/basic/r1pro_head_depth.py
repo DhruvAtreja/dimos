@@ -19,9 +19,9 @@ from __future__ import annotations
 from dimos.core.coordination.blueprints import autoconnect
 from dimos.robot.galaxea.r1pro.blueprints.basic.r1pro_coordinator import (
     r1pro_control,
+    r1pro_lidar_odometry,
     r1pro_visualization,
 )
-from dimos.robot.galaxea.r1pro.blueprints.basic.r1pro_pointlio import r1pro_lidar_odometry
 from dimos.robot.galaxea.r1pro.head_depth import r1pro_head_depth as head_depth
 from dimos.robot.galaxea.r1pro.vendor_stack import R1ProVendorStack
 

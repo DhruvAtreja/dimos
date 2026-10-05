@@ -29,8 +29,10 @@ from dimos.navigation.global_planner.mls_planner.mls_planner_native import MLSPl
 from dimos.navigation.global_planner.mls_planner.viz import planner_visual_override
 from dimos.navigation.movement_manager.movement_manager import MovementManager
 from dimos.perception.depth2depth_cloud.module import Depth2DepthCloud
-from dimos.robot.galaxea.r1pro.blueprints.basic.r1pro_coordinator import r1pro_control
-from dimos.robot.galaxea.r1pro.blueprints.basic.r1pro_pointlio import r1pro_lidar_odometry
+from dimos.robot.galaxea.r1pro.blueprints.basic.r1pro_coordinator import (
+    r1pro_control,
+    r1pro_lidar_odometry,
+)
 from dimos.robot.galaxea.r1pro.head_depth import HEAD_CAMERA_FRAME, r1pro_head_depth
 from dimos.robot.galaxea.r1pro.lio import BASE_FRAME, LIDAR_FRAME, ODOM_FRAME
 from dimos.robot.galaxea.r1pro.vendor_stack import R1ProVendorStack

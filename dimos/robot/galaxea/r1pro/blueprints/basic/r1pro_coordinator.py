@@ -13,11 +13,11 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""R1 Pro ControlCoordinator and ROS connection.
+"""R1 Pro ControlCoordinator, ROS connection, and Point-LIO on the chassis Mid-360.
 
 Mirrors ``unitree_g1_coordinator.py``: the 18-DOF upper body goes through
 the generic whole-body transport adapter, the holonomic chassis through the
-twist-base transport adapter.
+twist-base transport adapter. ``base_link`` is placed by Point-LIO, not wheel odometry.
 
 Usage:
     dimos run r1pro-coordinator
@@ -34,6 +34,8 @@ from dimos.control.tasks.trajectory_task.trajectory_task import joint_trajectory
 from dimos.core.coordination.blueprints import Blueprint, TransportSpec, autoconnect
 from dimos.core.global_config import global_config
 from dimos.core.transport import ZenohTransport
+from dimos.hardware.sensors.lidar.pointlio.module import PointLio
+from dimos.hardware.sensors.lidar.pointlio.pointlio_blueprints import mid360_for_pointlio
 from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
 from dimos.msgs.geometry_msgs.Twist import Twist
 from dimos.msgs.nav_msgs.Odometry import Odometry
@@ -43,14 +45,24 @@ from dimos.msgs.sensor_msgs.Image import Image
 from dimos.msgs.sensor_msgs.Imu import Imu
 from dimos.msgs.sensor_msgs.JointState import JointState
 from dimos.msgs.sensor_msgs.MotorCommandArray import MotorCommandArray
-from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
 from dimos.protocol.pubsub.impl.zenohpubsub import QOS_LATEST_WINS, Topic as ZenohTopic, Zenoh
+from dimos.robot.galaxea.r1pro.config import (
+    R1PRO_CHASSIS_LIDAR_HOST_IP,
+    R1PRO_CHASSIS_LIDAR_IP,
+)
 from dimos.robot.galaxea.r1pro.connection import R1PRO_UPPER_BODY_JOINTS, R1ProConnection
 from dimos.robot.galaxea.r1pro.head_cameras import (
     HeadCameraInfo,
     HeadLeftCamera,
     HeadRightCamera,
 )
+from dimos.robot.galaxea.r1pro.lio import (
+    LIDAR_FRAME,
+    ODOM_FRAME,
+    R1ProLioMountTf,
+    R1ProLioOdomPose,
+)
+from dimos.robot.galaxea.r1pro.vendor_stack import R1ProVendorStack
 from dimos.visualization.rerun.bridge import RerunBridgeModule
 from dimos.visualization.rerun.websocket_server import RerunWebSocketServer
 
@@ -265,7 +277,6 @@ def r1pro_control(
                 ("head_left_info", CameraInfo): _zenoh_transport("/head_left_info", CameraInfo),
                 ("head_right_info", CameraInfo): _zenoh_transport("/head_right_info", CameraInfo),
                 ("head_depth", Image): _zenoh_transport("/head_depth", Image, latest_wins=True),
-                ("lidar", PointCloud2): _zenoh_transport("/lidar", PointCloud2, latest_wins=True),
                 ("wrist_left_color", CompressedImage): _zenoh_transport(
                     "/wrist_left_color", CompressedImage, latest_wins=True
                 ),
@@ -291,7 +302,32 @@ def r1pro_control(
 
 # n_workers keeps the 100 Hz coordinator tick loop out of the interpreter
 # that runs the connection's sensor threads.
+def r1pro_lidar_odometry() -> Blueprint:
+    """Our Mid-360 driver (per-point times, its own IMU) into Point-LIO, plus the mount tf."""
+    return autoconnect(
+        mid360_for_pointlio(
+            frame_id=LIDAR_FRAME,
+            lidar_ip=R1PRO_CHASSIS_LIDAR_IP,
+            host_ip=R1PRO_CHASSIS_LIDAR_HOST_IP,
+        ),
+        PointLio.blueprint(frame_id=ODOM_FRAME, sensor_frame_id=LIDAR_FRAME).remappings(
+            [(PointLio, "odometry", "pointlio_odometry")]
+        ),
+        R1ProLioMountTf.blueprint(),
+        R1ProLioOdomPose.blueprint(),
+    ).remappings(
+        [
+            (R1ProLioOdomPose, "odometry", "pointlio_odometry"),
+            # The name the planners already read.
+            (R1ProLioOdomPose, "pose", "chassis_odom"),
+        ]
+    )
+
+
 r1pro_coordinator = autoconnect(
+    R1ProVendorStack.blueprint(stop_vendor_lidar=True),
     r1pro_visualization(),
-    r1pro_control(),
+    # Off, so base_link has exactly one parent: Point-LIO's, through the mount.
+    r1pro_control(publish_odom=False),
+    r1pro_lidar_odometry(),
 ).global_config(n_workers=4)

@@ -48,7 +48,7 @@ FRAMES: list[FrameSpec] = [
 
 
 def mount_transforms() -> list[Transform]:
-    """Rooted at Point-LIO's frame, plus the chassis-lidar edge ``publish_odom=False`` drops."""
+    """Rooted at Point-LIO's frame, plus the URDF's chassis-lidar edge."""
     edges = {t.child_frame_id: t for t in frames_to_edge_transforms(FRAMES)}
     return [-edges[LIDAR_FRAME], edges[CHASSIS_LIDAR_FRAME]]
 

@@ -44,19 +44,20 @@ cd ~/galaxea-dimos/install/startup_config/share/startup_config/script
 ## Blueprints
 
 ```bash
-dimos run r1pro-coordinator     # connection + coordinator + viewer
+dimos run r1pro-coordinator     # connection + coordinator + Point-LIO + viewer
 dimos run r1pro-teleop          # + chassis teleop from the viewer
 dimos run r1pro-nav             # + click-to-drive nav (costmap + A*)
 dimos run r1pro-manipulation    # + dual-arm planning (experimental)
 dimos run r1pro-planar-preview   # planar-base planning preview with fake hardware
-dimos run r1pro-pointlio --g.transport lcm   # coordinator + Point-LIO on the chassis lidar
 dimos run r1pro-head-depth --g.transport lcm # + head depth anchored on the lidar
 ```
 
 ## Point-LIO and head depth
 
-`r1pro-pointlio` places `base_link` by Point-LIO on the chassis Mid-360 instead
-of wheel odometry; `chassis_odom` keeps its name. `r1pro-head-depth` adds a
+Every blueprint built on `r1pro-coordinator` places `base_link` by Point-LIO on
+the chassis Mid-360 instead of wheel odometry; `chassis_odom` keeps its name.
+`r1pro-manipulation` builds on `r1pro_control` alone and keeps wheel odometry.
+`r1pro-head-depth` adds a
 dense cloud from the left head camera: Depth Anything, calibrated per pixel to
 the last two seconds of Point-LIO scans (`Depth2DepthCloud`).
 The Mid-360 driver, Point-LIO and the head depth are native binaries built on
