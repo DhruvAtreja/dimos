@@ -22,6 +22,7 @@ from typing import TYPE_CHECKING, Any, cast
 
 from pydantic import Field
 
+from dimos.core.coordination.blueprint_config.sources import configuration_environment
 from dimos.core.global_config import global_config
 from dimos.evals.environments.lib.sim_truth import last_entity_pose
 from dimos.evals.environments.sim import Sim, SimConfig
@@ -90,7 +91,12 @@ class Sim2Environment(Sim):
         if self.config.scene_spawn:
             proc.global_args += ["--scene-spawn", self.config.scene_spawn]
         proc.extra_env.update(self.config.module_env)
-        proc.extra_env.setdefault("SIMULATIONMODULE__VIEWER", "false")
+        # The simulator's own window stays shut unless the shell or .env sets
+        # SIMULATIONMODULE__VIEWER=true.
+        proc.extra_env.setdefault(
+            "SIMULATIONMODULE__VIEWER",
+            configuration_environment(None).get("SIMULATIONMODULE__VIEWER", "false"),
+        )
         # Without an X display MuJoCo can only render off-screen through EGL.
         if "DISPLAY" not in os.environ:
             proc.extra_env.setdefault("MUJOCO_GL", os.environ.get("MUJOCO_GL", "egl"))

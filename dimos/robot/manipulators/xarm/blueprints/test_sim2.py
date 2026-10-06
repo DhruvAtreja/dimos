@@ -140,3 +140,17 @@ def test_the_bridge_draws_the_arm_and_skips_the_intermediate_clouds() -> None:
     posed = overrides["world/coordinator_joint_state"]
     assert isinstance(posed, UrdfRobotJointStateRerunFactory)
     assert posed.joint_name_mapper("arm/joint1") == "joint1"
+
+
+def test_viser_is_on_unless_the_shell_turns_it_off() -> None:
+    from dimos.manipulation.visualization.config import NoManipulationVisualizationConfig
+    from dimos.manipulation.visualization.viser.config import ViserVisualizationConfig
+
+    def visualization(environ: dict[str, str]) -> object:
+        parsed = BlueprintConfigParser(xarm_perception_sim2).parse(environ=environ)
+        kwargs = parsed.module_kwargs(ManipulationModule.name)
+        return ManipulationModuleConfig.model_validate(kwargs).visualization
+
+    assert isinstance(visualization({}), ViserVisualizationConfig)
+    off = visualization({"MANIPULATIONMODULE__VISUALIZATION__BACKEND": "none"})
+    assert isinstance(off, NoManipulationVisualizationConfig)

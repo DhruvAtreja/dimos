@@ -481,7 +481,7 @@ dimos evals run dimos.evals.suites.mujoco_xarm --agent dimos.evals.agents.pi --t
 
 `Sim2Environment` runs the same kind of case on [sim2](/docs/usage/sim2.md). It launches
 `dimos --transport zenoh --simulation mujoco --scene-package <scene> [--scene-spawn "x, y, z, yaw"]
---record run <blueprint> <modules>` with the native viewer off, and once MCP answers it calls
+--record run <blueprint> <modules>` with the simulator window shut, and once MCP answers it calls
 `set_truth_enabled(True)` on the running `SimulationModule` through `Dimos.connect()`, so the
 process running the evals must itself be on the zenoh bus. Ground truth is then the `sim_truth`
 stream, one `SceneState` per 10 Hz tick with every scene entity's world pose, recorded alongside
@@ -542,6 +542,22 @@ summary script prints both success counts over the trials actually run:
 dimos evals run dimos.evals.suites.scenereplica --agent dimos.evals.agents.pi --tags scene-01
 python -m dimos.evals.suites.lib.scenereplica_summary ~/.local/state/dimos/evals/run-*
 ```
+
+To watch a sim run, turn its viewers on in the shell, the same settings as for `dimos run`.
+They are all off by default except the manipulation module's Viser page, which
+`xarm-perception-sim2` serves at http://127.0.0.1:8095:
+
+```bash skip
+# Rerun: the camera, voxel map and arm. Opens the native viewer; RERUN_OPEN=web serves it at :9878.
+VIEWER=rerun dimos evals run dimos.evals.suites.scenereplica --agent dimos.evals.agents.pi --tags scene-01
+# The sim2 MuJoCo window: the true scene, needs a display.
+SIMULATIONMODULE__VIEWER=true dimos evals run dimos.evals.suites.scenereplica --agent dimos.evals.agents.pi --tags scene-01
+# Turn Viser off.
+MANIPULATIONMODULE__VISUALIZATION__BACKEND=none dimos evals run dimos.evals.suites.scenereplica --agent dimos.evals.agents.pi --tags scene-01
+```
+
+The Rerun bridge holds up to 512 MB of the run's images and clouds, so leave it off for long
+unattended runs.
 
 ## Running
 

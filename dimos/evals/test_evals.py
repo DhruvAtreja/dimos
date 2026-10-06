@@ -302,8 +302,18 @@ def test_sim_launches_base_blueprints_and_agent_modules_in_order(
             "wavefront-frontier-explorer",
             "--disable",
             "patrolling-module",
+            "--disable",
+            "rerun-bridge-module",
         ]
-        assert proc.global_args == ["--dimsim-scene", "empty", "--record"]
+        assert proc.global_args == [
+            "--dimsim-scene",
+            "empty",
+            "--viewer",
+            "none",
+            "--rerun-open",
+            "none",
+            "--record",
+        ]
         adapter.return_value.wait_for_ready.assert_called_once()
         ready_call = adapter.return_value.wait_for_ready.call_args
         assert 0 < ready_call.kwargs["timeout"] <= 1.0

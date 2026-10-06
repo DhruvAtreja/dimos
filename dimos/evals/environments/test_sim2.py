@@ -64,7 +64,6 @@ def truth(ts: float, **z_by_entity: float) -> SceneState:
 
 
 def test_launch_flags(monkeypatch):
-    monkeypatch.delenv("SIMULATIONMODULE__VIEWER", raising=False)
     monkeypatch.delenv("DISPLAY", raising=False)
     monkeypatch.delenv("MUJOCO_GL", raising=False)
     proc = DimosCliCall()
@@ -90,6 +89,17 @@ def test_launch_flags(monkeypatch):
     assert "--scene-spawn" not in proc.global_args
     assert proc.global_args[2:4] == ["--scene-package", "kitchen"]
     assert proc.extra_env["SIMULATIONMODULE__VIEWER"] == "true"
+
+
+def test_the_shell_opens_the_simulator_window(shell):
+    shell(SIMULATIONMODULE__VIEWER="true")
+    proc = DimosCliCall()
+    environment().configure_launch(proc)
+    assert proc.extra_env["SIMULATIONMODULE__VIEWER"] == "true"
+    # A case's own module_env still decides over the shell.
+    proc = DimosCliCall()
+    environment(module_env={"SIMULATIONMODULE__VIEWER": "false"}).configure_launch(proc)
+    assert proc.extra_env["SIMULATIONMODULE__VIEWER"] == "false"
 
 
 def test_preflight_needs_the_zenoh_bus(monkeypatch):
@@ -180,6 +190,10 @@ def test_launch_and_cleanup(tmp_path, mocker):
             "--disable",
             "rerun-bridge-module",
         ]
+        # With no viewer settings in the shell: Rerun off, simulator window shut.
+        assert proc.global_args[-5:-1] == ["--viewer", "none", "--rerun-open", "none"]
+        assert proc.extra_env["SIMULATIONMODULE__VIEWER"] == "false"
+        assert proc.extra_env["TORCHINDUCTOR_COMPILE_THREADS"] == "1"
         truth_on.assert_called_once()
         ready.assert_called_once()
         assert set(result.artifacts) == {"recording"}

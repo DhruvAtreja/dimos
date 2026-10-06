@@ -155,7 +155,7 @@ def test_launch_and_cleanup(tmp_path, mocker):
         result = env.start(("speak-skill",))
         assert proc.simulator == "mujoco"
         assert proc.global_args[0] == "--record-topics" and proc.global_args[-1] == "--record"
-        # Nothing is drawn during an eval: no viewer, and no bridge buffering the run.
+        # With no viewer settings in the shell, Rerun is off and no bridge buffers the run.
         assert proc.global_args[-5:-1] == ["--viewer", "none", "--rerun-open", "none"]
         assert proc.demo_args == [
             "run",
@@ -176,21 +176,51 @@ def test_launch_and_cleanup(tmp_path, mocker):
     store.stop.assert_called_once()
 
 
-def test_rerun_can_be_asked_for(tmp_path, mocker):
+def launched(tmp_path, mocker):
+    """The dimos process a default environment launches, with nothing actually started."""
     proc = mocker.patch("dimos.evals.environments.sim.DimosCliCall").return_value
     proc.extra_env = {}
-    proc.global_args = []
     mocker.patch(
         "dimos.evals.environments.sim.McpAdapter"
     ).return_value.wait_for_ready.return_value = True
     mocker.patch("dimos.memory.store.sqlite.SqliteStore")
-    env = environment(rerun=True)
+    env = environment()
     mocker.patch.object(env, "_wait_recording", return_value=tmp_path / "memory.db")
     mocker.patch.object(env, "wait_ready")
     try:
         env.start(())
-        assert "--viewer" not in proc.global_args
-        assert "--disable" not in proc.demo_args
-        assert "TORCHINDUCTOR_COMPILE_THREADS" not in proc.extra_env
     finally:
         env.stop()
+    return proc
+
+
+@pytest.mark.parametrize(
+    ("settings", "flags", "drawn"),
+    [
+        ({"VIEWER": "rerun"}, [], True),
+        ({"VIEWER": "rerun", "RERUN_OPEN": "web"}, [], True),
+        ({"VIEWER": "none"}, ["--rerun-open", "none"], False),
+        ({"RERUN_OPEN": "native"}, ["--viewer", "none"], False),
+    ],
+)
+def test_rerun_follows_the_shell(tmp_path, mocker, shell, settings, flags, drawn):
+    # The launched dimos inherits the shell, so only the settings it lacks are flags.
+    shell(**settings)
+    proc = launched(tmp_path, mocker)
+    assert proc.global_args[2:] == [*flags, "--record"]
+    assert ("--disable" in proc.demo_args) is not drawn
+    assert ("TORCHINDUCTOR_COMPILE_THREADS" in proc.extra_env) is not drawn
+
+
+def test_the_shell_sets_the_torch_compile_threads(tmp_path, mocker, shell):
+    shell(TORCHINDUCTOR_COMPILE_THREADS="4")
+    assert launched(tmp_path, mocker).extra_env["TORCHINDUCTOR_COMPILE_THREADS"] == "4"
+
+
+def test_rerun_follows_the_dotenv_file(tmp_path, mocker, monkeypatch):
+    dotenv = tmp_path / ".env"
+    dotenv.write_text("VIEWER=rerun\n")
+    monkeypatch.setattr("dimos.core.coordination.blueprint_config.sources.ENV_FILE", str(dotenv))
+    proc = launched(tmp_path, mocker)
+    assert "--viewer" not in proc.global_args
+    assert "--disable" not in proc.demo_args
