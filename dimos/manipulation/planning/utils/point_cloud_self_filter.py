@@ -84,6 +84,8 @@ class PointCloudSelfFilter(Module):
         if not self._collision_geometry:
             raise ValueError("Robot model contains no collision geometry")
         self._previous_clear_keys: set[tuple[int, int, int]] = set()
+        # Clouds dropped for missing TF since the last one that was filtered.
+        self._dropped_clouds = 0
 
     @rpc
     def start(self) -> None:
@@ -109,9 +111,13 @@ class PointCloudSelfFilter(Module):
             sensor_from_link = self._lookup(cloud.frame_id, geometry.link, cloud.ts)
             world_from_link = self._lookup(config.world_frame, geometry.link, cloud.ts)
             if sensor_from_link is None or world_from_link is None:
-                logger.warning(
-                    "Dropping cloud: capture-time TF unavailable for robot link %s", geometry.link
-                )
+                self._dropped_clouds += 1
+                if self._dropped_clouds == 1:
+                    logger.warning(
+                        "Dropping cloud: capture-time TF unavailable for robot link %s; "
+                        "not repeated until TF is back",
+                        geometry.link,
+                    )
                 return None
 
             if len(points):
@@ -129,6 +135,10 @@ class PointCloudSelfFilter(Module):
             world_samples = _transform_points(geometry.clear_samples, world_from_geometry)
             keys = np.floor(world_samples / config.voxel_size).astype(np.int32)
             current_clear_keys.update(map(tuple, keys.tolist()))
+
+        if self._dropped_clouds:
+            logger.info("Capture-time TF is back after %d dropped clouds", self._dropped_clouds)
+            self._dropped_clouds = 0
 
         # Where the arm was plus where it is: a link that moved between frames
         # leaves a ghost behind it that nothing else will ever clear.
