@@ -30,6 +30,7 @@ from dimos.memory.codecs.lcm import LcmCodec
 from dimos.memory.codecs.pickle import PickleCodec
 from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
 from dimos.msgs.sensor_msgs.Image import Image, ImageFormat
+from dimos.utils import turbojpeg
 
 if TYPE_CHECKING:
     from collections.abc import Callable
@@ -123,20 +124,7 @@ def _jpeg_eq(original: Any, decoded: Any) -> bool:
     return bool(np.mean(np.abs(decoded.data.astype(float) - expected.astype(float))) < 5)
 
 
-def _turbojpeg_available() -> bool:
-    try:
-        from turbojpeg import TurboJPEG
-
-        TurboJPEG()  # fail fast if native lib is missing
-    except (ImportError, RuntimeError):
-        return False
-    return True
-
-
-def _jpeg_case() -> Case | None:
-    if not _turbojpeg_available():
-        return None
-
+def _jpeg_case() -> Case:
     import numpy as np
 
     # smooth gradients survive lossy jpeg within the eq tolerance
@@ -164,9 +152,7 @@ _case_factories = {
     "jpeg": _jpeg_case,
 }
 
-case_params: list[Any] = ["pickle", "lcm", "lz4+pickle", "lz4+lcm"]
-if _turbojpeg_available():
-    case_params.append("jpeg")
+case_params: list[Any] = ["pickle", "lcm", "lz4+pickle", "lz4+lcm", "jpeg"]
 
 
 @pytest.fixture
@@ -199,6 +185,14 @@ class TestCodecRoundtrip:
         assert len(set(encodings)) > 1, "All values encoded to identical bytes"
 
 
+def test_jpeg_roundtrips_without_libturbojpeg(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Without the native libturbojpeg, colour images are encoded and decoded by OpenCV."""
+    monkeypatch.setattr(turbojpeg, "turbojpeg_available", lambda: False)
+    case = _jpeg_case()
+    for value in case.values:
+        assert _jpeg_eq(value, case.codec.decode(case.codec.encode(value)))
+
+
 class TestCodecFor:
     """codec_for() auto-selects the right codec."""
 
@@ -212,7 +206,4 @@ class TestCodecFor:
         assert isinstance(codec_for(PoseStamped), LcmCodec)
 
     def test_image_type_returns_jpeg(self) -> None:
-        pytest.importorskip("turbojpeg")
-        from dimos.memory.codecs.jpeg import JpegCodec
-
         assert isinstance(codec_for(Image), JpegCodec)
