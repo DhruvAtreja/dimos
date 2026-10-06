@@ -15,7 +15,7 @@ class Codec(Protocol[T]):
 | Codec | Type | Notes |
 |-------|------|-------|
 | `PickleCodec` | Any Python object | Fallback. Uses `HIGHEST_PROTOCOL`. |
-| `JpegCodec` | `Image` | Lossy compression via TurboJPEG. ~10-20x smaller. Preserves `frame_id` in header. |
+| `JpegCodec` | `Image` | Lossy compression via TurboJPEG, or OpenCV when libturbojpeg is missing. ~10-20x smaller. Preserves `frame_id` in header. |
 | `LcmCodec` | `DimosMsg` subclasses | Uses `lcm_encode()`/`lcm_decode()`. Zero-copy for LCM message types. |
 
 ## Auto-selection

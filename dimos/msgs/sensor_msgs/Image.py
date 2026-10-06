@@ -27,12 +27,11 @@ from dimos_lcm.std_msgs.Header import Header
 import numpy as np
 import reactivex as rx
 from reactivex import operators as ops
-from turbojpeg import TJPF_RGB
 
 from dimos.types.timestamped import Timestamped, TimestampedBufferCollection, to_human_readable
 from dimos.utils.logging_config import setup_logger
 from dimos.utils.reactive import quality_barrier
-from dimos.utils.turbojpeg import get_turbojpeg, turbojpeg_available
+from dimos.utils.turbojpeg import decode_rgb_jpeg, encode_rgb_jpeg, turbojpeg_available
 
 if TYPE_CHECKING:
     from collections.abc import Callable
@@ -556,7 +555,7 @@ class Image(Timestamped):
         )
 
     def to_jpeg_bytes(self, quality: int = 75) -> bytes:
-        """Encode this image as JPEG bytes using TurboJPEG.
+        """Encode this image as JPEG bytes, with libturbojpeg or else OpenCV.
 
         Args:
             quality: JPEG compression quality (0-100, default 75).
@@ -565,8 +564,7 @@ class Image(Timestamped):
             Raw JPEG bytes.
         """
         # Canonicalize to RGB so JPEG bytes are deterministic regardless of input format.
-        rgb_array = self.to_rgb().data
-        return get_turbojpeg().encode(rgb_array, quality=quality, pixel_format=TJPF_RGB)  # type: ignore[no-any-return]
+        return encode_rgb_jpeg(self.to_rgb().data, quality)
 
     def lcm_jpeg_encode(self, quality: int = 75, frame_id: str | None = None) -> bytes:
         """Convert to LCM Image message with JPEG-compressed data.
@@ -623,7 +621,7 @@ class Image(Timestamped):
         if msg.encoding != "jpeg":
             raise ValueError(f"Expected JPEG encoding, got {msg.encoding}")
 
-        rgb_array = get_turbojpeg().decode(msg.data, pixel_format=TJPF_RGB)
+        rgb_array = decode_rgb_jpeg(msg.data)
 
         return cls(
             data=rgb_array,

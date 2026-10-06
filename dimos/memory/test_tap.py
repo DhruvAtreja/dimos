@@ -134,6 +134,34 @@ def test_append_failure_does_not_kill_writer(tmp_path: Path) -> None:
     store.stop()
 
 
+def test_append_failures_log_once_per_stream_and_count_on_close(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    errors: list[str] = []
+    warnings: list[str] = []
+    monkeypatch.setattr(tap.logger, "exception", lambda msg, *args: errors.append(msg % args))
+    monkeypatch.setattr(tap.logger, "warning", lambda msg, *args: warnings.append(msg % args))
+    store = SqliteStore(path=str(tmp_path / "memory.db"))
+    store.start()
+    rec = TransportRecorder(store)
+    odom, goal = _Transport(), _Transport()
+    rec.tap("odom", PoseStamped, odom)
+    rec.tap("goal", PoseStamped, goal)
+    for _ in range(3):
+        odom.publish("not a PoseStamped")
+    goal.publish("not a PoseStamped")
+    rec.close()
+    store.stop()
+
+    assert rec.failed == {"odom": 3, "goal": 1}
+    assert len(errors) == 2
+    assert 'Stream("odom")' in errors[0] and "TypeError" in errors[0]
+    assert warnings == [
+        "--record: failed appends on goal: 1",
+        "--record: failed appends on odom: 3",
+    ]
+
+
 def test_recording_fails_loudly_when_no_stream_matches(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:

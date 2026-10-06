@@ -96,6 +96,8 @@ class MultiTBuffer:
         self.buffers: dict[tuple[str, str], TBuffer] = {}
         self.buffer_size = buffer_size
         self._cv = threading.Condition()
+        # Frame pairs whose last lookup failed and was already warned about.
+        self._missing: set[tuple[str, str]] = set()
 
     def receive_transform(self, *args: Transform) -> None:
         with self._cv:
@@ -216,11 +218,35 @@ class MultiTBuffer:
             result = self._wait_get(
                 parent_frame, child_frame, time_point, time_tolerance, forward_tolerance
             )
-        if result is None and warn:
-            logger.warning(
-                f"No direct transform found between '{parent_frame}' and '{child_frame}' at '{to_human_readable(time_point or time.time())}'"
-            )
+        if warn:
+            self._warn_on_change(parent_frame, child_frame, time_point, found=result is not None)
         return result
+
+    def _warn_on_change(
+        self, parent_frame: str, child_frame: str, time_point: float | None, found: bool
+    ) -> None:
+        """Warn on the first failed lookup of a frame pair, then stay quiet until it is found again.
+
+        Args:
+            time_point: the lookup's time (Unix seconds), shown in the warning; None means now.
+            found: whether this lookup returned a transform.
+        """
+        pair = (parent_frame, child_frame)
+        with self._cv:
+            was_missing = pair in self._missing
+            if found and was_missing:
+                self._missing.discard(pair)
+            elif not found and not was_missing:
+                self._missing.add(pair)
+            else:
+                return
+        if found:
+            logger.info(f"Transform between '{parent_frame}' and '{child_frame}' is now available")
+        else:
+            logger.warning(
+                f"No direct transform found between '{parent_frame}' and '{child_frame}' at '{to_human_readable(time_point or time.time())}'; "
+                "not repeated until it is found"
+            )
 
     def get_pose(
         self,

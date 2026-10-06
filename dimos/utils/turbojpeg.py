@@ -17,7 +17,8 @@ from __future__ import annotations
 
 import functools
 
-from turbojpeg import TurboJPEG
+import numpy as np
+from turbojpeg import TJPF_RGB, TurboJPEG
 
 
 @functools.cache
@@ -34,3 +35,34 @@ def turbojpeg_available() -> bool:
     except RuntimeError:
         return False
     return True
+
+
+def encode_rgb_jpeg(rgb: np.ndarray, quality: int) -> bytes:
+    """Compress an RGB image to JPEG bytes, with libturbojpeg or else OpenCV.
+
+    Args:
+        rgb: pixels, height x width x 3, uint8, in RGB channel order.
+        quality: JPEG quality, 0-100; higher keeps more detail and makes bigger files.
+    """
+    if turbojpeg_available():
+        return get_turbojpeg().encode(rgb, quality=quality, pixel_format=TJPF_RGB)  # type: ignore[no-any-return]
+    import cv2
+
+    ok, jpeg = cv2.imencode(
+        ".jpg", cv2.cvtColor(rgb, cv2.COLOR_RGB2BGR), [cv2.IMWRITE_JPEG_QUALITY, quality]
+    )
+    if not ok:
+        raise ValueError(f"OpenCV could not JPEG-encode a {rgb.shape} {rgb.dtype} image")
+    return jpeg.tobytes()
+
+
+def decode_rgb_jpeg(data: bytes) -> np.ndarray:
+    """Decompress JPEG bytes to RGB pixels (height x width x 3, uint8), with libturbojpeg or else OpenCV."""
+    if turbojpeg_available():
+        return get_turbojpeg().decode(data, pixel_format=TJPF_RGB)  # type: ignore[no-any-return]
+    import cv2
+
+    bgr = cv2.imdecode(np.frombuffer(data, np.uint8), cv2.IMREAD_COLOR)
+    if bgr is None:
+        raise ValueError("OpenCV could not decode the JPEG data")
+    return cv2.cvtColor(bgr, cv2.COLOR_BGR2RGB)

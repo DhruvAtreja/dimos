@@ -29,6 +29,7 @@ if sys.platform == "linux" and platform.machine() == "aarch64":
         "yourdfpy", reason="yourdfpy is unavailable in the Linux ARM test environment"
     )
 
+from dimos.manipulation.planning.utils import point_cloud_self_filter as self_filter
 from dimos.manipulation.planning.utils.point_cloud_self_filter import PointCloudSelfFilter
 from dimos.msgs.geometry_msgs.Transform import Transform
 from dimos.msgs.geometry_msgs.Vector3 import Vector3
@@ -167,3 +168,24 @@ def test_a_cloud_without_capture_time_tf_is_dropped_whole(
     module = make_filter()
 
     assert module.filter_cloud(_cloud([[2.0, 0.0, 0.0]])) is None
+
+
+def test_dropped_clouds_warn_once_and_count_on_recovery(
+    make_filter: Callable[..., PointCloudSelfFilter], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    warnings: list[str] = []
+    infos: list[str] = []
+    monkeypatch.setattr(
+        self_filter.logger, "warning", lambda msg, *args: warnings.append(msg % args)
+    )
+    monkeypatch.setattr(self_filter.logger, "info", lambda msg, *args: infos.append(msg % args))
+    module = make_filter()
+
+    for _ in range(3):
+        assert module.filter_cloud(_cloud([[2.0, 0.0, 0.0]])) is None
+    assert len(warnings) == 1
+
+    _place_arm(module, (0.0, 0.0, 0.0), 1.0)
+    assert module.filter_cloud(_cloud([[2.0, 0.0, 0.0]])) is not None
+    assert module.filter_cloud(_cloud([[2.0, 0.0, 0.0]])) is not None
+    assert infos == ["Capture-time TF is back after 3 dropped clouds"]

@@ -29,6 +29,7 @@ from dimos.msgs.geometry_msgs.Quaternion import Quaternion
 from dimos.msgs.geometry_msgs.Transform import Transform
 from dimos.msgs.geometry_msgs.Vector3 import Vector3
 from dimos.msgs.tf2_msgs.TFMessage import TFMessage
+from dimos.protocol.tf import tf as tf_module
 from dimos.protocol.tf.tf import TF, MultiTBuffer, TBuffer, TFLookup
 
 
@@ -318,6 +319,34 @@ class TestMultiTBuffer:
         ttbuffer.receive_transform(transform1, transform2)
 
         print(ttbuffer.graph())
+
+    def test_missing_transform_warns_once_until_found(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        warnings: list[str] = []
+        infos: list[str] = []
+        monkeypatch.setattr(tf_module.logger, "warning", warnings.append)
+        monkeypatch.setattr(tf_module.logger, "info", infos.append)
+        ttbuffer = MultiTBuffer()
+
+        for _ in range(3):
+            assert ttbuffer.get("world", "robot") is None
+        assert ttbuffer.get("world", "camera") is None
+        assert len(warnings) == 2  # one per frame pair
+
+        ttbuffer.receive_transform(
+            Transform(frame_id="world", child_frame_id="robot", ts=time.time())
+        )
+        assert ttbuffer.get("world", "robot") is not None
+        assert ttbuffer.get("world", "robot") is not None
+        assert len(infos) == 1
+
+        ttbuffer.buffers.clear()
+        assert ttbuffer.get("world", "robot") is None
+        assert len(warnings) == 3  # lost again after recovering: warned again
+
+        assert ttbuffer.get("world", "sensor", warn=False) is None
+        assert len(warnings) == 3
 
     def test_forward_tolerance_returns_when_buffer_fills(self) -> None:
         ttbuffer = MultiTBuffer()
