@@ -86,7 +86,8 @@ class TransportRecorder:
 
     Transport callbacks only enqueue; one writer thread does the encoding and SQLite
     work, so a slow append never stalls a transport's handler thread. When the queue
-    is full the message is dropped and counted.
+    is full the message is dropped and counted. When an append fails, the first
+    failure on each stream is logged and later ones are only counted in ``failed``.
     """
 
     def __init__(self, store: SqliteStore, topics: str = "*", queue_size: int = 1000) -> None:
@@ -94,6 +95,7 @@ class TransportRecorder:
         self._topics = topics
         self._queue: queue.Queue[tuple[Stream[Any], Any, float] | None] = queue.Queue(queue_size)
         self.dropped = 0
+        self.failed: dict[str, int] = {}
         self._writer = threading.Thread(target=self._drain, name="record-writer", daemon=True)
         self._writer.start()
 
@@ -102,8 +104,18 @@ class TransportRecorder:
             stream, msg, ts = item
             try:
                 stream.append(msg, ts=ts)
-            except Exception:
-                logger.exception("--record: failed to append to %s", stream)
+            except Exception as e:
+                name = str(stream.name)
+                self.failed[name] = self.failed.get(name, 0) + 1
+                if self.failed[name] == 1:
+                    # The console shows only this line; the traceback goes to the log file.
+                    logger.exception(
+                        "--record: failed to append to %s (%s: %s); "
+                        "further failures on this stream are counted, not logged",
+                        stream,
+                        type(e).__name__,
+                        e,
+                    )
 
     def close(self) -> None:
         """Flush queued messages and stop the writer."""
@@ -111,6 +123,8 @@ class TransportRecorder:
         self._writer.join()
         if self.dropped:
             logger.warning("--record: dropped %d messages (writer queue full)", self.dropped)
+        for name, count in sorted(self.failed.items()):
+            logger.warning("--record: failed appends on %s: %d", name, count)
 
     def tap(
         self, name: str, stream_type: type, transport: Transport[Any]
