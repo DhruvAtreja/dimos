@@ -63,7 +63,7 @@ Objects are placed as SceneReplica recorded them after settling in Gazebo,
 lowered or raised by at most 2.4 mm so the lowest collision vertex touches the
 table top, then settled for 2 s of MuJoCo physics (the marker rolls up to
 1.3 cm; everything else moves under 2 mm). `convert.py settle` re-steps every
-shipped scene for 2 s: the worst drift is 2.3 mm.
+shipped scene for 2 s: the worst drift is 0.5 mm.
 
 ## Object conversion
 
@@ -75,6 +75,9 @@ power drill (18), scissors (14) and extra large clamp (24), so the bowl, mug
 and clamp are hollow where it matters for a grasp. Masses come from the
 objects' Gazebo SDFs; inertia is the convex hull's, scaled to that mass.
 Collision geoms sit in MJCF group 3, which `scene.json` hides from cameras.
+Every scene uses elliptic friction cones with `impratio` 10, as the sim2
+workbench scene does. Under MuJoCo's default pyramidal cones an object held by
+the xArm7 gripper slides out of the fingers while the arm lifts it.
 
 ## Regenerating
 
