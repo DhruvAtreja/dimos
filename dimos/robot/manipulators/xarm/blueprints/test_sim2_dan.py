@@ -59,6 +59,18 @@ def test_only_the_perception_module_differs_from_the_baseline() -> None:
     assert all_blueprints["xarm-perception-sim2-dan"].endswith(":xarm_perception_sim2_dan")
 
 
+def test_the_memory_takes_scene_registrations_place_in_the_module_order() -> None:
+    # Workers are filled in module order: the same order puts every other module
+    # in a process with the same neighbours as in the baseline.
+    registration = ObjectSceneRegistrationModule.name
+    memory = LocalizeSceneRegistrationModule.name
+    baseline = [atom.name for atom in BASELINE.active_blueprints]
+    assert [atom.name for atom in DAN.active_blueprints] == [
+        memory if name == registration else name for name in baseline
+    ]
+    assert DAN.disabled_modules_tuple == ()
+
+
 def test_pick_and_place_reads_its_objects_from_the_localize_memory() -> None:
     pick = _atoms(DAN)[PickAndPlaceModule.name]
     (scene,) = [ref for ref in pick.module_refs if ref.name == "_scene"]
