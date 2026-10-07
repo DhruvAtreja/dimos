@@ -543,6 +543,15 @@ dimos evals run dimos.evals.suites.scenereplica --agent dimos.evals.agents.pi --
 python -m dimos.evals.suites.lib.scenereplica_summary ~/.local/state/dimos/evals/run-*
 ```
 
+`dimos.evals.suites.scenereplica_dan` runs the same trials, case ids, tags, prompt and grader
+on `xarm-perception-sim2-dan`, which finds objects with the localize memory
+(`dimos/perception/localize`) instead of scene registration. Everything else in the launch is
+`xarm-perception-sim2`'s, so a run of each compares the two perception stacks case by case:
+
+```bash skip
+dimos evals run dimos.evals.suites.scenereplica_dan --agent dimos.evals.agents.pi --tags scene-01
+```
+
 To watch a sim run, turn its viewers on in the shell, the same settings as for `dimos run`.
 They are all off by default except the manipulation module's Viser page, which
 `xarm-perception-sim2` serves at http://127.0.0.1:8095:

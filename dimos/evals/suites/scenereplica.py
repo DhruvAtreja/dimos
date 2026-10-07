@@ -31,7 +31,7 @@ near-to-far order, by distance from the arm base, since the shipped scenes carry
 
 from __future__ import annotations
 
-from collections.abc import Callable
+from collections.abc import Callable, Sequence
 import json
 import math
 from pathlib import Path
@@ -161,8 +161,15 @@ def pick_and_place(entity: str, label: str, others: tuple[str, ...]) -> Callable
     return grade
 
 
-def scene_cases(scene_dir: Path, unreachable: frozenset[str] = frozenset()) -> list[EvalCase]:
-    """The five trials of one scene package, in near-to-far order from the arm base."""
+def scene_cases(
+    scene_dir: Path,
+    unreachable: frozenset[str] = frozenset(),
+    blueprint: Sequence[str] = BLUEPRINT,
+) -> list[EvalCase]:
+    """The five trials of one scene package, in near-to-far order from the arm base.
+
+    ``blueprint`` is the launch, by registry name, that every trial runs on.
+    """
     scene = SceneDescription.model_validate_json((scene_dir / "scene.json").read_text())
     base = scene.spawns["workbench"].position
     objects = [name for name, entity in scene.entities.items() if entity.movable]
@@ -186,7 +193,7 @@ def scene_cases(scene_dir: Path, unreachable: frozenset[str] = frozenset()) -> l
                     f"x=0.42 m, y=0.38 m (a 14 cm square). {SCENE}"
                 ),
                 environment=Sim2Environment(
-                    blueprint=BLUEPRINT, scene=str(scene_dir), truth_entities=tuple(objects)
+                    blueprint=list(blueprint), scene=str(scene_dir), truth_entities=tuple(objects)
                 ),
                 grade=pick_and_place(name, label, tuple(o for o in objects if o != name)),
                 timeout_s=TIMEOUT_S,
@@ -196,8 +203,11 @@ def scene_cases(scene_dir: Path, unreachable: frozenset[str] = frozenset()) -> l
     return cases
 
 
-def suite(package: Path) -> list[EvalCase]:
-    """Every trial of every ``scene-NN`` in the data package, flagged by its reach report."""
+def suite(package: Path, blueprint: Sequence[str] = BLUEPRINT) -> list[EvalCase]:
+    """Every trial of every ``scene-NN`` in the data package, flagged by its reach report.
+
+    ``blueprint`` is the launch, by registry name, that every trial runs on.
+    """
     report = json.loads((package / "reach_report.json").read_text())
     return [
         case
@@ -209,6 +219,7 @@ def suite(package: Path) -> list[EvalCase]:
                 for name, reach in report["scenes"].get(scene_dir.name, {}).items()
                 if not reach["reachable"]
             ),
+            blueprint,
         )
     ]
 
