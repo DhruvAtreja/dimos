@@ -41,7 +41,7 @@ class GraspVerificationConfig(BaseConfig):
     record the settled readback (``e``), then close on the smallest object the
     robot must pick and record that settle (``h``). Put ``empty_epsilon``
     between the two, biased toward ``e``; their midpoint is a good start. On
-    the xArm7 sim ``e`` is 0.02 to 0.04 and a 6cm block gives ``h`` of 0.62, so
+    the xArm7 sim ``e`` is under 0.01 and a 6cm block gives ``h`` of 0.62, so
     the 0.10 default clears both by a wide margin. ``open_margin`` only needs
     the same treatment if the jaws rest short of the open command.
     """
