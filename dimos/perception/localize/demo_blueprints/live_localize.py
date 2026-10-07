@@ -33,11 +33,12 @@ from dataclasses import replace
 import json
 import threading
 import time
-from typing import Any
+from typing import Any, cast
 
 from dimos_lcm.geometry_msgs import Pose
 from dimos_lcm.vision_msgs import BoundingBox3D, ObjectHypothesis, ObjectHypothesisWithPose
 import numpy as np
+from pydantic import Field
 
 from dimos.agents.annotation import skill
 from dimos.core.core import rpc
@@ -59,6 +60,7 @@ from dimos.perception.detection.type.detection3d.pointcloud import Detection3DPC
 from dimos.perception.localize.dandetect import DanDetector
 from dimos.perception.localize.localize import Groups, LocalizeTrace
 from dimos.perception.localize.rig import DEPTH_TOLERANCE, EMBED_HZ, WALK_EMBED_HZ, Rig
+from dimos.perception.localize.types import Localization, LocalizePolicy
 from dimos.protocol.tf.tf import TF
 from dimos.utils.logging_config import setup_logger
 
@@ -76,6 +78,9 @@ class LiveLocalizeModuleConfig(ModuleConfig):
     horizon_s: float = 600.0
     # raw frames kept for the embed tail and the depth pairing
     feed_frames: int = 300
+    # LocalizePolicy field overrides applied to every query, e.g. {"min_views": 1}
+    # to accept an object seen from one camera position.
+    policy: dict[str, Any] = Field(default_factory=dict)
 
 
 class LiveLocalizeModule(Module):
@@ -105,6 +110,8 @@ class LiveLocalizeModule(Module):
         self._camera: CameraInfo | None = None
         self._stage = "waiting for camera_info"
         self._groups: dict[str, Groups] = {}
+        # One query at a time: queries fold their sightings into the shared groups.
+        self._inference_lock = threading.RLock()
 
         embed_hz = WALK_EMBED_HZ if self.config.mobile else EMBED_HZ
         memory_frames = int(self.config.horizon_s * embed_hz)
@@ -167,10 +174,18 @@ class LiveLocalizeModule(Module):
             except LookupError:
                 yield obs
                 continue
-            self._depth_memory.append(depth.data, ts=depth.ts)
+            # Stamped with its colour frame's time, so a lookup by that frame is exact.
+            self._depth_memory.append(depth.data, ts=obs.ts)
             yield obs
 
     def _warm(self) -> None:
+        try:
+            self._initialize()
+        except Exception as exc:
+            self._stage = f"initialization failed: {exc}"
+            logger.exception("localize initialization failed")
+
+    def _initialize(self) -> None:
         self._stage = "loading SigLIP, OWLv2 and EdgeTAM weights"
         logger.info(f"localize: {self._stage}")
         self.detector = self.register_disposable(DanDetector())
@@ -192,8 +207,9 @@ class LiveLocalizeModule(Module):
             embed_hz=WALK_EMBED_HZ if self.config.mobile else EMBED_HZ,
             mobile=self.config.mobile,
         )
-        self.detector.embed_live(self._memory, rig=self.rig, source=self._color_feed)
+        # Subscribe first: the first embedded frame must keep its paired depth.
         self.register_disposable(self.index.live().transform(self._pair_depth).drain_thread())
+        self.detector.embed_live(self._memory, rig=self.rig, source=self._color_feed)
 
         self._stage = "waiting for the first posed frame of the feed"
         logger.info(f"localize: {self._stage}")
@@ -233,22 +249,18 @@ class LiveLocalizeModule(Module):
             return f"localize cannot answer yet: {self._stage}. Poll state() until it reads ready."
 
         queries = [q.strip() for q in objects.split(",") if q.strip()]
-        first, head = self.index.get_time_range()
-        lo = max(first, head + start if start < 0 else first + start)
-        index = self.index.time_range(lo, lo + duration)
-        tuning = self.rig.default_localize_policy()
-        if policy:
-            tuning = replace(tuning, **json.loads(policy))
+        first, head, lo, index = self._window(start, duration)
         traces = [LocalizeTrace() for _ in queries]
-        results: Any = self.detector.localize(
-            self._memory,
-            queries,
-            index=index,
-            rig=self.rig,
-            policy=tuning,
-            groups=self._groups,
-            trace=traces,
-        )
+        with self._inference_lock:
+            results: Any = self.detector.localize(
+                self._memory,
+                queries,
+                index=index,
+                rig=self.rig,
+                policy=self._policy(policy),
+                groups=self._groups,
+                trace=traces,
+            )
         self.detections.publish(as_detection_array(queries, results, self.rig.world_frame))
         camera = self.rig.cameras[self.rig.optical_frame]
         self.hit_points.publish(as_textured_cloud(traces, camera, self.rig.world_frame))
@@ -267,6 +279,53 @@ class LiveLocalizeModule(Module):
                     f"score={hit.semantic_score:.2f} views={hit.n_views}"
                 )
         return "\n".join(lines)
+
+    @rpc
+    def localize_objects(
+        self, prompts: list[str], start: float = -10.0, duration: float = 10.0, policy: str = ""
+    ) -> list[list[Localization]]:
+        """The query ``localize`` answers, returned as data rather than text.
+
+        Gives one list per prompt, in prompt order, of every verified instance.
+        Each carries the object's world-frame point cloud, fused over every
+        camera position it was seen from. Raises RuntimeError until ``state``
+        reads ready.
+
+        Args:
+            prompts: Object labels, e.g. ["mug", "banana"].
+            start: Window start in seconds. Negative counts back from the newest
+                frame, positive forward from the oldest.
+            duration: Window length in seconds.
+            policy: JSON object of LocalizePolicy field overrides for this call.
+        """
+        if not self._ready.is_set():
+            raise RuntimeError(f"localize cannot answer yet: {self._stage}")
+        _, _, _, index = self._window(start, duration)
+        with self._inference_lock:
+            results = cast(
+                "list[list[Localization]]",
+                self.detector.localize(
+                    self._memory,
+                    prompts,
+                    index=index,
+                    rig=self.rig,
+                    policy=self._policy(policy),
+                    groups=self._groups,
+                ),
+            )
+        self.detections.publish(as_detection_array(prompts, results, self.rig.world_frame))
+        return results
+
+    def _window(self, start: float, duration: float) -> tuple[float, float, float, Any]:
+        """The oldest and newest embedded frame times, the window start, and its frames."""
+        first, head = self.index.get_time_range()
+        lo = max(first, head + start if start < 0 else first + start)
+        return first, head, lo, self.index.time_range(lo, lo + duration)
+
+    def _policy(self, overrides: str) -> LocalizePolicy:
+        """The rig's default policy with the module's overrides, then the call's."""
+        fields = self.config.policy | (json.loads(overrides) if overrides else {})
+        return replace(self.rig.default_localize_policy(), **fields)
 
 
 def _image_colors(det: Detection3DPC, camera: CameraInfo) -> np.ndarray:
