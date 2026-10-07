@@ -144,6 +144,10 @@ class mjtState:
 class mjtIntegrator:
     mjINT_IMPLICITFAST: int
 
+class mjtCone:
+    mjCONE_PYRAMIDAL: int
+    mjCONE_ELLIPTIC: int
+
 class mjtSensor:
     mjSENS_GYRO: int
     mjSENS_ACCELEROMETER: int

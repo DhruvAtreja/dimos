@@ -18,6 +18,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 import math
+from pathlib import Path
 from typing import TYPE_CHECKING
 
 from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
@@ -36,7 +37,8 @@ if TYPE_CHECKING:
     from dimos.manipulation.planning.spec.config import RobotModelConfig
 
 XARM7 = RobotConfig(
-    model=LfsPath("xarm7/xarm7.xml"),
+    model=Path(__file__).parent / "assets" / "xarm7.xml",
+    meshdir=LfsPath("xarm7/assets"),
     root_body="link_base",
     control=ControlInterface.MANIPULATOR,
     joints=(

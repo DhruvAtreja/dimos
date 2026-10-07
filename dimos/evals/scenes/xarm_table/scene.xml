@@ -2,6 +2,9 @@
   <!-- World-only tabletop scene for sim2. The arm is attached by load_scene at
        the "workbench" spawn in scene.json, so there is no robot include here.
        (No "- -" digraphs in comments: ElementTree rejects them.) -->
+  <!-- Elliptic friction cones with impratio 10 keep a gripped object from sliding
+       out of the fingers under its own weight, as in the sim2 workbench scene. -->
+  <option cone="elliptic" impratio="10"/>
   <statistic center="0.3 0 0.4" extent=".65"/>
 
   <visual>

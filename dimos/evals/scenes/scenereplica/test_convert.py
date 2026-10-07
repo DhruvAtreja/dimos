@@ -148,6 +148,8 @@ def test_scene_xml_places_bodies_with_wxyz_quaternions() -> None:
     root = ET.fromstring(scene_xml("scenereplica-01", objects, SPAWN_HEIGHT))
     assert root.tag == "mujoco" and root.get("model") == "scenereplica-01"
     assert _child(root, "compiler").get("meshdir") == "../_assets"
+    option = _child(root, "option")
+    assert (option.get("cone"), option.get("impratio")) == ("elliptic", "10")
     world = _child(root, "worldbody")
     bodies = {b.get("name"): b for b in world.findall("body")}
     assert set(bodies) == {a.spec.entity for a, _ in objects}
