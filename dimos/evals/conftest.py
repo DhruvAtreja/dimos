@@ -12,6 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+from collections.abc import Callable
 from pathlib import Path
 
 import pytest
@@ -20,6 +21,28 @@ from dimos.memory.store.sqlite import SqliteStore
 from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
 from dimos.msgs.geometry_msgs.Quaternion import Quaternion
 from dimos.msgs.geometry_msgs.Vector3 import make_vector3
+
+
+@pytest.fixture(autouse=True)
+def shell(monkeypatch: pytest.MonkeyPatch) -> Callable[..., None]:
+    """Run as if the evals started from a shell with no viewer settings.
+
+    Call ``shell(VIEWER="rerun")`` to set some for the rest of the test.
+    """
+    for name in (
+        "VIEWER",
+        "RERUN_OPEN",
+        "RERUN_WEB",
+        "SIMULATIONMODULE__VIEWER",
+        "TORCHINDUCTOR_COMPILE_THREADS",
+    ):
+        monkeypatch.delenv(name, raising=False)
+
+    def set_env(**env: str) -> None:
+        for name, value in env.items():
+            monkeypatch.setenv(name, value)
+
+    return set_env
 
 
 @pytest.fixture

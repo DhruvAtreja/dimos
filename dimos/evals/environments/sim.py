@@ -19,6 +19,7 @@ from __future__ import annotations
 from abc import abstractmethod
 from collections.abc import Sequence
 import math
+import os
 from pathlib import Path
 import socket
 import time
@@ -26,6 +27,7 @@ from typing import TYPE_CHECKING, Any
 
 from dimos.agents.mcp.mcp_adapter import McpAdapter
 from dimos.constants import RECORDINGS_DIR
+from dimos.core.coordination.blueprint_config.sources import configuration_environment
 from dimos.core.run_registry import list_runs
 from dimos.e2e_tests.dimos_cli_call import DimosCliCall
 from dimos.evals.constants import RAW_ENDPOINT
@@ -46,10 +48,6 @@ class SimConfig(BaseConfig):
     disable: tuple[str, ...] = ()
     # Also expose the robot as plain Zenoh topics (raw-robot-bridge) for agents without dimOS.
     raw_bridge: bool = False
-    # Compose the Rerun bridge and open its viewer. Off, nothing is drawn: the
-    # grader reads the recording, and the bridge would otherwise buffer every
-    # image and point cloud of the run.
-    rerun: bool = False
     attach: bool = False
     launch_timeout_s: float = 1200.0
     at_rest_m: float = 0.05
@@ -62,6 +60,12 @@ class Sim(Environment):
 
     Agent modules extend that composition. ``attach`` uses an existing dimos
     instead, which must have been started with ``--record``.
+
+    Rerun is off unless the user turns it on as for any dimos run: ``VIEWER=rerun``
+    (and optionally ``RERUN_OPEN``, ``RERUN_WEB``) in the shell or ``.env``. Off,
+    the Rerun bridge is disabled, since it would hold every image and point cloud
+    of the run. Viewers the blueprint turns on itself, such as the manipulation
+    module's Viser page, stay on.
     """
 
     has_robot = True
@@ -127,13 +131,25 @@ class Sim(Environment):
             proc = DimosCliCall()
             self.configure_launch(proc)
             disable = list(self.config.disable)
-            if not self.config.rerun:
-                proc.global_args += ["--viewer", "none", "--rerun-open", "none"]
+            # The launched dimos reads the user's own Rerun settings from the
+            # shell or .env; the eval only fills in the ones left unset.
+            chosen = {
+                name.lower(): value for name, value in configuration_environment(None).items()
+            }
+            rerun = chosen.get("viewer", "none") != "none"
+            if "viewer" not in chosen:
+                proc.global_args += ["--viewer", "none"]
+            if not rerun:
+                if "rerun_open" not in chosen:
+                    proc.global_args += ["--rerun-open", "none"]
                 if "rerun-bridge-module" not in disable:
                     disable.append("rerun-bridge-module")
                 # torch.compile otherwise forks one compile worker per core,
                 # ~0.5 GB of resident memory and two dozen processes per case.
-                proc.extra_env.setdefault("TORCHINDUCTOR_COMPILE_THREADS", "1")
+                proc.extra_env.setdefault(
+                    "TORCHINDUCTOR_COMPILE_THREADS",
+                    os.environ.get("TORCHINDUCTOR_COMPILE_THREADS", "1"),
+                )
             proc.global_args.append("--record")
             disabled = [arg for name in disable for arg in ("--disable", name)]
             bridge = ["raw-robot-bridge"] if self.config.raw_bridge else []
