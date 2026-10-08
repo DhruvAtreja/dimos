@@ -310,6 +310,16 @@ already-running dimos instead. To
 compare two tool sets on one task, run the suite twice with different
 `--set modules=...`; each `trajectory.json` records the tools exposed.
 
+**Files.** An environment produces artifacts, files by name such as `recording`.
+The grader gets all of them. The agent gets only the ones named in the
+environment's `agent_artifacts`: by default the `recording` for simulators and
+the `image` for `ImageFile`. `MujocoEnvironment` and `Sim2Environment` name none,
+since their recordings hold the true object poses the agent is meant to find. A `Dataset` names none, since its `recording` is
+the whole dataset and the agent is given the `select`ed streams instead. A file
+that holds answers, like Habitat's episode metadata with its prop positions,
+stays with the grader. Pass `agent_artifacts=(...)` to the environment to
+change it.
+
 **Limits.** The case's `timeout_s` sets the time budget for the agent and
 subsequent motion settling. `McpClientAdapter` returns what it has when its
 wait expires, marked `timeout`; `QuestionAnswer` and `Blind` rely on the
@@ -467,7 +477,11 @@ waits until every joint is slower than `at_rest_rad_s`. Floating-base robots
 still settle on `odom`. The recording keeps color, camera info, joint state,
 `tf` and `odom`; depth frames are float32, which the JPEG recorder rejects. `module_env` passes extra
 `MODULE__FIELD` overrides to the launched dimos, which beat blueprint-pinned
-values, so a case can retune a module without a new blueprint.
+values, so a case can retune a module without a new blueprint. `scene` passes
+`--mujoco-scene`: a full MJCF, robot included, that `xarm-perception-sim` loads
+instead of its default `scene.xml`. `base_height` sets the planning model's
+existing `base_pose` to world `(0, 0, height)` with identity orientation. Without it,
+the robot's configured base pose is retained (0.12 m for the default xArm scene).
 `dimos.evals.suites.mujoco_xarm` is the xArm7 table scene: pick up the cylinder, then put
 the red ball on top of it. Each task has two variants, selected by tag. `raw` disables the
 perception modules, so the agent has the planner skills and a wrist-camera image only;
@@ -533,7 +547,8 @@ some point, SceneReplica's grasp success) and half for `resting_in_region` (it e
 on the table, inside the square, the pick-and-place success). Every check's score lands in the
 results row's `details`, next to `unmoved` (the share of the other objects left where they
 were) and, for a failed trial, `cause`: `perception` when no scan ever named the target,
-`planning` when a motion skill returned a planning error, `execution` otherwise. Tags select
+`planning` when `pick_object` (before the lift) or `place_at` (after it) said the planner
+found no path, `execution` otherwise. Tags select
 a scene (`scene-01`), an object (`cracker_box`) or the pick order within a scene
 (`order-1`, nearest to the arm first); scene-11's cracker box is tagged `unreachable`. The
 summary script prints both success counts over the trials actually run:
@@ -567,6 +582,10 @@ MANIPULATIONMODULE__VISUALIZATION__BACKEND=none dimos evals run dimos.evals.suit
 
 The Rerun bridge holds up to 512 MB of the run's images and clouds, so leave it off for long
 unattended runs.
+
+`dimos.evals.suites.robosuite` provides six manipulation cases using
+recorded body poses. See `data/robosuite/README.md` in the downloaded data
+package for tasks, scene setup and usage; use `--tags <scene>` to select a case.
 
 ## Running
 

@@ -90,12 +90,6 @@ def recording_file(streams: Sequence[Stream[Any, Any]], path: Path) -> Path:
     return path
 
 
-def agent_files(env: RunningEnvironment) -> dict[str, Path]:
-    """The environment's files the agent may be told about: every artifact that is not
-    reserved for the grader."""
-    return {name: path for name, path in env.artifacts.items() if name not in env.grader_only}
-
-
 _json_object = TypeAdapter(dict[str, JsonValue])
 
 
@@ -252,7 +246,7 @@ class PiAdapter(Agent):
         if self.config.no_dimos:
             files = self._no_dimos_files(env, run_dir)
         else:
-            files = agent_files(env)
+            files = dict(env.artifacts)
             if env.streams:
                 files["recording"] = recording_file(env.streams, run_dir / "recording.db")
         parts = [self.config.system_prompt, self.config.instructions]
@@ -280,7 +274,7 @@ class PiAdapter(Agent):
 
     def _no_dimos_files(self, env: RunningEnvironment, run_dir: Path) -> dict[str, Path]:
         """ROBOT.md for a robot; the selected observations as plain files for a dataset."""
-        files = agent_files(env)
+        files = dict(env.artifacts)
         files.pop("recording", None)  # a dimOS memory store; not readable without dimOS
         if env.raw_endpoint:
             readme = run_dir / "ROBOT.md"

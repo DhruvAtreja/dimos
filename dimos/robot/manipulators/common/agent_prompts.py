@@ -77,8 +77,9 @@ world-frame pose (meters / radians).
 1. Call **scan_objects** with all requested object prompts.
 2. Call **pick_object** with the exact object ID returned by the scan.
 3. Call **place_at** only after a successful pick.
-4. Believe the result: GRASP_FAILED means the object is still on the table (re-scan, then \
-pick again) and PLACE_INCOMPLETE says how far from the target it ended; neither is a success.
+4. Believe the result: only "Pick complete" and "Place complete" are successes. "Pick not \
+complete" means the object is still on the table (re-scan, then pick again); a place that is \
+not complete says how far from the target the object ended.
 
 # Rules
 - Use an exact object ID from the latest scan output. Do NOT select by name.

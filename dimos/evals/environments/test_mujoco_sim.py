@@ -13,6 +13,7 @@
 # limitations under the License.
 
 import json
+from pathlib import Path
 import time
 
 import numpy as np
@@ -20,6 +21,7 @@ import pytest
 
 from dimos.e2e_tests.dimos_cli_call import DimosCliCall
 from dimos.evals.environments.mujoco_sim import MujocoEnvironment
+from dimos.manipulation.manipulation_module import ManipulationModuleConfig
 from dimos.memory.store.memory import MemoryStore
 from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
 from dimos.msgs.geometry_msgs.Transform import Transform
@@ -59,6 +61,18 @@ def test_launch_flags(monkeypatch):
     environment().configure_launch(proc)
     assert "MUJOCOSIMMODULE__TRACKED_BODIES" not in proc.extra_env
 
+    proc = DimosCliCall()
+    environment(scene=Path("scenes/table.xml")).configure_launch(proc)
+    assert proc.global_args[-2:] == ["--mujoco-scene", str(Path("scenes/table.xml").resolve())]
+
+    proc = DimosCliCall()
+    environment(base_height=0.912).configure_launch(proc)
+    assert json.loads(proc.extra_env["MANIPULATIONMODULE__MODEL__BASE_POSE"]) == {
+        "frame_id": "world",
+        "position": [0.0, 0.0, 0.912],
+    }
+    assert "--xarm7-sim-base-height" not in proc.global_args
+
     monkeypatch.setenv("MUJOCOSIMMODULE__HEADLESS", "false")
     monkeypatch.setenv("DISPLAY", ":0")
     proc = DimosCliCall()
@@ -78,6 +92,7 @@ def test_module_env_reaches_blueprint_parser(monkeypatch):
     proc = DimosCliCall()
     environment(
         tracked_bodies=("apple", "cup"),
+        base_height=0.912,
         module_env={
             "OBJECTSCENEREGISTRATIONMODULE__DETECTOR_BACKEND": "owlv2",
             "OBJECTSCENEREGISTRATIONMODULE__SEGMENTATION_BACKEND": "yolo",
@@ -90,6 +105,14 @@ def test_module_env_reaches_blueprint_parser(monkeypatch):
     sim = parsed.module_kwargs("mujocosimmodule")
     assert sim["headless"] is True
     assert sim["tracked_bodies"] == ["apple", "cup"]
+
+    mounted = ManipulationModuleConfig(**parsed.module_kwargs("manipulationmodule"))
+    assert mounted.model.base_pose.position.z == pytest.approx(0.912)
+    defaults = BlueprintConfigParser(xarm_perception_sim).parse(environ={})
+    default = ManipulationModuleConfig(**defaults.module_kwargs("manipulationmodule"))
+    assert default.model.base_pose.position.z == pytest.approx(0.12)
+    assert mounted.model.joint_names == default.model.joint_names
+    assert mounted.model.base_pose.orientation == default.model.base_pose.orientation
 
 
 def test_latest_pose_needs_odom():
@@ -169,7 +192,7 @@ def test_launch_and_cleanup(tmp_path, mocker):
         assert proc.extra_env["TORCHINDUCTOR_COMPILE_THREADS"] == "1"
         ready.assert_called_once()
         assert set(result.artifacts) == {"recording"}
-        assert result.grader_only == {"recording"}, "the agent must not be handed the recording"
+        assert env.config.agent_artifacts == (), "the agent must not be handed the recording"
     finally:
         env.stop()
     proc.stop.assert_called_once()

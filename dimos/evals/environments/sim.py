@@ -31,10 +31,9 @@ from dimos.core.coordination.blueprint_config.sources import configuration_envir
 from dimos.core.run_registry import list_runs
 from dimos.e2e_tests.dimos_cli_call import DimosCliCall
 from dimos.evals.constants import RAW_ENDPOINT
-from dimos.evals.environments.base import Environment
+from dimos.evals.environments.base import Environment, EnvironmentConfig
 from dimos.evals.environments.lib.launch import default_mcp_url, validate_blueprints
 from dimos.evals.types import RunningEnvironment
-from dimos.protocol.service.spec import BaseConfig
 
 if TYPE_CHECKING:
     from dimos.evals.agents.base import Agent
@@ -42,7 +41,7 @@ if TYPE_CHECKING:
     from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
 
 
-class SimConfig(BaseConfig):
+class SimConfig(EnvironmentConfig):
     blueprint: list[str]
     # Module registry names to disable in the composed blueprint.
     disable: tuple[str, ...] = ()
@@ -53,6 +52,7 @@ class SimConfig(BaseConfig):
     at_rest_m: float = 0.05
     at_rest_s: float = 2.0
     settle_poll_s: float = 0.5
+    agent_artifacts: tuple[str, ...] = ("recording",)
 
 
 class Sim(Environment):
@@ -91,10 +91,6 @@ class Sim(Environment):
     def prepare_recording(self, recording: Store, path: Path, deadline: float) -> dict[str, Path]:
         """Wait for simulator observations and return extra artifacts, if needed."""
         return {}
-
-    def grader_only(self) -> frozenset[str]:
-        """Names of artifacts the agent is never told about; the grader still opens them."""
-        return frozenset()
 
     @abstractmethod
     def latest_pose(self, recording: Store) -> PoseStamped:
@@ -190,7 +186,6 @@ class Sim(Environment):
             streams=(),
             artifacts=artifacts,
             raw_endpoint=self._raw_endpoint if self.config.raw_bridge else None,
-            grader_only=self.grader_only(),
         )
 
     def _wait_recording(self, deadline: float, pid: int | None) -> Path:

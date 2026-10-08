@@ -29,15 +29,8 @@ from typing import TYPE_CHECKING
 
 from dimos.evals.environments.lib.sim_truth import first_entity_pose, last_entity_pose
 from dimos.evals.environments.sim2 import Sim2Environment
-from dimos.evals.suites.mujoco_xarm import (
-    PERCEPTION_SCENE,
-    SCENE,
-    TRACKED,
-    Positions,
-    Variant,
-    lifted,
-    stacked_on,
-)
+from dimos.evals.scorers import Positions, lifted, stacked_on
+from dimos.evals.suites.mujoco_xarm import PERCEPTION_SCENE, SCENE, TRACKED, Variant
 from dimos.evals.types import EvalCase, Suite
 
 if TYPE_CHECKING:
