@@ -24,6 +24,7 @@ import numpy as np
 import pytest
 
 from dimos.manipulation.grasp_verification import GripperSettle
+from dimos.manipulation.grasping.heuristic_grasp import HeuristicGraspConfig, heuristic_grasps
 from dimos.manipulation.manipulation_skills import ManipulationSkills
 from dimos.manipulation.manipulation_spec import (
     CommandResult,
@@ -136,7 +137,8 @@ def _held_id(module: PickAndPlaceModule) -> str | None:
 
 @pytest.fixture
 def module() -> Iterator[PickAndPlaceModule]:
-    instance = PickAndPlaceModule(planning_frame="world")
+    # The heuristic fallback has its own tests below.
+    instance = PickAndPlaceModule(planning_frame="world", heuristic_fallback=False)
     instance._scene = MagicMock()
     instance._grasp_generator = MagicMock()
     instance._manipulation = MagicMock()
@@ -937,7 +939,16 @@ def test_a_first_try_success_records_one_try(module: PickAndPlaceModule) -> None
 
     assert result.message == "Pick complete"
     assert result.metadata["tries"] == [
-        {"try": 1, "object_id": "cup-1", "rank": 0, "score": 1.0, "skipped": 0, "grasped": True}
+        {
+            "try": 1,
+            "object_id": "cup-1",
+            "source": "provider",
+            "rank": 0,
+            "score": 1.0,
+            "skipped": 0,
+            "grasped": True,
+            "candidates_by_source": {"provider": 1},
+        }
     ]
     assert result.metadata["handoff"] is False
 
@@ -1397,3 +1408,168 @@ def test_without_a_scan_pose_both_checks_look_from_where_the_arm_is(
     assert result.metadata["gripper_lift_m"] == pytest.approx(0.1)
     # The scan, the lift check and the re-scan.
     assert scene.scan_scene.call_count == 3
+
+
+def _block_cloud() -> PointCloud2:
+    """A 6 cm by 4 cm block, 5 cm tall, centred on the cup: two heuristic grasps,
+    the centre one and the same turned a quarter turn."""
+    bounds = ((0.07, 0.13), (-0.02, 0.02), (0.175, 0.225))
+    axes = [np.arange(low, high + 1e-9, 0.005) for low, high in bounds]
+    points = np.stack(np.meshgrid(*axes, indexing="ij"), axis=-1).reshape(-1, 3)
+    return PointCloud2.from_numpy(points.astype(np.float32), frame_id="world", timestamp=1.0)
+
+
+@pytest.fixture
+def fallback(module: PickAndPlaceModule) -> PickAndPlaceModule:
+    """The module with the heuristic fallback on, GraspGenX as the provider and a real
+    cloud. GraspGenX's one grasp is 5 cm off the heuristic centre grasp."""
+    module.config.heuristic_fallback = True
+    module._grasp_generator.remote_name = "GraspGenXModule"
+    module._grasp_generator.propose_grasps.return_value = GraspCandidateArray(
+        Header(1.0, "world"), [_grasp_at(0.1, 0.05, 0.9)]
+    )
+    module._scene.get_object_pointcloud_by_object_id.return_value = _block_cloud()
+    return module
+
+
+def test_provider_grasps_are_tried_before_heuristic_grasps(fallback: PickAndPlaceModule) -> None:
+    result = fallback.pick_object("cup-1")
+
+    assert result.message == "Pick complete"
+    assert result.metadata["source"] == "graspgenx"
+    assert result.metadata["grasp_sources"] == ["graspgenx", "heuristic"]
+    assert _tries(result, "source") == ["graspgenx"]
+    assert _tries(result, "candidates_by_source") == [{"graspgenx": 1, "heuristic": 2}]
+    assert [c.pose.position.y for c in fallback.get_grasp_candidates().candidates] == (
+        pytest.approx([0.05, 0.0, 0.0], abs=0.003)
+    )
+
+
+def test_heuristic_grasps_are_used_when_the_provider_returns_none(
+    fallback: PickAndPlaceModule,
+) -> None:
+    fallback._grasp_generator.propose_grasps.return_value = GraspCandidateArray(
+        Header(1.0, "world"), []
+    )
+
+    result = fallback.pick_object("cup-1")
+
+    assert result.message == "Pick complete"
+    assert _tries(result, "source") == ["heuristic"]
+    assert _tries(result, "rank") == [0]
+    assert _tries(result, "candidates_by_source") == [{"graspgenx": 0, "heuristic": 2}]
+
+
+def test_heuristic_grasps_are_used_when_the_provider_raises(fallback: PickAndPlaceModule) -> None:
+    fallback._grasp_generator.propose_grasps.side_effect = RuntimeError("model not loaded")
+
+    result = fallback.pick_object("cup-1")
+
+    assert result.message == "Pick complete"
+    assert _tries(result, "source") == ["heuristic"]
+    assert _tries(result, "grasp_provider_error") == ["RuntimeError: model not loaded"]
+
+
+def test_the_result_says_so_when_the_provider_raises_and_there_is_no_grasp(
+    fallback: PickAndPlaceModule,
+) -> None:
+    fallback._grasp_generator.propose_grasps.side_effect = RuntimeError("model not loaded")
+    # Two points: too few for a heuristic grasp.
+    fallback._scene.get_object_pointcloud_by_object_id.return_value = PointCloud2.from_numpy(
+        np.asarray([[0.08, -0.02, 0.18], [0.12, 0.02, 0.22]], dtype=np.float32),
+        frame_id="world",
+        timestamp=1.0,
+    )
+
+    result = fallback.pick_object("cup-1")
+
+    assert result.message == (
+        "Generated 0 grasp candidates for object cup-1. "
+        "The grasp provider graspgenx failed: RuntimeError: model not loaded."
+    )
+    assert result.metadata["grasp_provider_error"] == "RuntimeError: model not loaded"
+
+
+def test_heuristic_grasps_are_used_when_no_provider_grasp_is_reachable(
+    fallback: PickAndPlaceModule,
+) -> None:
+    fallback._manipulation.plan_to_poses.side_effect = [NO_PATH, PLANNED]
+
+    result = fallback.pick_object("cup-1")
+
+    assert result.message == "Pick complete"
+    assert _tries(result, "source") == ["heuristic"]
+
+
+def test_heuristic_grasps_are_tried_once_the_provider_grasps_miss(
+    fallback: PickAndPlaceModule,
+) -> None:
+    """Each re-scan proposes both sources again; a grasp tried from either is skipped."""
+    scene: Any = fallback._scene
+    scene.scan_scene.side_effect = [
+        _cup_at(0.1, 0.0, 0.2),  # lift check: still on the table
+        _cup_at(0.1, 0.0, 0.2, object_id="cup-7"),  # re-scan
+        _cup_at(0.1, 0.0, 0.2, object_id="cup-7"),  # lift check: still on the table
+        _cup_at(0.1, 0.0, 0.2, object_id="cup-7"),  # re-scan
+        _cup_at(0.1, 0.0, 0.3, object_id="cup-7"),  # lift check: rode up
+    ]
+
+    result = fallback.pick_object("cup-1")
+
+    assert result.message == "Pick complete"
+    assert _tries(result, "source") == ["graspgenx", "heuristic", "heuristic"]
+    assert _tries(result, "rank") == [0, 0, 1]
+    assert _tries(result, "skipped") == [0, 1, 2]
+    assert _tries(result, "grasped") == [False, False, True]
+
+
+def test_a_provider_that_is_the_heuristic_gets_no_second_copy(
+    fallback: PickAndPlaceModule,
+) -> None:
+    fallback._grasp_generator.remote_name = "HeuristicGraspModule"
+    fallback._grasp_generator.propose_grasps.return_value = heuristic_grasps(
+        _block_cloud(), HeuristicGraspConfig()
+    )
+
+    result = fallback.pick_object("cup-1")
+
+    assert result.metadata["grasp_sources"] == ["heuristic"]
+    assert _tries(result, "candidates_by_source") == [{"heuristic": 2}]
+
+
+def test_heuristic_grasps_that_repeat_a_provider_grasp_are_not_tried(
+    fallback: PickAndPlaceModule,
+) -> None:
+    """A provider under another name that returns the heuristic's own grasps."""
+    fallback._grasp_generator.propose_grasps.return_value = heuristic_grasps(
+        _block_cloud(), HeuristicGraspConfig()
+    )
+    fallback._manipulation.plan_to_poses.return_value = NO_PATH
+
+    result = fallback.pick_object("cup-1")
+
+    assert result.message.startswith("The planner found no path to any of the 2 grasp")
+    assert fallback._manipulation.plan_to_poses.call_count == 2
+
+
+def test_with_the_fallback_off_only_provider_grasps_are_tried(
+    fallback: PickAndPlaceModule,
+) -> None:
+    fallback.config.heuristic_fallback = False
+    fallback._grasp_generator.propose_grasps.return_value = GraspCandidateArray(
+        Header(1.0, "world"), []
+    )
+
+    result = fallback.pick_object("cup-1")
+
+    assert result.message == "Generated 0 grasp candidates for object cup-1."
+    assert result.metadata["grasp_sources"] == ["graspgenx"]
+    fallback._grasp_generator.propose_grasps.side_effect = RuntimeError("model not loaded")
+    with pytest.raises(RuntimeError, match="model not loaded"):
+        fallback.pick_object("cup-1")
+
+
+def test_every_pick_result_names_the_grasp_sources(fallback: PickAndPlaceModule) -> None:
+    result = fallback.pick_object("missing")
+
+    assert result.metadata["grasp_sources"] == ["graspgenx", "heuristic"]
