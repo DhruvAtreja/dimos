@@ -20,7 +20,12 @@ import numpy as np
 import pytest
 
 from dimos.manipulation.grasping.grasp_gen_spec import GraspGenSpec
-from dimos.manipulation.grasping.heuristic_grasp import HeuristicGraspModule
+from dimos.manipulation.grasping.heuristic_grasp import (
+    HeuristicGraspConfig,
+    HeuristicGraspModule,
+    _narrow_axis_yaw,
+    heuristic_grasps,
+)
 from dimos.msgs.geometry_msgs.Vector3 import Vector3
 from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
 from dimos.spec.utils import spec_annotation_compliance
@@ -90,16 +95,16 @@ def test_heuristic_grasp_aligns_jaw_axis_with_narrow_axis(module: HeuristicGrasp
 
 
 def test_heuristic_grasp_canonicalizes_pca_eigenvector_sign(
-    module: HeuristicGraspModule, monkeypatch: pytest.MonkeyPatch
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     values = np.asarray([1.0, 4.0])
     same_axis = np.asarray([[1.0, 0.0], [0.0, 1.0]])
     opposite_axis = np.asarray([[-1.0, 0.0], [0.0, 1.0]])
 
     monkeypatch.setattr(np.linalg, "eigh", lambda _: (values, same_axis))
-    positive_yaw = module._narrow_axis_yaw(np.zeros((3, 2), dtype=np.float32))
+    positive_yaw = _narrow_axis_yaw(np.zeros((3, 2), dtype=np.float32))
     monkeypatch.setattr(np.linalg, "eigh", lambda _: (values, opposite_axis))
-    negative_yaw = module._narrow_axis_yaw(np.zeros((3, 2), dtype=np.float32))
+    negative_yaw = _narrow_axis_yaw(np.zeros((3, 2), dtype=np.float32))
 
     assert negative_yaw == pytest.approx(positive_yaw)
 
@@ -248,3 +253,22 @@ def test_a_round_footprint_gets_no_turned_grasp(module: HeuristicGraspModule) ->
     proposals = module.propose_grasps(_cloud(points))
 
     assert [c.score for c in proposals.candidates] == pytest.approx([1.0])
+
+
+def test_the_plain_function_gives_the_module_grasps() -> None:
+    cloud = _cloud(_box((-0.10, 0.10), (-0.02, 0.02), (0.0, 0.04)))
+    module = HeuristicGraspModule(max_grasp_width=0.25, min_split_length=0.15)
+    try:
+        expected = module.propose_grasps(cloud)
+    finally:
+        module.stop()
+
+    proposals = heuristic_grasps(
+        cloud, HeuristicGraspConfig(max_grasp_width=0.25, min_split_length=0.15)
+    )
+
+    assert proposals.header.frame_id == expected.header.frame_id
+    assert proposals.header.timestamp == expected.header.timestamp
+    assert [(c.pose, c.score) for c in proposals.candidates] == [
+        (c.pose, c.score) for c in expected.candidates
+    ]
