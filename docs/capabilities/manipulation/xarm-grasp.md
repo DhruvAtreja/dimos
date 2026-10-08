@@ -7,7 +7,7 @@ room scene with `--simulation`:
 
 | Blueprint | Grasps |
 |---|---|
-| `xarm-grasp` | one top-down heuristic grasp, score 1.0 |
+| `xarm-grasp` | up to four top-down heuristic grasps: the middle, each half of a long object, the middle turned a quarter turn |
 | `xarm-grasp-graspgenx` | up to 100 ranked learned grasps |
 
 ```bash
