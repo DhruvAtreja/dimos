@@ -15,10 +15,14 @@
 """Regression tests for safe refreshes of Git-backed robot assets."""
 
 from pathlib import Path
+import shutil
 
 from git import Repo
+from git.remote import Remote
 import pytest
+from pytest_mock import MockerFixture
 
+from dimos.robot.assets import git_cache
 from dimos.robot.assets.git_cache import GitAssetCache, GitAssetCacheWarning
 
 
@@ -73,3 +77,44 @@ def test_refresh_updates_clean_checkout(tmp_path: Path) -> None:
     assert original_commit != updated_commit
     assert Repo(checkout).head.commit.hexsha == updated_commit
     assert (checkout / "model.urdf").read_text() == "updated"
+
+
+def test_pinned_commit_checkout_is_used_without_fetching(
+    tmp_path: Path, mocker: MockerFixture, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    remote_path, author = _make_remote(tmp_path)
+    commit = author.head.commit.hexsha
+    cache = GitAssetCache(tmp_path / "cache")
+    checkout = cache.resolve(str(remote_path), commit)
+    # Forget this process's earlier answer, as a fresh process would.
+    monkeypatch.setattr(git_cache, "_pinned_checkouts", {})
+    fetch = mocker.patch.object(Remote, "fetch")
+
+    assert GitAssetCache(tmp_path / "cache").resolve(str(remote_path), commit) == checkout
+    fetch.assert_not_called()
+    assert Repo(checkout).head.commit.hexsha == commit
+    assert (checkout / "model.urdf").read_text() == "initial"
+
+
+def test_pinned_commit_resolves_once_per_process(tmp_path: Path, mocker: MockerFixture) -> None:
+    remote_path, author = _make_remote(tmp_path)
+    commit = author.head.commit.hexsha
+    checkout = GitAssetCache(tmp_path / "cache").resolve(str(remote_path), commit)
+    refresh = mocker.spy(GitAssetCache, "_refresh_cached")
+
+    # A new cache object per call, like every unpickled robot description path.
+    paths = {GitAssetCache(tmp_path / "cache").resolve(str(remote_path), commit) for _ in range(5)}
+
+    assert paths == {checkout}
+    refresh.assert_not_called()
+
+
+def test_pinned_commit_is_cloned_again_after_cache_removal(tmp_path: Path) -> None:
+    remote_path, author = _make_remote(tmp_path)
+    commit = author.head.commit.hexsha
+    cache = GitAssetCache(tmp_path / "cache")
+    checkout = cache.resolve(str(remote_path), commit)
+    shutil.rmtree(checkout)
+
+    assert cache.resolve(str(remote_path), commit) == checkout
+    assert Repo(checkout).head.commit.hexsha == commit

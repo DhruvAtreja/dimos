@@ -18,8 +18,10 @@ from __future__ import annotations
 
 from hashlib import sha256
 from pathlib import Path
+import re
 import shutil
 import tempfile
+import threading
 from urllib.parse import urlparse
 import warnings
 
@@ -29,6 +31,15 @@ from git import GitCommandError, InvalidGitRepositoryError, NoSuchPathError, Rep
 from dimos.constants import CACHE_DIR
 
 DEFAULT_ROBOT_ASSET_CACHE_ROOT = CACHE_DIR / "robot_assets"
+
+# A full commit hash names one fixed set of files, so a checkout already at it
+# never needs a fetch.
+_COMMIT_SHA = re.compile(r"[0-9a-f]{40}|[0-9a-f]{64}")
+
+# Checkouts this process already resolved for a commit-hash ref, keyed by
+# (sources directory, repo URL, ref).
+_pinned_checkouts: dict[tuple[Path, str, str], Path] = {}
+_pinned_checkouts_lock = threading.Lock()
 
 
 class GitAssetCacheError(RuntimeError):
@@ -44,6 +55,8 @@ class GitAssetCache:
 
     Policy:
     - clone when the cache is missing;
+    - for a ref that is a full commit hash, use a clean checkout already at that
+      commit as is, and resolve it only once per process;
     - for clean cached repositories, fetch and check out the declared ref;
     - if fetching/updating a cached repository fails, warn and reuse the cache;
     - if the cached repository has local changes, warn and skip updates.
@@ -56,6 +69,13 @@ class GitAssetCache:
 
     def resolve(self, repo_url: str, ref: str) -> Path:
         """Return a local checkout for `repo_url` at `ref`."""
+        pinned_key = (self._sources_root, repo_url, ref) if _is_commit_sha(ref) else None
+        if pinned_key is not None:
+            with _pinned_checkouts_lock:
+                known = _pinned_checkouts.get(pinned_key)
+            if known is not None and known.exists():
+                return known
+
         key = self._source_key(repo_url, ref)
         checkout_path = self._sources_root / key / self._repo_slug(repo_url)
         lock_path = self._locks_root / f"{key}.lock"
@@ -65,8 +85,13 @@ class GitAssetCache:
 
         with FileLock(str(lock_path)):
             if not checkout_path.exists():
-                return self._clone_missing(repo_url, ref, checkout_path)
-            return self._refresh_cached(repo_url, ref, checkout_path)
+                resolved = self._clone_missing(repo_url, ref, checkout_path)
+            else:
+                resolved = self._refresh_cached(repo_url, ref, checkout_path)
+        if pinned_key is not None:
+            with _pinned_checkouts_lock:
+                _pinned_checkouts[pinned_key] = resolved
+        return resolved
 
     @staticmethod
     def _source_key(repo_url: str, ref: str) -> str:
@@ -112,6 +137,9 @@ class GitAssetCache:
             )
             return checkout_path
 
+        if _is_commit_sha(ref) and _head_sha(repo) == ref:
+            return checkout_path
+
         try:
             repo.remotes.origin.fetch(tags=True)
             protection_reason = _git_protection_reason(repo)
@@ -148,6 +176,18 @@ class GitAssetCache:
             repo.git.checkout(ref)
         except GitCommandError as exc:
             raise GitAssetCacheError(f"Could not check out ref {ref!r}") from exc
+
+
+def _is_commit_sha(ref: str) -> bool:
+    return _COMMIT_SHA.fullmatch(ref) is not None
+
+
+def _head_sha(repo: Repo) -> str | None:
+    """Commit hash the checkout is at, or None if it cannot be read."""
+    try:
+        return repo.head.commit.hexsha
+    except Exception:
+        return None  # the caller then fetches and checks out as usual
 
 
 def git_checkout_protection_reason(checkout: Path) -> str | None:

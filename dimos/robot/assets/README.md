@@ -30,6 +30,8 @@ Assets live under:
 `GitAssetCache` uses the “fresh-when-safe” policy:
 
 - clone when the source is missing;
+- when the ref is a full commit hash, use a clean checkout already at that
+  commit without fetching, and resolve it once per process;
 - update clean cached repos before use;
 - warn and keep cached content if update fails;
 - warn and skip update for dirty cached repos or checkouts with local-only
