@@ -95,9 +95,9 @@ class PickAndPlaceModuleConfig(ModuleConfig):
     retry_skip_angle: float = Field(default=0.35, ge=0.0)
     # How far (metres, horizontally) a released object may rest from the place target.
     place_tolerance: float = Field(default=0.07, gt=0.0)
-    # How long (seconds) a check after a lift or a release waits for a camera
-    # frame taken after the arm stopped.
-    fresh_frame_timeout: float = Field(default=2.0, gt=0.0)
+    # How long (seconds) a check after a lift, a miss or a release waits for a
+    # camera frame taken after the arm stopped. A scan can take a second or more.
+    fresh_frame_timeout: float = Field(default=8.0, gt=0.0)
 
 
 @dataclass(frozen=True)
@@ -390,14 +390,8 @@ class PickAndPlaceModule(Module):
                     SkillResult(f"{last.message} {stopped.message}", metadata=last.metadata), tries
                 )
             found = self._rescan(target)
-            if found is None:
-                return self._stop_trying(
-                    last,
-                    tries,
-                    f"A new scan for {target.name} found none within "
-                    f"{self.config.lift_check_radius:.2f} m of where object "
-                    f"{target.object_id} was.",
-                )
+            if isinstance(found, str):
+                return self._stop_trying(last, tries, found)
             proposal = self._propose(found, crop=True)
             if isinstance(proposal, SkillResult):
                 return self._stop_trying(last, tries, proposal.message)
@@ -556,23 +550,29 @@ class PickAndPlaceModule(Module):
             return None
         return self._run(self._manipulation.plan_to_joints({group: joints}))
 
-    def _rescan(self, target: ScannedObject) -> ScannedObject | None:
+    def _rescan(self, target: ScannedObject) -> ScannedObject | str:
         """Detect the object again after a missed grasp and record it in the latest scan.
 
         Args:
             target: The object as it was last seen.
 
         Returns the detection that may be the target (see ``_sightings``) nearest
-        to where it was, within ``lift_check_radius``, or None when there is none.
+        to where it was, within ``lift_check_radius``, or a statement of why
+        there is none.
         """
         detections = self._detect_after(target.name, time.time())
+        if detections is None:
+            return f"A new scan for {target.name} found nothing: {self._no_frame()}."
         found = [
             obj
             for obj in self._sightings(target, detections)
             if obj.position.distance(target.position) <= self.config.lift_check_radius
         ]
         if not found:
-            return None
+            return (
+                f"A new scan for {target.name} found none within "
+                f"{self.config.lift_check_radius:.2f} m of where object {target.object_id} was."
+            )
         nearest = min(found, key=lambda obj: obj.position.distance(target.position))
         self._objects.pop(target.object_id, None)
         self._objects[nearest.object_id] = nearest
@@ -734,7 +734,14 @@ class PickAndPlaceModule(Module):
                     jaws=round(jaws, 3),
                     **facts,
                 )
-        sightings = self._sightings(target, self._detect_after(target.name, time.time()))
+        detections = self._detect_after(target.name, time.time())
+        if detections is None:
+            # Raising here would leave the gripper closed on an object nobody tracks.
+            return SkillResult(
+                f"Pick complete on the jaw reading alone: {self._no_frame()}.{note}",
+                metadata={**facts, "object_lift_m": None, "grasped": True},
+            )
+        sightings = self._sightings(target, detections)
         if at_scan_pose:
             # From the scan pose the camera sees more of the table, so only the
             # target itself counts as left behind, not a neighbour with its label.
@@ -779,7 +786,7 @@ class PickAndPlaceModule(Module):
             return [seen[target.object_id]]
         return [obj for obj in seen.values() if obj.object_id not in self._objects]
 
-    def _detect_after(self, label: str, since: float) -> Detection3DArray:
+    def _detect_after(self, label: str, since: float) -> Detection3DArray | None:
         """Detect a label in a camera frame taken after a given time.
 
         Args:
@@ -787,7 +794,7 @@ class PickAndPlaceModule(Module):
             since: Wall-clock time (seconds, as ``time.time()``) the frame must be
                 newer than, e.g. when the arm stopped.
 
-        Raises TimeoutError when no such frame arrives within ``fresh_frame_timeout``.
+        Returns None when no such frame arrives within ``fresh_frame_timeout``.
         """
         deadline = time.monotonic() + self.config.fresh_frame_timeout
         while True:
@@ -795,11 +802,15 @@ class PickAndPlaceModule(Module):
             if detections.ts >= since:
                 return detections
             if time.monotonic() >= deadline:
-                raise TimeoutError(
-                    f"No camera frame newer than {since:.2f} arrived within "
-                    f"{self.config.fresh_frame_timeout:.1f} s; the newest is from {detections.ts:.2f}"
-                )
+                return None
             time.sleep(_FRESH_FRAME_POLL)
+
+    def _no_frame(self) -> str:
+        """Why a check had no camera frame, as the end of a sentence."""
+        return (
+            "the camera gave no frame taken after the arm stopped within "
+            f"{self.config.fresh_frame_timeout:.1f} s"
+        )
 
     def _missed_grasp(
         self, planning_group: PlanningGroupID, report: str, **facts: Any
@@ -862,7 +873,7 @@ class PickAndPlaceModule(Module):
         detections = self._detect_after(held.name, time.time())
         nearby = [
             center
-            for center in _centers(detections)
+            for center in ([] if detections is None else _centers(detections))
             if center.distance(released_at) <= self.config.lift_check_radius
         ]
         if nearby:

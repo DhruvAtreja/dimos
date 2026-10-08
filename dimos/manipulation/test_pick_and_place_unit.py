@@ -859,13 +859,51 @@ def test_the_lift_check_waits_for_a_frame_taken_after_the_lift(
     assert scene.scan_scene.call_count == 2
 
 
-def test_the_lift_check_gives_up_on_a_camera_that_stopped(module: PickAndPlaceModule) -> None:
+def test_without_a_new_frame_the_lift_check_trusts_the_jaws(module: PickAndPlaceModule) -> None:
     scene: Any = module._scene
-    module.config.fresh_frame_timeout = 0.05
+    module.config.fresh_frame_timeout = 0.1
+    scene.scan_scene.return_value = _detections(("cup-1", "cup", CUP_AT), ts=1.0)
+
+    result = module.pick_object("cup-1")
+
+    assert result.message == (
+        "Pick complete on the jaw reading alone: the camera gave no frame taken after the arm "
+        "stopped within 0.1 s."
+    )
+    assert result.metadata["grasped"] is True
+    assert result.metadata["object_lift_m"] is None
+    assert _held_id(module) == "cup-1"
+
+
+def test_without_a_new_frame_the_re_scan_finds_nothing(
+    module: PickAndPlaceModule, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    scene: Any = module._scene
+    module.config.fresh_frame_timeout = 0.1
+    scene.scan_scene.return_value = _detections(("cup-1", "cup", CUP_AT), ts=1.0)
+    _close_on_nothing(monkeypatch)
+
+    result = module.pick_object("cup-1")
+
+    assert result.message.endswith(
+        "A new scan for cup found nothing: the camera gave no frame taken after the arm "
+        "stopped within 0.1 s."
+    )
+    assert result.metadata["handoff"] is True
+    assert _held_id(module) is None
+
+
+def test_without_a_new_frame_the_place_check_uses_the_release_pose(
+    module: PickAndPlaceModule,
+) -> None:
+    scene: Any = module._scene
+    module._held = _holding_cup()
+    module.config.fresh_frame_timeout = 0.1
     scene.scan_scene.return_value = _detections(ts=1.0)
 
-    with pytest.raises(TimeoutError, match="No camera frame newer than"):
-        module.pick_object("cup-1")
+    result = module.place_at(0.4, 0.0, 0.2)
+
+    assert result.metadata["located_by"] == "gripper"
 
 
 def test_place_ignores_detections_far_from_the_release(module: PickAndPlaceModule) -> None:
