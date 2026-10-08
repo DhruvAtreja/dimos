@@ -38,13 +38,19 @@ from dimos.msgs.std_msgs.Header import Header
 _CENTER_SCORE = 1.0
 _HALF_SCORES = (0.8, 0.7)
 _TURNED_SCORE = 0.5
+# A footprint whose length and width differ by less than this (metres) is
+# round: the grasp turned a quarter turn holds it the same way.
+_ROUND_TOLERANCE = 0.01
 
 
 class HeuristicGraspModuleConfig(ModuleConfig):
-    # Widest span (metres) the open jaws close around. A grasp is offered only
-    # where the object is no wider than this across the jaws; the centre grasp
+    # Opening (metres) of the open jaws. A grasp is offered only where the object
+    # is narrower than this by jaw_clearance across the jaws; the centre grasp
     # is always offered.
     max_grasp_width: float = Field(default=0.085, gt=0.0)
+    # Room (metres) the open jaws need beside the object, for point-cloud error
+    # and a slightly off-centre approach.
+    jaw_clearance: float = Field(default=0.01, ge=0.0)
     # Objects at least this long (metres) also get one grasp in the middle of
     # each half along their length. Shorter objects would get grasps too close
     # to the centre one to differ from it.
@@ -83,9 +89,11 @@ class HeuristicGraspModule(Module, GraspGenSpec):
         # The jaws close along jaw_axis; length_axis lies along the object.
         length_axis = np.array([math.cos(yaw), math.sin(yaw)])
         jaw_axis = np.array([-length_axis[1], length_axis[0]])
-        # Each point's position (metres) along the object's length.
+        # Each point's position (metres) along the object's length and across it.
         along = xy @ length_axis
-        start, end = np.quantile(along, [0.05, 0.95])
+        across = xy @ jaw_axis
+        fits = self.config.max_grasp_width - self.config.jaw_clearance
+        start, end = np.quantile(along, [0.01, 0.99])
         length = float(end - start)
 
         if length >= self.config.min_split_length:
@@ -94,13 +102,13 @@ class HeuristicGraspModule(Module, GraspGenSpec):
             halves = [
                 half
                 for half in sorted(halves, key=len, reverse=True)
-                if len(half) >= 3 and _span(half[:, :2] @ jaw_axis) <= self.config.max_grasp_width
+                if len(half) >= 3 and _span(half[:, :2] @ jaw_axis) <= fits
             ]
             candidates += [
                 GraspCandidate(_top_down(half, yaw), score=score)
                 for half, score in zip(halves, _HALF_SCORES, strict=False)
             ]
-        if _span(along) <= self.config.max_grasp_width:
+        if length <= fits and abs(length - _span(across)) >= _ROUND_TOLERANCE:
             candidates.append(
                 GraspCandidate(_top_down(points, yaw + math.pi / 2.0), score=_TURNED_SCORE)
             )
@@ -141,6 +149,6 @@ def _top_down(points: NDArray[np.float32], yaw: float) -> Pose:
 
 
 def _span(values: NDArray[np.float64]) -> float:
-    """Width (metres) of a set of distances, between their 5th and 95th percentiles."""
-    low, high = np.quantile(values, [0.05, 0.95])
+    """Width (metres) of a set of distances, between their 1st and 99th percentiles."""
+    low, high = np.quantile(values, [0.01, 0.99])
     return float(high - low)

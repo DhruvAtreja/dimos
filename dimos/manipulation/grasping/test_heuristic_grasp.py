@@ -211,3 +211,40 @@ def test_the_grasp_width_and_split_length_are_configurable() -> None:
 
     # Too short to split at 0.5 m, but a 20 cm length now fits across the jaws.
     assert [c.score for c in proposals.candidates] == pytest.approx([1.0, 0.5])
+
+
+def test_a_block_too_wide_for_the_jaws_with_clearance_gets_no_turned_grasp(
+    module: HeuristicGraspModule,
+) -> None:
+    """9 cm long, more than the 8.5 cm opening. Spread evenly, its points' middle
+    90% spans only 8.1 cm, so the measure must reach the ends."""
+    rng = np.random.default_rng(0)
+    points = rng.uniform((-0.045, -0.02, 0.0), (0.045, 0.02, 0.05), size=(4000, 3))
+
+    proposals = module.propose_grasps(_cloud(points))
+
+    assert [c.score for c in proposals.candidates] == pytest.approx([1.0])
+
+
+def test_a_square_turned_45_degrees_gets_no_grasp_across_its_diagonal(
+    module: HeuristicGraspModule,
+) -> None:
+    """A 7 cm square on its corner measures 9.9 cm along the world axes."""
+    square = _box((-0.035, 0.035), (-0.035, 0.035), (0.0, 0.05))
+    c, s = math.cos(math.pi / 4.0), math.sin(math.pi / 4.0)
+    turned = square @ np.array([[c, s, 0.0], [-s, c, 0.0], [0.0, 0.0, 1.0]])
+
+    proposals = module.propose_grasps(_cloud(turned))
+
+    assert [c.score for c in proposals.candidates] == pytest.approx([1.0])
+
+
+def test_a_round_footprint_gets_no_turned_grasp(module: HeuristicGraspModule) -> None:
+    """Turned a quarter turn, the jaws would hold a 6 cm can the same way."""
+    angles = np.linspace(0.0, 2.0 * math.pi, 72, endpoint=False)
+    rim = np.stack([0.03 * np.cos(angles), 0.03 * np.sin(angles)], axis=-1)
+    points = np.vstack([np.column_stack([rim, np.full(len(rim), z)]) for z in (0.0, 0.05, 0.1)])
+
+    proposals = module.propose_grasps(_cloud(points))
+
+    assert [c.score for c in proposals.candidates] == pytest.approx([1.0])
