@@ -14,9 +14,13 @@
 
 from __future__ import annotations
 
+import json
+from multiprocessing.shared_memory import SharedMemory
 import os
+from pathlib import Path
 import subprocess
 import sys
+import textwrap
 import time
 import uuid
 
@@ -137,6 +141,66 @@ def test_kill_run_processes_escalates_to_sigkill_on_sigterm_ignorer(spawn_tagged
     killed = kill_run_processes(run_id, term_timeout=0.3, kill_timeout=2.0)
     assert killed == 1
     assert _wait_gone(proc, timeout=3.0)
+
+
+# Like `dimos run`: tag the run, start a forkserver worker (which also starts
+# the resource tracker), let the worker leave a shared-memory segment behind,
+# sweep from the main process, then exit.
+_SWEEP_THEN_EXIT = textwrap.dedent(
+    """
+    import json, multiprocessing, os, sys, time
+    from multiprocessing import resource_tracker
+    from multiprocessing.shared_memory import SharedMemory
+    from dimos.core.coordination.process_lifecycle import kill_run_processes
+
+    def leave_segment(name):
+        SharedMemory(name=name, create=True, size=64)
+
+    if __name__ == "__main__":
+        run_id, shm_name = sys.argv[1:]
+        os.environ["DIMOS_RUN_ID"] = run_id
+        worker = multiprocessing.get_context("forkserver").Process(
+            target=leave_segment, args=(shm_name,)
+        )
+        worker.start()
+        worker.join()
+        start = time.monotonic()
+        swept = kill_run_processes(run_id, term_timeout=5.0)
+        elapsed = time.monotonic() - start
+        tracker = resource_tracker._resource_tracker._pid
+        print(json.dumps({"swept": swept, "elapsed": elapsed, "tracker": tracker}))
+    """
+)
+
+
+def test_kill_run_processes_leaves_own_resource_tracker_to_exit_with_it(
+    tmp_path: Path, run_id: str
+) -> None:
+    script = tmp_path / "sweep_then_exit.py"
+    script.write_text(_SWEEP_THEN_EXIT)
+    shm_name = f"dimos_test_{uuid.uuid4().hex[:12]}"
+    env = {k: v for k, v in os.environ.items() if k != DIMOS_RUN_ID_ENV}
+
+    out = subprocess.run(
+        [sys.executable, str(script), run_id, shm_name],
+        env=env,
+        capture_output=True,
+        text=True,
+        timeout=60,
+        check=True,
+    )
+
+    report = json.loads(out.stdout.strip().splitlines()[-1])
+    assert report["swept"] == 1  # the forkserver; the tracker is left to exit with main
+    assert report["elapsed"] < 2.0  # not the 5 s SIGTERM wait the tracker ignores
+    assert "ChildProcessError" not in out.stderr
+    deadline = time.monotonic() + 5.0
+    while psutil.pid_exists(report["tracker"]) and time.monotonic() < deadline:
+        time.sleep(0.05)
+    assert not psutil.pid_exists(report["tracker"])
+    # On its way out the tracker unlinked the segment the worker left behind.
+    with pytest.raises(FileNotFoundError):
+        SharedMemory(name=shm_name).unlink()
 
 
 def test_kill_run_processes_tolerates_psutil_errors(mocker: MockerFixture, run_id: str) -> None:

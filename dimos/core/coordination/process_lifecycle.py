@@ -28,6 +28,7 @@ the sweep so workers and grandchildren cannot survive as orphans.
 from __future__ import annotations
 
 from collections.abc import Iterable
+from multiprocessing import resource_tracker
 import os
 import subprocess
 import sys
@@ -71,8 +72,13 @@ def kill_run_processes(
     kill_timeout: float = 1.0,
     env_var: str = DIMOS_RUN_ID_ENV,
 ) -> int:
-    """Terminate every process tagged with `env_var == run_id`."""
-    excluded = frozenset({os.getpid(), *exclude_pids})
+    """Terminate every process tagged with `env_var == run_id`.
+
+    This process and its own multiprocessing resource tracker are left alone.
+    The tracker (a helper that unlinks shared memory and semaphores left behind)
+    ignores SIGTERM, and stops by itself when this process exits.
+    """
+    excluded = frozenset({os.getpid(), *_own_resource_tracker(), *exclude_pids})
     targets = _iter_matching_processes(run_id, excluded, env_var=env_var)
     if not targets:
         return 0
@@ -93,6 +99,14 @@ def kill_run_processes(
         psutil.wait_procs(alive, timeout=kill_timeout)
 
     return len(targets)
+
+
+def _own_resource_tracker() -> set[int]:
+    """Pid of the resource tracker this process started, if any."""
+    # The handle is private to multiprocessing; an empty set if that ever changes.
+    tracker = getattr(resource_tracker, "_resource_tracker", None)
+    pid = getattr(tracker, "_pid", None)
+    return {pid} if isinstance(pid, int) else set()
 
 
 def spawn_watchdog(
