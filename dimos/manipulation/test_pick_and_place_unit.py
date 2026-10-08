@@ -253,6 +253,9 @@ def test_pick_stops_walking_candidates_on_a_drive_fault(module: PickAndPlaceModu
         "Move to grasp candidate 0 for object cup-1 did not complete; "
         "execution returned FAULT: drive fault"
     )
+    assert _tries(result, "source") == ["provider"]
+    assert _tries(result, "rank") == [0]
+    assert result.metadata["handoff"] is False
     assert manipulation.plan_to_poses.call_count == 1
     assert _held_id(module) is None
 
@@ -272,6 +275,7 @@ def test_pick_reports_no_reachable_candidate_when_every_attempt_fails(
         "The planner found no path to any of the 2 grasp candidate(s) tried for object cup-1; "
         "last planner result FAILED: unreachable."
     )
+    assert result.metadata["rejected_by_source"] == {"provider": 2}
     assert _held_id(module) is None
 
 
@@ -948,9 +952,11 @@ def test_a_first_try_success_records_one_try(module: PickAndPlaceModule) -> None
             "skipped": 0,
             "grasped": True,
             "candidates_by_source": {"provider": 1},
+            "rejected_by_source": {"provider": 0},
         }
     ]
     assert result.metadata["handoff"] is False
+    assert result.metadata["rejected_by_source"] == {"provider": 0}
 
 
 def test_a_missed_grasp_is_retried_with_the_next_candidate(module: PickAndPlaceModule) -> None:
@@ -1499,6 +1505,42 @@ def test_heuristic_grasps_are_used_when_no_provider_grasp_is_reachable(
 
     assert result.message == "Pick complete"
     assert _tries(result, "source") == ["heuristic"]
+    assert result.metadata["rejected_by_source"] == {"graspgenx": 1, "heuristic": 0}
+
+
+def test_twenty_five_provider_grasps_are_tried_before_the_heuristic_ones(
+    fallback: PickAndPlaceModule,
+) -> None:
+    fallback._grasp_generator.propose_grasps.return_value = GraspCandidateArray(
+        Header(1.0, "world"), [_grasp_at(0.1 + 0.01 * i, 0.05, 0.9) for i in range(30)]
+    )
+    fallback._manipulation.plan_to_poses.side_effect = [NO_PATH] * 25 + [PLANNED]
+
+    result = fallback.pick_object("cup-1")
+
+    assert result.message == "Pick complete"
+    assert _tries(result, "source") == ["heuristic"]
+    assert result.metadata["rejected_by_source"] == {"graspgenx": 25, "heuristic": 0}
+
+
+def test_planner_rejections_are_counted_per_try_and_for_the_whole_pick(
+    fallback: PickAndPlaceModule,
+) -> None:
+    scene: Any = fallback._scene
+    scene.scan_scene.side_effect = [
+        _cup_at(0.1, 0.0, 0.2),  # lift check: still on the table
+        _cup_at(0.1, 0.0, 0.2, object_id="cup-7"),  # re-scan
+        _cup_at(0.1, 0.0, 0.3, object_id="cup-7"),  # lift check: rode up
+    ]
+    # Each try: no path to the GraspGenX grasp, then a heuristic grasp.
+    fallback._manipulation.plan_to_poses.side_effect = [NO_PATH, PLANNED, NO_PATH, PLANNED]
+
+    result = fallback.pick_object("cup-1")
+
+    assert result.message == "Pick complete"
+    assert _tries(result, "source") == ["heuristic", "heuristic"]
+    assert _tries(result, "rejected_by_source") == [{"graspgenx": 1, "heuristic": 0}] * 2
+    assert result.metadata["rejected_by_source"] == {"graspgenx": 2, "heuristic": 0}
 
 
 def test_heuristic_grasps_are_tried_once_the_provider_grasps_miss(

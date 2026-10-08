@@ -17,7 +17,7 @@
 from __future__ import annotations
 
 from collections.abc import Sequence
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 import math
 import time
 from typing import Any, Literal
@@ -77,9 +77,10 @@ class PickAndPlaceModuleConfig(ModuleConfig):
     # neighbour's cells are ignored too.
     target_clearance: float = Field(default=0.03, gt=0.0)
     # Most grasp candidates each try plans to from each source: the grasp
-    # provider, then the heuristic. A learned provider returns a ranked spread
-    # whose best-scoring pose is not always kinematically reachable.
-    max_grasp_attempts: int = Field(default=5, gt=0)
+    # provider's best, then the heuristic's. Many of a learned provider's
+    # best-scoring poses are out of the arm's reach; the planner turns each of
+    # those down in about 0.3 s.
+    max_grasp_attempts: int = Field(default=25, gt=0)
     yaw_policy: Literal["generated", "preserve_current"] = "generated"
     grasp_verification: GraspVerificationConfig = Field(default_factory=GraspVerificationConfig)
     # After the lift, the camera must see the object rise by at least this share
@@ -163,14 +164,16 @@ class _GraspTry:
 
     Args:
         result: The report of the try.
-        candidate: The grasp the gripper closed with, or None when it never closed.
+        candidate: The grasp the arm went for, or None when it went for none.
         missed: True when the grasp verifiably missed, the arm backed out to the
             pre-grasp pose and the gripper was told to open, so another try may follow.
+        rejected: Per source, how many grasps the planner found no path to.
     """
 
     result: SkillResult
     candidate: SourcedGrasp | None = None
     missed: bool = False
+    rejected: dict[str, int] = field(default_factory=dict)
 
 
 def _status(result: PlanResult | ExecutionResult) -> str:
@@ -375,18 +378,25 @@ class PickAndPlaceModule(Module):
             box: Bounds of the object's point cloud, or None when it has none.
             group: Gripper-capable planning group doing the pick.
 
-        Returns the last try's report with ``tries`` (one record per grasp) and
-        ``handoff`` (true when it stopped trying after misses) in its metadata.
+        Returns the last try's report with ``tries`` (one record per grasp),
+        ``handoff`` (true when it stopped trying after misses) and
+        ``rejected_by_source`` (per source, grasps the planner found no path to
+        over the whole pick) in its metadata.
         """
         tries: list[dict[str, Any]] = []
         tried: list[_TriedGrasp] = []
+        rejected = dict.fromkeys(proposals.sources, 0)
         ranked, skipped = self._untried(proposals, target, tried)
         while True:
-            attempt = self._grasp_once(proposals.all(), ranked, target, box, group)
+            attempt = self._grasp_once(
+                proposals.all(), proposals.sources, ranked, target, box, group
+            )
+            for source, count in attempt.rejected.items():
+                rejected[source] += count
             if attempt.candidate is None:
                 last = attempt.result
                 facts = {**proposals.facts(), **last.metadata}
-                return self._stop_trying(SkillResult(last.message, metadata=facts), tries)
+                return self._stop_trying(SkillResult(last.message, metadata=facts), tries, rejected)
             choice = attempt.candidate
             candidate = choice.candidate
             facts = proposals.facts()
@@ -399,6 +409,7 @@ class PickAndPlaceModule(Module):
                 "skipped": skipped,
                 "grasped": attempt.result.metadata.get("grasped"),
                 "candidates_by_source": facts["candidates_by_source"],
+                "rejected_by_source": attempt.rejected,
             }
             if "grasp_provider_error" in facts:
                 record["grasp_provider_error"] = facts["grasp_provider_error"]
@@ -408,11 +419,12 @@ class PickAndPlaceModule(Module):
             )
             last = attempt.result
             if not attempt.missed:
-                return self._stop_trying(last, tries)
+                return self._stop_trying(last, tries, rejected)
             if len(tries) >= self.config.max_grasp_retries:
                 return self._stop_trying(
                     last,
                     tries,
+                    rejected,
                     f"Object {target.object_id} is still not held after {len(tries)} "
                     f"{'try' if len(tries) == 1 else 'tries'}.",
                 )
@@ -421,14 +433,16 @@ class PickAndPlaceModule(Module):
                     f"Move back to where object {target.object_id} was scanned from", moved
                 )
                 return self._stop_trying(
-                    SkillResult(f"{last.message} {stopped.message}", metadata=last.metadata), tries
+                    SkillResult(f"{last.message} {stopped.message}", metadata=last.metadata),
+                    tries,
+                    rejected,
                 )
             found = self._rescan(target)
             if isinstance(found, str):
-                return self._stop_trying(last, tries, found)
+                return self._stop_trying(last, tries, rejected, found)
             proposal = self._propose(found, crop=True)
             if isinstance(proposal, SkillResult):
-                return self._stop_trying(last, tries, proposal.message)
+                return self._stop_trying(last, tries, rejected, proposal.message)
             target = found
             proposals, box = proposal
             ranked, skipped = self._untried(proposals, target, tried)
@@ -436,6 +450,7 @@ class PickAndPlaceModule(Module):
                 return self._stop_trying(
                     last,
                     tries,
+                    rejected,
                     f"Every new grasp candidate for object {target.object_id} repeats a "
                     "grasp already tried.",
                 )
@@ -467,6 +482,7 @@ class PickAndPlaceModule(Module):
     def _grasp_once(
         self,
         candidates: GraspCandidateArray,
+        sources: list[str],
         ranked: Sequence[SourcedGrasp],
         target: ScannedObject,
         box: TargetBox | None,
@@ -477,6 +493,7 @@ class PickAndPlaceModule(Module):
         Args:
             candidates: Every candidate generated for the object, for its frame,
                 time stamp and count.
+            sources: Grasp sources in effect, e.g. ["graspgenx", "heuristic"].
             ranked: Grasps to try, in order.
             target: The object being picked, with where it was scanned.
             box: Bounds of the object's point cloud, or None when it has none.
@@ -487,6 +504,7 @@ class PickAndPlaceModule(Module):
             return _GraspTry(not_open)
 
         last_plan = ""
+        rejected = dict.fromkeys(sources, 0)
         for choice in ranked:
             rank, candidate = choice.rank, choice.candidate
             grasp = self._apply_yaw_policy(
@@ -505,10 +523,15 @@ class PickAndPlaceModule(Module):
                 # differ. A motion that stopped part-way would stop the same way
                 # for every candidate, so that is not retried.
                 last_plan = _status(blocked)
+                rejected[choice.source] += 1
                 continue
             if blocked is not None:
                 return _GraspTry(
-                    self._stopped(f"Move to grasp candidate {rank} for object {object_id}", blocked)
+                    self._stopped(
+                        f"Move to grasp candidate {rank} for object {object_id}", blocked
+                    ),
+                    choice,
+                    rejected=rejected,
                 )
             if not_held := self._close_and_verify(group, object_id):
                 # Back out while the target's cells are still ignored: left at
@@ -521,8 +544,10 @@ class PickAndPlaceModule(Module):
                             f"{not_held.message} {stopped.message}", metadata=not_held.metadata
                         ),
                         choice,
+                        rejected=rejected,
                     )
-                return _GraspTry(not_held, choice, missed=not_held.metadata.get("grasped") is False)
+                missed = not_held.metadata.get("grasped") is False
+                return _GraspTry(not_held, choice, missed, rejected)
 
             self._held = HeldObject(object_id, target.name, grasp)
             self._carry_target(box, grasp, group)
@@ -530,6 +555,7 @@ class PickAndPlaceModule(Module):
                 return _GraspTry(
                     self._stopped(f"Retract after grasping object {object_id}", blocked),
                     choice,
+                    rejected=rejected,
                 )
             result = self._verify_lift(target, grasp, pregrasp, group)
             result.metadata.update(
@@ -538,12 +564,13 @@ class PickAndPlaceModule(Module):
                 score=candidate.score,
                 candidates=len(candidates.candidates),
             )
-            return _GraspTry(result, choice, missed=result.metadata["grasped"] is False)
+            return _GraspTry(result, choice, result.metadata["grasped"] is False, rejected)
         return _GraspTry(
             SkillResult(
                 f"The planner found no path to any of the {len(ranked)} grasp candidate(s) "
                 f"tried for object {object_id}; last planner result {last_plan}."
-            )
+            ),
+            rejected=rejected,
         )
 
     def _return_to_scan_pose(self, group: PlanningGroupID) -> PlanResult | ExecutionResult | None:
@@ -622,20 +649,26 @@ class PickAndPlaceModule(Module):
 
     @staticmethod
     def _stop_trying(
-        last: SkillResult, tries: list[dict[str, Any]], gave_up: str | None = None
+        last: SkillResult,
+        tries: list[dict[str, Any]],
+        rejected: dict[str, int],
+        gave_up: str | None = None,
     ) -> SkillResult:
         """Report the end of a pick, with one record per grasp tried.
 
         Args:
             last: The report of the last step.
             tries: One record per grasp tried, in order; empty when no grasp was.
+            rejected: Per source, how many grasps the planner found no path to
+                over the whole pick.
             gave_up: Why pick_object stopped trying after a verified miss, or None
                 when it stopped for another reason (success, a fault, no path).
         """
+        metadata = {**last.metadata, "rejected_by_source": rejected}
         if not tries:
-            return last
+            return SkillResult(last.message, metadata=metadata)
         message = last.message if gave_up is None else f"{last.message} {gave_up}"
-        metadata = {**last.metadata, "tries": tries, "handoff": gave_up is not None}
+        metadata.update(tries=tries, handoff=gave_up is not None)
         return SkillResult(message, metadata=metadata)
 
     @rpc

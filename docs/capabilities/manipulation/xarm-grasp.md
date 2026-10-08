@@ -182,14 +182,17 @@ label again, keeps
 only the cloud points inside the new detection's box, and grasps with the best
 new candidate, skipping any within `retry_skip_distance` (2 cm, relative to the object's centre) and `retry_skip_angle` (0.35 rad) of
 one already tried; it stops after `max_grasp_retries` (3) tries in total.
-Each try plans to the provider's best `max_grasp_attempts` new candidates,
+Each try plans to the provider's best `max_grasp_attempts` (25) new candidates,
 then to the heuristic grasps for the same points, so a GraspGenX pick still has
 grasps when GraspGenX returns none, raises, or its grasps cannot be reached or
-miss. `PickAndPlaceModule.blueprint(heuristic_fallback=False)` uses the
+miss. The planner turns down an unreachable grasp in about 0.3 s.
+`PickAndPlaceModule.blueprint(heuristic_fallback=False)` uses the
 provider's grasps only. `grasp_sources` in the metadata names the sources in
-effect. `tries` records each grasp (`source`, rank, score, `grasped`,
-`candidates_by_source`), and `handoff: true` means it stopped trying after
-misses and the object is not held. A gripper or motion fault stops at once with `handoff: false`. `place_at` re-detects the object after release and reports `placed`
+effect. `tries` records each grasp the arm went for (`source`, rank, score,
+`grasped`, `candidates_by_source`, `rejected_by_source`), `rejected_by_source`
+counts, per source, the grasps the planner found no path to over the whole
+pick, and `handoff: true` means it stopped trying after misses and the object
+is not held. A gripper or motion fault stops at once with `handoff: false`. `place_at` re-detects the object after release and reports `placed`
 and `offset_m` against `place_tolerance` (7 cm). To inspect grasps without moving the arm, call `propose_grasps`
 on the provider directly:
 
