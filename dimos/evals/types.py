@@ -149,8 +149,6 @@ class RunningEnvironment:
     streams: Sequence[Stream[Any, Any]]  # what the agent may look at. Dataset: the selection
     artifacts: Mapping[str, Path]  # files produced by the environment, by name
     raw_endpoint: str | None = None  # vendor-shaped robot topics for agents without dimOS
-    # Artifact names the agent is never told about. The grader still opens them.
-    grader_only: frozenset[str] = frozenset()
 
 
 @dataclass(frozen=True, kw_only=True)

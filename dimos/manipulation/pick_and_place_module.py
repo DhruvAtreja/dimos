@@ -38,9 +38,13 @@ from dimos.manipulation.grasp_verification import (
     open_failure,
 )
 from dimos.manipulation.grasping.grasp_gen_spec import GraspGenSpec
-from dimos.manipulation.manipulation_spec import ManipulationSpec, PlanningGroupInfo
+from dimos.manipulation.manipulation_spec import (
+    ExecutionResult,
+    ManipulationSpec,
+    PlanningGroupInfo,
+    PlanResult,
+)
 from dimos.manipulation.planning.spec.models import PlanningGroupID
-from dimos.manipulation.skill_errors import ManipulationSkillError
 from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
 from dimos.msgs.geometry_msgs.Quaternion import Quaternion
 from dimos.msgs.geometry_msgs.Vector3 import Vector3
@@ -105,6 +109,22 @@ class HeldObject:
     picked_from: Vector3
 
 
+def _status(result: PlanResult | ExecutionResult) -> str:
+    """Status name and message of a planner or execution result, e.g. 'FAILED: no path'."""
+    return f"{result.status.name}: {result.message}" if result.message else result.status.name
+
+
+def _gripper_reading(settle: GripperSettle) -> str:
+    """One sentence saying where the jaws stopped after a gripper command."""
+    if settle.position is None:
+        return "No gripper position readback."
+    if not settle.settled:
+        return (
+            f"Gripper position {settle.position:.2f} had not settled after {settle.elapsed:.1f} s."
+        )
+    return f"Final gripper position {settle.position:.2f}."
+
+
 class PickAndPlaceModule(Module):
     """Coordinate scene registration, grasp generation, and manipulation execution."""
 
@@ -120,22 +140,19 @@ class PickAndPlaceModule(Module):
         self._held: HeldObject | None = None
 
     @skill
-    def scan_objects(self, prompts: list[str]) -> SkillResult[ManipulationSkillError]:
+    def scan_objects(self, prompts: list[str]) -> SkillResult:
         """Scan the latest RGB-D frame for prompted objects.
 
         Args:
-            prompts: Object labels to detect. Use an ID from this scan with pick_object.
+            prompts: Object descriptions to detect, such as ["red cup", "bottle"].
         """
         prompts = [prompt.strip() for prompt in prompts if prompt.strip()]
         if not prompts:
-            return SkillResult.fail("INVALID_INPUT", "At least one object prompt is required")
+            raise ValueError("At least one object prompt is required")
         if self._held is None:
             self._clear_proposals()
         self._objects = {}
-        try:
-            detections = self._scene.scan_scene(text=prompts)
-        except RuntimeError as exc:
-            return SkillResult.fail("PERCEPTION_FAILED", str(exc))
+        detections = self._scene.scan_scene(text=prompts)
         self._objects = {
             str(detection.id): ScannedObject(
                 object_id=str(detection.id),
@@ -145,12 +162,14 @@ class PickAndPlaceModule(Module):
             for detection in detections.detections
             if detection.id and detection.results
         }
-        return SkillResult.ok(
+        return SkillResult(
             f"Detected {detections.detections_length} object(s)",
-            prompts=prompts,
-            objects=[
-                {"object_id": obj.object_id, "name": obj.name} for obj in self._objects.values()
-            ],
+            metadata={
+                "prompts": prompts,
+                "objects": [
+                    {"object_id": obj.object_id, "name": obj.name} for obj in self._objects.values()
+                ],
+            },
         )
 
     @rpc
@@ -167,45 +186,46 @@ class PickAndPlaceModule(Module):
     @skill(uses=[CAP_MOVEMENT])
     def pick_object(
         self, object_id: str, planning_group: PlanningGroupID | None = None
-    ) -> SkillResult[ManipulationSkillError]:
+    ) -> SkillResult:
         """Grasp one object from the latest scan and lift it clear of the surface.
 
-        "Pick complete" is confirmed by the camera: the object left the spot it was
-        scanned at. GRASP_FAILED means it is still on the table; re-scan and try again.
+        "Pick complete" means the camera confirmed it: after the lift the object is
+        no longer seen where it was scanned. Any other answer says why the object
+        is not held; re-scan and try again.
 
         Args:
             object_id: Exact object ID returned by the latest scan_objects call.
             planning_group: Gripper-capable pose group; omitted only when unambiguous.
         """
         if self._held is not None:
-            return SkillResult.fail(
-                "INVALID_STATE", f"Still holding {self._held.name}; place it before picking again"
+            return SkillResult(
+                f"Still holding {self._held.name} (object {self._held.object_id}); "
+                f"did not start a pick of object {object_id}. Use place_at to put it down first."
             )
         self._clear_proposals()
         target = self._objects.get(object_id)
         if target is None:
-            return SkillResult.fail("OBJECT_NOT_DETECTED", f"Unknown object_id: {object_id}")
+            scanned = ", ".join(self._objects) or "none"
+            return SkillResult(
+                f"No object with id {object_id} in the latest scan. Scanned ids: {scanned}. "
+                "Use scan_objects to refresh the list."
+            )
         group = self._await_group(planning_group)
-        if isinstance(group, SkillResult):
-            return group
-        try:
-            pointcloud = self._scene.get_object_pointcloud_by_object_id(object_id)
-            if pointcloud is None:
-                return SkillResult.fail(
-                    "OBJECT_NOT_DETECTED", f"No pointcloud for object_id: {object_id}"
-                )
-            candidates = self._grasp_generator.propose_grasps(pointcloud)
-        except (RuntimeError, ValueError) as exc:
-            return SkillResult.fail("GRASP_GENERATION_FAILED", str(exc))
+        pointcloud = self._scene.get_object_pointcloud_by_object_id(object_id)
+        if pointcloud is None:
+            return SkillResult(
+                f"Object {object_id} has no point cloud in the latest scan. Use scan_objects again."
+            )
+        candidates = self._grasp_generator.propose_grasps(pointcloud)
         self._grasp_candidates = candidates
         self._manipulation.show_grasp_proposals(candidates)
         if candidates.header.frame_id != self.config.planning_frame:
-            return SkillResult.fail(
-                "GRASP_FRAME_MISMATCH",
-                f"Expected {self.config.planning_frame}, got {candidates.header.frame_id}",
+            raise RuntimeError(
+                f"Grasp candidates are in frame {candidates.header.frame_id!r}; "
+                f"the planning frame is {self.config.planning_frame!r}"
             )
         if not candidates.candidates:
-            return SkillResult.fail("GRASP_GENERATION_FAILED", "No grasp candidates generated")
+            return SkillResult(f"Generated 0 grasp candidates for object {object_id}.")
         box = _target_box(pointcloud)
         # The target is mapped geometry: with its cells as obstacles the planner
         # refuses the approach into it, and the held object blocks every move after.
@@ -222,12 +242,12 @@ class PickAndPlaceModule(Module):
         target: ScannedObject,
         box: TargetBox | None,
         group: PlanningGroupID,
-    ) -> SkillResult[ManipulationSkillError]:
+    ) -> SkillResult:
         object_id = target.object_id
-        if failure := self._open_gripper(group, "pre-grasp open"):
-            return failure
+        if not_open := self._open_gripper(group, "before grasping"):
+            return not_open
 
-        unreachable: SkillResult[ManipulationSkillError] | None = None
+        last_plan = ""
         for rank, candidate in enumerate(candidates.candidates[: self.config.max_grasp_attempts]):
             grasp = self._apply_yaw_policy(
                 PoseStamped(
@@ -239,39 +259,46 @@ class PickAndPlaceModule(Module):
                 group,
             )
             pregrasp = self._offset_pose(grasp, self.config.pregrasp_offset)
-            failure = self._move(pregrasp, group) or self._servo(pregrasp, grasp, group)
-            if failure is not None:
-                # Only an unreachable pose is worth demoting to the next candidate;
-                # a drive or execution fault would repeat for every one of them.
-                if failure.error_code != "PLANNING_FAILED":
-                    return failure
-                unreachable = failure
+            blocked = self._move(pregrasp, group) or self._servo(pregrasp, grasp, group)
+            if isinstance(blocked, PlanResult):
+                # The planner found no path to this candidate; the next one may
+                # differ. A motion that stopped part-way would stop the same way
+                # for every candidate, so that is not retried.
+                last_plan = _status(blocked)
                 continue
-            if failure := self._close_and_verify(group):
+            if blocked is not None:
+                return self._stopped(
+                    f"Move to grasp candidate {rank} for object {object_id}", blocked
+                )
+            if not_held := self._close_and_verify(group, object_id):
                 # Back out while the target's cells are still ignored: left at
                 # the grasp pose, the arm would stand inside the obstacle the
                 # target becomes again, and no later plan could start.
                 self._servo(grasp, pregrasp, group)
-                return failure
+                return not_held
 
             # The jaws stopped on something; the camera has the last word after the lift.
             held = HeldObject(object_id, target.name, grasp, target.position)
             self._held = held
             self._carry_target(box, grasp, group)
-            if failure := self._servo(grasp, pregrasp, group):
-                return failure
-            if failure := self._verify_lift(held, group):
-                return failure
-            return SkillResult.ok(
+            if blocked := self._servo(grasp, pregrasp, group):
+                return self._stopped(f"Retract after grasping object {object_id}", blocked)
+            if not_lifted := self._verify_lift(held, group):
+                return not_lifted
+            return SkillResult(
                 "Pick complete",
-                object_id=object_id,
-                name=target.name,
-                rank=rank,
-                score=candidate.score,
-                candidates=len(candidates.candidates),
+                metadata={
+                    "object_id": object_id,
+                    "name": target.name,
+                    "rank": rank,
+                    "score": candidate.score,
+                    "candidates": len(candidates.candidates),
+                },
             )
-        return unreachable or SkillResult.fail(
-            "PLANNING_FAILED", "No grasp candidate was reachable"
+        attempted = min(len(candidates.candidates), self.config.max_grasp_attempts)
+        return SkillResult(
+            f"The planner found no path to any of the {attempted} grasp candidate(s) tried "
+            f"for object {object_id}; last planner result {last_plan}."
         )
 
     @rpc
@@ -285,12 +312,12 @@ class PickAndPlaceModule(Module):
         y: float,
         z: float,
         planning_group: PlanningGroupID | None = None,
-    ) -> SkillResult[ManipulationSkillError]:
+    ) -> SkillResult:
         """Lower the held object to a planning-frame position and release it.
 
-        PLACE_FAILED means nothing is held: pick first. "Place complete" is confirmed by
-        the camera after release; PLACE_INCOMPLETE says how far from the target the
-        object ended.
+        "Place complete" means the camera found the released object within the
+        place tolerance of the requested point; otherwise the answer says how far
+        from it the object ended.
 
         Args:
             x: Planning-frame X coordinate in meters.
@@ -298,103 +325,101 @@ class PickAndPlaceModule(Module):
             z: Planning-frame Z coordinate in meters.
             planning_group: Gripper-capable pose group; omitted only when unambiguous.
         """
+        target = f"({x:.2f}, {y:.2f}, {z:.2f})"
         held = self._held
         if held is None:
-            return SkillResult.fail("PLACE_FAILED", "nothing is held; pick first")
+            return SkillResult(
+                f"Not holding any object; nothing was placed at {target}. Use pick_object first."
+            )
         group = self._await_group(planning_group)
-        if isinstance(group, SkillResult):
-            return group
-        if failure := self._lost_in_transit(held, group):
-            return failure
+        if lost := self._lost_in_transit(held, group, target):
+            return lost
         place = PoseStamped(
             frame_id=self.config.planning_frame,
             position=Vector3(x, y, z),
             orientation=held.grasp.orientation,
         )
         preplace = self._offset_pose(place, self.config.pregrasp_offset)
-        if failure := self._move(preplace, group):
-            return failure
-        if failure := self._servo(preplace, place, group):
-            return failure
-        if failure := self._open_gripper(group, "release"):
-            return failure
+        if blocked := self._move(preplace, group):
+            return self._stopped(f"Move to the pre-place pose above {target}", blocked)
+        if blocked := self._servo(preplace, place, group):
+            return self._stopped(f"Move down to the place pose {target}", blocked)
+        if not_open := self._open_gripper(group, "to release the object"):
+            return SkillResult(f"{not_open.message} The arm stayed at the place pose.")
         self._held = None
         self._clear_proposals()
         self._manipulation.clear_voxel_map_exclusion(VOXEL_MAP_EXCLUSION_ID)
         tip = self._tip_position(group)
         released_at = place.position if tip is None else tip
-        if failure := self._servo(place, preplace, group):
-            return failure
+        if blocked := self._servo(place, preplace, group):
+            return self._stopped(f"Retract from {target} after releasing", blocked)
         return self._verify_place(held, place.position, released_at)
 
-    def _verify_lift(
-        self, held: HeldObject, planning_group: PlanningGroupID
-    ) -> SkillResult[ManipulationSkillError] | None:
-        """Confirm the lifted object came along, or why it did not.
+    def _verify_lift(self, held: HeldObject, planning_group: PlanningGroupID) -> SkillResult | None:
+        """Confirm the lifted object came along; None when it did, else what happened.
 
         A close that stops early on an edge reads as a hold, so the jaws are only a first
-        filter. The wrist camera now looks down at where the object was: if the target is
-        still detected there, the grasp missed it.
+        filter. The wrist camera then looks down at where the object was: if the target
+        is still detected there, the grasp missed it. Raises RuntimeError when the scan
+        fails.
         """
         jaws = self._gripper_position(planning_group)
         if jaws is not None and jaws <= self.config.grasp_verification.held_low:
             return self._grasp_failed(
-                planning_group, f"{held.name} slipped out during the lift (jaws read {jaws:.3f})"
+                planning_group,
+                f"{held.name} slipped out of the gripper during the lift "
+                f"(gripper position {jaws:.3f})",
             )
         try:
             detections = self._scene.scan_scene(text=[held.name])
         except RuntimeError as exc:
-            return SkillResult.fail(
-                "PERCEPTION_FAILED",
-                f"Lifted {held.name} but could not check whether it came along: {exc}",
-            )
+            raise RuntimeError(
+                f"Lifted {held.name} but could not check whether it came along: {exc}"
+            ) from exc
         tolerance = self.config.grasp_displacement_tolerance
         if any(center.distance(held.picked_from) <= tolerance for center in _centers(detections)):
             return self._grasp_failed(
                 planning_group,
-                f"{held.name} is still on the table at its original position; "
-                "re-scan and try again, or try a different grasp",
+                f"{held.name} is still on the table at its original position after the lift",
             )
         return None
 
-    def _grasp_failed(
-        self, planning_group: PlanningGroupID, reason: str
-    ) -> SkillResult[ManipulationSkillError]:
+    def _grasp_failed(self, planning_group: PlanningGroupID, what: str) -> SkillResult:
+        """Drop the hold on a pick that did not take the object along, and say so."""
         self._held = None
         self._clear_proposals()
-        if recovery := self._open_gripper(planning_group, "failed-grasp release"):
-            return recovery
-        return SkillResult.fail("GRASP_FAILED", reason)
+        reopened = self._open_gripper(planning_group, "after the failed grasp")
+        reopen = "Reopened the gripper." if reopened is None else reopened.message
+        return SkillResult(f"Pick not complete: {what}. {reopen} Re-scan and try again.")
 
     def _lost_in_transit(
-        self, held: HeldObject, planning_group: PlanningGroupID
-    ) -> SkillResult[ManipulationSkillError] | None:
-        """Fail the place when the jaws have closed on nothing since the pick."""
+        self, held: HeldObject, planning_group: PlanningGroupID, target: str
+    ) -> SkillResult | None:
+        """None while the jaws still hold something, else a statement that the object is gone."""
         jaws = self._gripper_position(planning_group)
         if jaws is None or jaws > self.config.grasp_verification.held_low:
             return None
         self._held = None
         self._clear_proposals()
         self._manipulation.clear_voxel_map_exclusion(VOXEL_MAP_EXCLUSION_ID)
-        if recovery := self._open_gripper(planning_group, "empty-gripper recovery"):
-            return recovery
-        return SkillResult.fail(
-            "PLACE_FAILED",
-            f"{held.name} is no longer in the gripper (jaws read {jaws:.3f}); "
-            "re-scan and pick again",
+        reopened = self._open_gripper(planning_group, "after finding it empty")
+        reopen = "Reopened the gripper." if reopened is None else reopened.message
+        return SkillResult(
+            f"{held.name} is no longer in the gripper (gripper position {jaws:.3f}); "
+            f"nothing was placed at {target}. {reopen} Re-scan and pick it again."
         )
 
-    def _verify_place(
-        self, held: HeldObject, target: Vector3, released_at: Vector3
-    ) -> SkillResult[ManipulationSkillError]:
-        """Report where the released object rests relative to the requested point."""
+    def _verify_place(self, held: HeldObject, target: Vector3, released_at: Vector3) -> SkillResult:
+        """Report where the released object rests relative to the requested point.
+
+        Raises RuntimeError when the scan fails.
+        """
         try:
             detections = self._scene.scan_scene(text=[held.name])
         except RuntimeError as exc:
-            return SkillResult.fail(
-                "PERCEPTION_FAILED",
-                f"Released {held.name} but could not check where it landed: {exc}",
-            )
+            raise RuntimeError(
+                f"Released {held.name} but could not check where it landed: {exc}"
+            ) from exc
         centers = _centers(detections)
         if centers:
             rest = min(centers, key=lambda center: _horizontal_distance(center, target))
@@ -404,16 +429,18 @@ class PickAndPlaceModule(Module):
             # the jaws opened is then the best estimate of where it rests.
             rest, verified_by = released_at, "release_pose"
         offset = _horizontal_distance(rest, target)
+        metadata = {
+            "object_id": held.object_id,
+            "name": held.name,
+            "offset_m": round(offset, 3),
+            "verified_by": verified_by,
+        }
         if offset <= self.config.place_tolerance:
-            return SkillResult.ok(
-                "Place complete",
-                object_id=held.object_id,
-                name=held.name,
-                offset_m=round(offset, 3),
-                verified_by=verified_by,
-            )
-        return SkillResult.fail(
-            "PLACE_INCOMPLETE", f"{held.name} ended about {offset * 100:.0f} cm from the target"
+            return SkillResult("Place complete", metadata=metadata)
+        return SkillResult(
+            f"Released {held.name}, which ended about {offset * 100:.0f} cm from the target, "
+            f"farther than the {self.config.place_tolerance * 100:.0f} cm place tolerance.",
+            metadata=metadata,
         )
 
     def _clear_proposals(self) -> None:
@@ -444,23 +471,24 @@ class PickAndPlaceModule(Module):
         margin = 2.0 * self.config.target_clearance
         return Vector3(size.x + margin, size.y + margin, size.z + margin)
 
-    def _await_group(
-        self, planning_group: PlanningGroupID | None
-    ) -> PlanningGroupID | SkillResult[ManipulationSkillError]:
-        """Resolve the gripper group once the manipulation module and the arm are up.
+    def _await_group(self, planning_group: PlanningGroupID | None) -> PlanningGroupID:
+        """Pick the gripper group once the manipulation module and the arm are up.
 
         Modules start in parallel, so an early call can land before the manipulation
         module has loaded its robot model or received the arm's first joint state.
+
+        Args:
+            planning_group: Group ID to use, or None to use the only gripper-capable group.
+
+        Raises ValueError when the ID names no gripper-capable group, or when it is
+        omitted and there is not exactly one. Raises TimeoutError when the groups or
+        the arm's joint state do not show up within ``robot_ready_timeout``.
         """
         deadline = time.monotonic() + self.config.robot_ready_timeout
         while True:
             groups = self._manipulation.list_planning_groups()
             if groups:
-                group = self._resolve_group(groups, planning_group)
-                if group is None:
-                    return SkillResult.fail(
-                        "ROBOT_NOT_FOUND", "Gripper-capable planning group is missing or ambiguous"
-                    )
+                group = self._gripper_group(groups, planning_group)
                 state = self._manipulation.get_state().groups.get(group)
                 if state is not None and state.joints is not None:
                     return group
@@ -468,27 +496,52 @@ class PickAndPlaceModule(Module):
             else:
                 waiting_for = "the manipulation module to list its planning groups"
             if time.monotonic() >= deadline:
-                return SkillResult.fail(
-                    "ROBOT_NOT_FOUND",
-                    f"Waited {self.config.robot_ready_timeout:.0f}s for {waiting_for}; "
-                    "is the arm driver running?",
+                raise TimeoutError(
+                    f"Waited {self.config.robot_ready_timeout:.0f} s for {waiting_for}; "
+                    "is the arm driver running?"
                 )
             time.sleep(self.config.robot_ready_poll_interval)
 
     @staticmethod
-    def _resolve_group(
+    def _gripper_group(
         groups: Sequence[PlanningGroupInfo], planning_group: PlanningGroupID | None
-    ) -> PlanningGroupID | None:
+    ) -> PlanningGroupID:
+        """Pick the planning group that has both a gripper and a tool frame.
+
+        Args:
+            groups: The manipulation module's planning groups.
+            planning_group: Group ID to use, or None to use the only such group.
+
+        Raises ValueError when the ID names no such group, or when it is omitted
+        and there is not exactly one.
+        """
         gripper_groups = [
-            group for group in groups if group.has_gripper and group.tip_frame is not None
+            group.id for group in groups if group.has_gripper and group.tip_frame is not None
         ]
-        if planning_group is not None:
-            return (
-                planning_group
-                if any(group.id == planning_group for group in gripper_groups)
-                else None
+        if planning_group is None:
+            if len(gripper_groups) == 1:
+                return gripper_groups[0]
+            raise ValueError(
+                "Expected exactly one gripper-capable planning group when planning_group "
+                f"is omitted; found {gripper_groups}"
             )
-        return gripper_groups[0].id if len(gripper_groups) == 1 else None
+        if planning_group not in gripper_groups:
+            raise ValueError(
+                f"planning_group {planning_group!r} is not gripper-capable; "
+                f"gripper-capable groups: {gripper_groups}"
+            )
+        return planning_group
+
+    @staticmethod
+    def _stopped(step: str, result: PlanResult | ExecutionResult) -> SkillResult:
+        """Report a motion step that did not finish, and what stopped it.
+
+        Args:
+            step: The motion that was attempted, as the start of a sentence.
+            result: The planner or execution result that did not succeed.
+        """
+        source = "planner" if isinstance(result, PlanResult) else "execution"
+        return SkillResult(f"{step} did not complete; {source} returned {_status(result)}")
 
     def _apply_yaw_policy(self, pose: PoseStamped, group: PlanningGroupID) -> PoseStamped:
         if self.config.yaw_policy == "generated":
@@ -516,12 +569,15 @@ class PickAndPlaceModule(Module):
 
     def _servo(
         self, start: PoseStamped, end: PoseStamped, planning_group: PlanningGroupID
-    ) -> SkillResult[ManipulationSkillError] | None:
+    ) -> PlanResult | ExecutionResult | None:
         """Drive the last leg as a straight line with collision checking off.
 
         The object being grasped is itself mapped geometry once a voxel map feeds
         the planner, so a collision-checked plan into it can only ever be
         rejected. This leg is short, straight, and deliberately ends in contact.
+
+        Returns the planner or execution result that stopped the leg, or None
+        when the arm arrived.
         """
         result = self._manipulation.move_linear(
             end.position.x - start.position.x,
@@ -531,35 +587,46 @@ class PickAndPlaceModule(Module):
             check_collision=False,
         )
         if not result.plan.succeeded:
-            # A planning failure demotes to the next candidate; a drive fault
-            # would repeat for every one of them, so keep the two distinct.
-            return SkillResult.fail("PLANNING_FAILED", result.plan.message)
-        if result.execution is None or not result.execution.succeeded:
-            message = "" if result.execution is None else result.execution.message
-            return SkillResult.fail("EXECUTION_FAILED", message)
-        return None
+            return result.plan
+        if result.execution is None:
+            raise RuntimeError("Linear move was planned but never executed")
+        return None if result.execution.succeeded else result.execution
 
     def _move(
         self, pose: PoseStamped, planning_group: PlanningGroupID
-    ) -> SkillResult[ManipulationSkillError] | None:
+    ) -> PlanResult | ExecutionResult | None:
+        """Plan a collision-checked path to ``pose`` and run it.
+
+        Returns the planner or execution result that stopped the leg, or None
+        when the arm arrived.
+        """
         plan = self._manipulation.plan_to_poses({planning_group: pose})
         if not plan.succeeded:
-            return SkillResult.fail("PLANNING_FAILED", plan.message)
+            return plan
         execution = self._manipulation.execute(blocking=True)
-        if not execution.succeeded:
-            return SkillResult.fail("EXECUTION_FAILED", execution.message)
-        return None
+        return None if execution.succeeded else execution
 
     def _command_and_settle(
         self,
         position: float,
         planning_group: PlanningGroupID,
         arrival_tolerance: float | None = None,
-    ) -> GripperSettle | SkillResult[ManipulationSkillError]:
+    ) -> GripperSettle:
+        """Command the gripper to ``position`` and wait for its readback to stop moving.
+
+        Args:
+            position: Target opening, 0.0 fully closed to 1.0 fully open.
+            planning_group: Group whose gripper to command.
+            arrival_tolerance: How close to ``position`` counts as arrived, in the
+                same 0.0 to 1.0 units; None uses the settle tolerance.
+
+        Raises RuntimeError when the gripper command is not accepted.
+        """
         result = self._manipulation.set_gripper_position(position, planning_group)
         if not result.succeeded:
-            return SkillResult.fail(
-                "GRIPPER_FAILED", result.message or "Gripper command was rejected"
+            raise RuntimeError(
+                f"Gripper command to {position:.2f} on {planning_group} was not accepted: "
+                f"{result.message}"
             )
         return await_gripper_settle(
             lambda: self._gripper_position(planning_group),
@@ -568,9 +635,16 @@ class PickAndPlaceModule(Module):
             arrival_tolerance=arrival_tolerance,
         )
 
-    def _open_gripper(
-        self, planning_group: PlanningGroupID, step: str
-    ) -> SkillResult[ManipulationSkillError] | None:
+    def _open_gripper(self, planning_group: PlanningGroupID, step: str) -> SkillResult | None:
+        """Open the gripper and wait for it to settle.
+
+        Args:
+            planning_group: Group whose gripper to open.
+            step: Why it is being opened, completing "Commanded the gripper open ...".
+
+        Returns None when the jaws reached open (or there is no readback), else a
+        statement of where they stopped.
+        """
         # Jaws resting against the open stop never move and never reach the
         # commanded extreme; open_tolerance is the band that already decides
         # whether where they stopped counts as open.
@@ -579,31 +653,40 @@ class PickAndPlaceModule(Module):
             planning_group,
             arrival_tolerance=self.config.grasp_verification.open_tolerance,
         )
-        if isinstance(settle, SkillResult):
-            return settle
-        if settle.position is None:
+        if settle.position is None or open_failure(settle, self.config.grasp_verification) is None:
             return None
-        if failure := open_failure(settle, self.config.grasp_verification):
-            return SkillResult.fail("GRIPPER_FAILED", f"{step}: {failure}")
-        return None
+        return SkillResult(f"Commanded the gripper open {step}. {_gripper_reading(settle)}")
 
     def _close_and_verify(
-        self, planning_group: PlanningGroupID
-    ) -> SkillResult[ManipulationSkillError] | None:
-        settle = self._command_and_settle(
-            self.config.grasp_verification.closed_position, planning_group
-        )
-        if isinstance(settle, SkillResult):
-            return settle
-        if not self.config.grasp_verification.enabled:
+        self, planning_group: PlanningGroupID, object_id: str
+    ) -> SkillResult | None:
+        """Close the gripper on the object and check the jaws stopped on something.
+
+        Args:
+            planning_group: Group whose gripper to close.
+            object_id: ID of the object being grasped, for the report.
+
+        Returns None when an object is held, else a statement of where the jaws
+        stopped. Raises RuntimeError when verification is on but the gripper
+        gives no position readback.
+        """
+        config = self.config.grasp_verification
+        settle = self._command_and_settle(config.closed_position, planning_group)
+        if not config.enabled:
             return None
-        if failure := grasp_failure(settle, self.config.grasp_verification):
-            if settle.position is not None and "nothing in the jaws" in failure:
-                recovered = self._open_gripper(planning_group, "empty-grasp recovery")
-                if recovered:
-                    return recovered
-            return SkillResult.fail("GRASP_VERIFICATION_FAILED", failure)
-        return None
+        if settle.position is None:
+            raise RuntimeError(
+                f"No gripper position readback from {planning_group} "
+                f"after closing on object {object_id}"
+            )
+        failure = grasp_failure(settle, config)
+        if failure is None:
+            return None
+        report = f"Closed the gripper on object {object_id}. {_gripper_reading(settle)}"
+        if "nothing in the jaws" in failure:
+            reopened = self._open_gripper(planning_group, "after closing on nothing")
+            report = f"{report} {'Reopened the gripper.' if reopened is None else reopened.message}"
+        return SkillResult(report)
 
     def _gripper_position(self, planning_group: PlanningGroupID) -> float | None:
         state = self._manipulation.get_state().groups.get(planning_group)

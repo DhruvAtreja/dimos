@@ -24,18 +24,12 @@ agent can also scan the view for objects, pick one by id and place it at a posit
 
 from __future__ import annotations
 
-from collections.abc import Callable
-import math
-from typing import TYPE_CHECKING, Literal
+from typing import Literal
 
-from dimos.evals.environments.lib.recorded_poses import first_body_transform, last_body_transform
 from dimos.evals.environments.mujoco_sim import MujocoEnvironment
-from dimos.evals.scorers import ramp
-from dimos.evals.types import EvalCase, Outcome, Suite, recording
-
-if TYPE_CHECKING:
-    from dimos.memory.store.base import Store
-    from dimos.msgs.geometry_msgs.Vector3 import Vector3
+from dimos.evals.scorers import lifted, stacked_on
+from dimos.evals.types import EvalCase, Suite
+from dimos.utils.data import LfsPath
 
 TRACKED = ("apple", "cup")
 
@@ -70,69 +64,9 @@ def environment(variant: Variant) -> MujocoEnvironment:
     return MujocoEnvironment(
         blueprint=["xarm-perception-sim", "mcp-server", "observe-skill"],
         disable=() if variant == "perception" else PERCEPTION_MODULES,
+        scene=LfsPath("xarm7/scene.xml"),
         tracked_bodies=TRACKED,
     )
-
-
-# Where a body's recorded position comes from: readers of its first and last
-# world-frame position in the recording, raising LookupError when it is missing.
-Positions = tuple[Callable[["Store", str], "Vector3"], Callable[["Store", str], "Vector3"]]
-
-
-def _first_tf(store: Store, body: str) -> Vector3:
-    return first_body_transform(store, body).translation
-
-
-def _last_tf(store: Store, body: str) -> Vector3:
-    return last_body_transform(store, body).translation
-
-
-# MujocoEnvironment's simulator publishes ground truth as world -> body transforms on tf.
-TF_POSITIONS: Positions = (_first_tf, _last_tf)
-
-
-def lifted(
-    body: str, *, by_m: float, positions: Positions = TF_POSITIONS
-) -> Callable[[Outcome], float]:
-    """How far the body ended above where it started, full credit at ``by_m``."""
-    first, last = positions
-
-    def grade(outcome: Outcome) -> float:
-        with recording(outcome) as store:
-            try:
-                start = first(store, body).z
-                end = last(store, body).z
-            except LookupError:
-                return 0.0
-        return min(max((end - start) / by_m, 0.0), 1.0)
-
-    return grade
-
-
-def stacked_on(
-    top: str,
-    base: str,
-    *,
-    rise_m: tuple[float, float],
-    band_m: float,
-    positions: Positions = TF_POSITIONS,
-) -> Callable[[Outcome], float]:
-    """``top`` ended resting on ``base``: its centre ``rise_m`` above the base's, 1.0 centred and
-    0.0 at ``band_m`` off. A body held higher than the resting height scores 0.0."""
-    _, last = positions
-
-    def grade(outcome: Outcome) -> float:
-        with recording(outcome) as store:
-            try:
-                t = last(store, top)
-                b = last(store, base)
-            except LookupError:
-                return 0.0
-        if not rise_m[0] <= t.z - b.z <= rise_m[1]:
-            return 0.0
-        return ramp(math.hypot(t.x - b.x, t.y - b.y), band=band_m)
-
-    return grade
 
 
 def cases(variant: Variant) -> list[EvalCase]:

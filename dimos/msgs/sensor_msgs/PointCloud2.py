@@ -82,17 +82,20 @@ class SectorJson(TypedDict):
 
 class PointCloud2(Timestamped):
     msg_name = "sensor_msgs.PointCloud2"
+    seq: int = 0
 
     def __init__(
         self,
         pointcloud: o3d.geometry.PointCloud | o3d.t.geometry.PointCloud | None = None,
         frame_id: str = "world",
         ts: float | None = None,
+        seq: int = 0,
     ) -> None:
         import open3d as o3d  # type: ignore[import-untyped]
 
         self.ts = ts  # type: ignore[assignment]
         self.frame_id = frame_id
+        self.seq = seq
 
         # Store internally as tensor pointcloud for speed
         if pointcloud is None:
@@ -195,6 +198,7 @@ class PointCloud2(Timestamped):
         offset_times: np.ndarray | None = None,
         tags: np.ndarray | None = None,
         lines: np.ndarray | None = None,
+        stamps: np.ndarray | None = None,
     ) -> PointCloud2:
         """Create PointCloud2 from numpy array of shape (N, 3).
 
@@ -207,6 +211,8 @@ class PointCloud2(Timestamped):
                 offsets in nanoseconds relative to the header stamp
             tags: Optional (N,) uint8 array of per-point sensor tag bytes
             lines: Optional (N,) uint8 array of per-point laser line numbers
+            stamps: Optional (N,) float64 array of per-point capture times in
+                absolute seconds. In-memory only, not encoded on the wire.
 
         Returns:
             PointCloud2 instance
@@ -219,6 +225,7 @@ class PointCloud2(Timestamped):
             ("offset_times", offset_times),
             ("tags", tags),
             ("lines", lines),
+            ("stamps", stamps),
         ):
             if values is not None and len(values) != len(points):
                 raise ValueError(f"{name} has {len(values)} entries for {len(points)} points")
@@ -238,6 +245,10 @@ class PointCloud2(Timestamped):
         if lines is not None:
             pcd_t.point["lines"] = o3c.Tensor(
                 lines.astype(np.uint8).reshape(-1, 1), dtype=o3c.uint8
+            )
+        if stamps is not None:
+            pcd_t.point["stamps"] = o3c.Tensor(
+                stamps.astype(np.float64).reshape(-1, 1), dtype=o3c.float64
             )
         return cls(pointcloud=pcd_t, ts=timestamp, frame_id=frame_id)
 
@@ -490,6 +501,10 @@ class PointCloud2(Timestamped):
         """Per-point laser line numbers as flat uint8, or None if absent."""
         return self._per_point_field("lines", np.uint8)
 
+    def stamps_f64(self) -> np.ndarray | None:
+        """Per-point capture times (absolute seconds) as flat float64, or None if absent."""
+        return self._per_point_field("stamps", np.float64)
+
     @functools.cached_property
     def axis_aligned_bounding_box(self) -> o3d.geometry.AxisAlignedBoundingBox:
         """Get axis-aligned bounding box of the point cloud."""
@@ -535,7 +550,7 @@ class PointCloud2(Timestamped):
 
         # Header
         msg.header = Header()
-        msg.header.seq = 0
+        msg.header.seq = self.seq
         msg.header.frame_id = frame_id or self.frame_id
 
         msg.header.stamp.sec = int(self.ts)
@@ -670,6 +685,7 @@ class PointCloud2(Timestamped):
                 ts=msg.header.stamp.sec + msg.header.stamp.nsec / 1e9
                 if hasattr(msg, "header") and msg.header.stamp.sec > 0
                 else None,
+                seq=msg.header.seq if hasattr(msg, "header") else 0,
             )
 
         # Parse field offsets. The message is self-describing; a known field is
@@ -810,6 +826,7 @@ class PointCloud2(Timestamped):
             ts=msg.header.stamp.sec + msg.header.stamp.nsec / 1e9
             if hasattr(msg, "header") and msg.header.stamp.sec > 0
             else None,
+            seq=msg.header.seq if hasattr(msg, "header") else 0,
         )
 
     def _create_xyz_fields(self) -> list:  # type: ignore[type-arg]

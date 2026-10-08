@@ -308,28 +308,6 @@ def test_anthropic_sse_usage_and_trace_matching(tmp_path: Path) -> None:
     assert result.final_metrics.total_cost_usd is None
 
 
-def test_grader_only_artifacts_never_reach_the_prompt(tmp_path: Path) -> None:
-    """A MuJoCo recording holds the true object poses; Pi and dimcode are never told it exists."""
-    recording = tmp_path / "memory.db"
-    image = tmp_path / "shot.png"
-    artifacts = {"recording": recording, "image": image}
-
-    handed_over = PiAdapter()._prepare_case(
-        RunningEnvironment(mcp_url="", streams=(), artifacts=artifacts), tmp_path
-    )
-    assert str(recording) in handed_over and "SqliteStore" in handed_over
-
-    withheld = PiAdapter()._prepare_case(
-        RunningEnvironment(
-            mcp_url="", streams=(), artifacts=artifacts, grader_only=frozenset({"recording"})
-        ),
-        tmp_path,
-    )
-    assert str(recording) not in withheld and "SqliteStore" not in withheld
-    assert str(image) in withheld, "other artifacts are still listed"
-    assert str(recording) not in (tmp_path / "system-prompt.txt").read_text()
-
-
 def test_pi_retains_its_stock_prompt(tmp_path: Path) -> None:
     command = PiAdapter()._build_pi_command(
         "Question", "Shared context", RunPaths.for_run(tmp_path)

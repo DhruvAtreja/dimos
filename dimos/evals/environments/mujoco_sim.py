@@ -18,6 +18,7 @@ from __future__ import annotations
 
 import json
 import os
+from pathlib import Path
 import time
 from typing import TYPE_CHECKING, cast
 
@@ -27,8 +28,6 @@ from dimos.evals.environments.lib.recorded_poses import last_body_transform
 from dimos.evals.environments.sim import Sim, SimConfig
 
 if TYPE_CHECKING:
-    from pathlib import Path
-
     from dimos.e2e_tests.dimos_cli_call import DimosCliCall
     from dimos.memory.store.base import Store
     from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
@@ -46,6 +45,11 @@ class MujocoEnvironmentConfig(SimConfig):
         "tf",
         "odom",
     )
+    scene: Path | None = None
+    base_height: float | None = Field(default=None, ge=0, allow_inf_nan=False)
+    # The recording holds the true body poses, which the agent is meant to find
+    # through the camera, so only the grader opens it.
+    agent_artifacts: tuple[str, ...] = ()
 
 
 class MujocoEnvironment(Sim):
@@ -60,7 +64,13 @@ class MujocoEnvironment(Sim):
     def configure_launch(self, proc: DimosCliCall) -> None:
         proc.simulator = "mujoco"
         proc.global_args = ["--record-topics", ",".join(self.config.recorded_topics)]
+        if self.config.scene is not None:
+            proc.global_args += ["--mujoco-scene", str(self.config.scene.resolve())]
         proc.extra_env.update(self.config.module_env)
+        if self.config.base_height is not None:
+            proc.extra_env["MANIPULATIONMODULE__MODEL__BASE_POSE"] = json.dumps(
+                {"frame_id": "world", "position": [0.0, 0.0, self.config.base_height]}
+            )
         proc.extra_env.setdefault(
             "MUJOCOSIMMODULE__HEADLESS", os.environ.get("MUJOCOSIMMODULE__HEADLESS", "true")
         )
@@ -75,9 +85,6 @@ class MujocoEnvironment(Sim):
     def prepare_recording(self, recording: Store, path: Path, deadline: float) -> dict[str, Path]:
         self.wait_ready(recording, deadline=deadline)
         return {}
-
-    def grader_only(self) -> frozenset[str]:
-        return frozenset({"recording"})
 
     def wait_ready(self, recording: Store, *, deadline: float) -> None:
         """Wait for fresh samples on every ready stream and a pose for every tracked body."""

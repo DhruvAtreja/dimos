@@ -48,6 +48,9 @@ class Sim2EnvironmentConfig(SimConfig):
     truth_entities: tuple[str, ...] = ()
     at_rest_rad_s: float = 0.02
     module_env: dict[str, str] = Field(default_factory=dict)
+    # The recording holds the true entity poses on sim_truth, which the agent is
+    # meant to find through the camera, so only the grader opens it.
+    agent_artifacts: tuple[str, ...] = ()
     ready_streams: tuple[str, ...] = ("color_image", "coordinator_joint_state", "sim_truth")
     recorded_topics: tuple[str, ...] = (
         "color_image",
@@ -127,9 +130,6 @@ class Sim2Environment(Sim):
     def prepare_recording(self, recording: Store, path: Path, deadline: float) -> dict[str, Path]:
         self.wait_ready(recording, deadline=deadline)
         return {}
-
-    def grader_only(self) -> frozenset[str]:
-        return frozenset({"recording"})
 
     def wait_ready(self, recording: Store, *, deadline: float) -> None:
         """Wait for fresh samples on every ready stream and a truth pose for every entity."""

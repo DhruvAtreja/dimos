@@ -77,14 +77,15 @@ SCENE = (
 
 Cause = Literal["perception", "planning", "execution"]
 
-# Skill error codes that mean the planner found no way to the pose.
-PLANNING_CODES = frozenset({"PLANNING_FAILED", "IK_FAILED", "COLLISION_AT_START"})
+# How pick_object, place_at and the motion skills say the planner found no way to the pose:
+# "The planner found no path to any of the 2 grasp candidate(s) ...", "... did not complete;
+# planner returned FAILED: ...", "No plan; planner returned FAILED: ...".
+_PLANNER_FAILED = re.compile(r"\bplanner (?:found no path|returned)\b")
 # The skills whose planning failures count, by stage: picking (and explicit planning) or placing.
 _PICK_CALL = re.compile(r"\b(pick_object|plan_\w*)\b")
 _PLACE_CALL = re.compile(r"\bplace_at\b")
 # An object the perception stack reported: scan_objects' JSON or detect's bullet list.
 _DETECTION = re.compile(r'"name":\s*"([^"]*)"|^\s*-\s*(.+?)\s*\(object_id=', re.MULTILINE)
-_ERROR_CODE = re.compile(r'"error_code":\s*"([A-Z_]+)"')
 
 
 def failure_cause(trajectory: Trajectory, label: str, *, grasped: bool) -> Cause:
@@ -94,8 +95,8 @@ def failure_cause(trajectory: Trajectory, label: str, *, grasped: bool) -> Cause
     the truth check saw it lifted. "perception": no scan or detect result ever named the
     target (a name whose words all belong to the label counts, so "cracker" or "box" do,
     "red box" does not). "planning": the target was seen but the stage that lost it, a
-    pick or plan call before any lift, or a place call after one, answered with a planning
-    error code; the agent's own exploratory moves do not count. "execution": anything
+    pick or plan call before any lift, or a place call after one, answered that the planner
+    found no path; the agent's own exploratory moves do not count. "execution": anything
     else, such as a grasp that slipped, a knocked object or a drop outside the square.
     """
     wanted = set(label.lower().split())
@@ -110,9 +111,7 @@ def failure_cause(trajectory: Trajectory, label: str, *, grasped: bool) -> Cause
             for json_name, listed_name in _DETECTION.findall(result.content):
                 words = set((json_name or listed_name).lower().split())
                 seen |= bool(words) and words <= wanted
-            planning_failed |= in_stage and any(
-                code in PLANNING_CODES for code in _ERROR_CODE.findall(result.content)
-            )
+            planning_failed |= in_stage and bool(_PLANNER_FAILED.search(result.content))
     if not seen:
         return "perception"
     if planning_failed:

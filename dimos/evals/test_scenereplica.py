@@ -27,6 +27,7 @@ from typing import Any
 
 import pytest
 
+from dimos.agents.skill_result import SkillResult
 from dimos.evals.environments.lib.scene_checks import (
     displacement,
     lifted_by,
@@ -50,6 +51,14 @@ from dimos.evals.types import (
     ToolCall,
     Trajectory,
 )
+from dimos.manipulation.manipulation_skills import ManipulationSkills
+from dimos.manipulation.manipulation_spec import (
+    ExecutionResult,
+    ExecutionStatus,
+    PlanResult,
+    PlanStatus,
+)
+from dimos.manipulation.pick_and_place_module import PickAndPlaceModule
 from dimos.memory.store.memory import MemoryStore
 from dimos.memory.store.sqlite import SqliteStore
 from dimos.msgs.geometry_msgs.Pose import Pose
@@ -225,28 +234,79 @@ def test_unmoved_and_displacement() -> None:
 # -- failure cause and the whole grader --------------------------------------------------
 
 
-SCAN_OK = '{"success": true, "metadata": {"objects": [{"object_id": "1", "name": "cracker box"}]}}'
-SCAN_OTHER = '{"success": true, "metadata": {"objects": [{"object_id": "1", "name": "red box"}]}}'
+def _content(result: SkillResult | None) -> str:
+    """A skill's answer as the agent reads it from the MCP tool call."""
+    assert result is not None
+    return str(result.agent_encode()[0]["text"])
+
+
+def _scan(name: str) -> str:
+    return _content(
+        SkillResult(
+            "Detected 1 object(s)",
+            metadata={"prompts": [name], "objects": [{"object_id": "1", "name": name}]},
+        )
+    )
+
+
+SCAN_OK = _scan("cracker box")
+SCAN_OTHER = _scan("red box")
 DETECT_OK = "Detected 1 object(s):\n  - cracker (object_id='1')"
-PLAN_FAIL = '{"success": false, "message": "no path", "error_code": "PLANNING_FAILED"}'
-GRASP_FAIL = '{"success": false, "message": "nothing in the jaws", "error_code": "GRASP_VERIFICATION_FAILED"}'
+NO_PATH = PlanResult(PlanStatus.FAILED, "IK failed: COLLISION")
+# pick_object when the planner reached none of the grasp candidates.
+PICK_NO_PATH = _content(
+    SkillResult(
+        "The planner found no path to any of the 5 grasp candidate(s) tried for object 1; "
+        "last planner result FAILED: IK failed: COLLISION."
+    )
+)
+# place_at when the planner found no way down to the drop-off.
+PLACE_NO_PATH = _content(
+    PickAndPlaceModule._stopped("Move to the pre-place pose above (0.42, 0.38, 0.80)", NO_PATH)
+)
+# A motion skill such as move_to_pose when the planner found no way to the pose.
+MOVE_NO_PATH = _content(ManipulationSkills._planning_result(NO_PATH))
+# A close that met nothing, and a motion that stopped part-way: execution, not planning.
+GRASP_FAIL = _content(
+    SkillResult(
+        "Closed the gripper on object 1. Final gripper position 0.01. Reopened the gripper."
+    )
+)
+DRIVE_FAULT = _content(
+    PickAndPlaceModule._stopped(
+        "Move to grasp candidate 0 for object 1",
+        ExecutionResult(ExecutionStatus.FAULT, "drive fault"),
+    )
+)
 
 
 def test_failure_cause_follows_scenereplica() -> None:
     cause = _scenereplica().failure_cause
     assert cause(_trajectory(), "cracker box", grasped=False) == "perception"
-    assert cause(_trajectory(SCAN_OTHER, PLAN_FAIL), "cracker box", grasped=False) == "perception"
-    assert cause(_trajectory(SCAN_OK, PLAN_FAIL), "cracker box", grasped=False) == "planning"
+    assert (
+        cause(_trajectory(SCAN_OTHER, PICK_NO_PATH), "cracker box", grasped=False) == "perception"
+    )
+    assert cause(_trajectory(SCAN_OK, PICK_NO_PATH), "cracker box", grasped=False) == "planning"
     assert cause(_trajectory(DETECT_OK, GRASP_FAIL), "cracker box", grasped=False) == "execution"
+    assert cause(_trajectory(SCAN_OK, DRIVE_FAULT), "cracker box", grasped=False) == "execution"
     assert cause(_trajectory(SCAN_OK), "cracker box", grasped=False) == "execution"
     # A planning failure on the agent's own move does not make it a planning loss.
-    moved = _trajectory(SCAN_OK, PLAN_FAIL, tool="move_to_pose")
+    moved = _trajectory(SCAN_OK, MOVE_NO_PATH, tool="move_to_pose")
     assert cause(moved, "cracker box", grasped=False) == "execution"
     # Once the object was lifted, only the place call's planning failure counts.
-    assert cause(_trajectory(SCAN_OK, PLAN_FAIL), "cracker box", grasped=True) == "execution"
-    placed = _trajectory(SCAN_OK, PLAN_FAIL, tool="place_at")
+    assert cause(_trajectory(SCAN_OK, PICK_NO_PATH), "cracker box", grasped=True) == "execution"
+    placed = _trajectory(SCAN_OK, PLACE_NO_PATH, tool="place_at")
     assert cause(placed, "cracker box", grasped=True) == "planning"
     assert cause(placed, "cracker box", grasped=False) == "execution"
+
+
+def test_planning_label_reads_what_the_skills_say() -> None:
+    """The label matches the words the skills use, so a reworded skill fails here first."""
+    planner_failed = _scenereplica()._PLANNER_FAILED
+    for content in (PICK_NO_PATH, PLACE_NO_PATH, MOVE_NO_PATH):
+        assert planner_failed.search(content), content
+    for content in (GRASP_FAIL, DRIVE_FAULT, SCAN_OK):
+        assert not planner_failed.search(content), content
 
 
 def test_pick_and_place_grader_end_to_end(tmp_path: Path) -> None:

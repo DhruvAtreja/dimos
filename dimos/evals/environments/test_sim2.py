@@ -197,7 +197,7 @@ def test_launch_and_cleanup(tmp_path, mocker):
         truth_on.assert_called_once()
         ready.assert_called_once()
         assert set(result.artifacts) == {"recording"}
-        assert result.grader_only == {"recording"}, "the agent must not be handed the recording"
+        assert env.config.agent_artifacts == (), "the agent must not be handed the recording"
     finally:
         env.stop()
     proc.stop.assert_called_once()
