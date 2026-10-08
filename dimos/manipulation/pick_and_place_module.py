@@ -74,9 +74,13 @@ class PickAndPlaceModuleConfig(ModuleConfig):
     max_grasp_attempts: int = Field(default=5, gt=0)
     yaw_policy: Literal["generated", "preserve_current"] = "generated"
     grasp_verification: GraspVerificationConfig = Field(default_factory=GraspVerificationConfig)
-    # After the lift, the camera must see the object moved along the lift by at
-    # least this share (0 to 1) of the gripper's lift distance, else it stayed down.
+    # After the lift, the camera must see the object rise by at least this share
+    # (0 to 1) of the height the gripper rose, else it stayed down.
     lift_follow_fraction: float = Field(default=0.5, gt=0.0, le=1.0)
+    # Before a held object is carried to the scan pose, the gripper rises straight
+    # up to this height (metres) above the grasp, clear of the table and its
+    # neighbours.
+    carry_height: float = Field(default=0.18, gt=0.0)
     # Detections of the target's label farther than this (metres) from where it
     # was last seen (and, after a lift, from where it would be had it come along)
     # are other objects. A released object is looked for this far from the gripper.
@@ -495,6 +499,37 @@ class PickAndPlaceModule(Module):
             )
         )
 
+    def _carry_to_scan_pose(
+        self, target: ScannedObject, grasp: PoseStamped, group: PlanningGroupID
+    ) -> SkillResult | None:
+        """Raise a held object straight up, then move the arm to the scan pose.
+
+        The joint move to the scan pose does not plan around the object hanging
+        from the gripper, so the gripper first rises ``carry_height`` above the
+        grasp.
+
+        Args:
+            target: The object in the gripper.
+            grasp: Gripper pose that closed on it, planning frame.
+            group: Planning group holding it.
+
+        Returns a statement of the move that did not complete, or None when the
+        arm reached the scan pose.
+        """
+        tip = self._tip_position(group)
+        rise = 0.0 if tip is None else grasp.position.z + self.config.carry_height - tip.z
+        if rise > 0.0:
+            raised = self._manipulation.move_linear(0.0, 0.0, rise, group, check_collision=False)
+            if not raised.plan.succeeded:
+                return self._stopped(f"Raise object {target.object_id}", raised.plan)
+            if raised.execution is not None and not raised.execution.succeeded:
+                return self._stopped(f"Raise object {target.object_id}", raised.execution)
+        if moved := self._return_to_scan_pose(group):
+            return self._stopped(
+                f"Move to the scan pose to look for object {target.object_id}", moved
+            )
+        return None
+
     def _return_to_scan_pose(self, group: PlanningGroupID) -> PlanResult | ExecutionResult | None:
         """Move the arm back to its joint positions from the latest scan_objects call.
 
@@ -650,8 +685,9 @@ class PickAndPlaceModule(Module):
 
         Jaws that stop on an edge, or on an object pushed aside, read the same as
         a hold, so after the lift the jaws are read again, the arm carries the
-        object to the scan pose (when one was recorded) and the camera looks for
-        it there. If that move fails the camera looks from where the arm stopped.
+        object to the scan pose (when one was recorded), the jaws are read once
+        more and the camera looks for the object. If that move fails the camera
+        looks from where the arm stopped.
 
         Args:
             target: The object being picked, with where it was scanned.
@@ -666,7 +702,7 @@ class PickAndPlaceModule(Module):
         lift = pregrasp.position - grasp.position
         facts: dict[str, Any] = {
             **_summary(target),
-            "gripper_lift_m": round(lift.length(), 3),
+            "gripper_lift_m": round(lift.z, 3),
         }
         verification = self.config.grasp_verification
         jaws = self._gripper_position(planning_group)
@@ -679,29 +715,47 @@ class PickAndPlaceModule(Module):
                 **facts,
             )
         note = ""
+        at_scan_pose = False
         if self._scan_joints.get(planning_group) is not None:
-            if moved_arm := self._return_to_scan_pose(planning_group):
-                stopped = self._stopped(
-                    f"Move to the scan pose to look for object {target.object_id}", moved_arm
-                )
+            if stopped := self._carry_to_scan_pose(target, grasp, planning_group):
                 note = f" {stopped.message}; the camera looked from where the arm stopped."
+            else:
+                at_scan_pose = True
             tip = self._tip_position(planning_group)
             if tip is not None:
                 lift = tip - grasp.position
-                facts["gripper_lift_m"] = round(lift.length(), 3)
-        detections = self._detect_after(target.name, time.time())
-        moved = _distance_along(
-            [obj.position for obj in self._sightings(target, detections)],
+                facts["gripper_lift_m"] = round(lift.z, 3)
+            jaws = self._gripper_position(planning_group)
+            if verification.enabled and jaws is not None and jaws <= verification.held_low:
+                return self._missed_grasp(
+                    planning_group,
+                    f"After carrying object {target.object_id} up, the gripper reads "
+                    f"{jaws:.2f}: the object fell out.{note}",
+                    jaws=round(jaws, 3),
+                    **facts,
+                )
+        sightings = self._sightings(target, self._detect_after(target.name, time.time()))
+        if at_scan_pose:
+            # From the scan pose the camera sees more of the table, so only the
+            # target itself counts as left behind, not a neighbour with its label.
+            sightings = [
+                obj
+                for obj in sightings
+                if obj.object_id == target.object_id
+                or _inside(obj.position, target, self.config.target_clearance)
+            ]
+        rose = _height_gained(
+            [obj.position for obj in sightings],
             target.position,
             lift,
             self.config.lift_check_radius,
         )
-        facts["object_lift_m"] = None if moved is None else round(moved, 3)
-        if moved is not None and moved < self.config.lift_follow_fraction * lift.length():
+        facts["object_lift_m"] = None if rose is None else round(rose, 3)
+        if rose is not None and rose < self.config.lift_follow_fraction * lift.z:
             return self._missed_grasp(
                 planning_group,
-                f"Lifted the gripper {lift.length():.2f} m, but the camera sees object "
-                f"{target.object_id} moved {moved:.2f} m with it; it stayed on the table.{note}",
+                f"Lifted the gripper {lift.z:.2f} m, but the camera sees object "
+                f"{target.object_id} rose {rose:.2f} m with it; it stayed on the table.{note}",
                 **facts,
             )
         complete = f"Pick complete.{note}" if note else "Pick complete"
@@ -1101,21 +1155,21 @@ def _summary(obj: ScannedObject | HeldObject) -> dict[str, Any]:
     return {"object_id": obj.object_id, "name": obj.name}
 
 
-def _distance_along(
+def _height_gained(
     centers: Sequence[Vector3], start: Vector3, lift: Vector3, radius: float
 ) -> float | None:
-    """How far a lifted object moved with the gripper, as the camera sees it.
+    """How high a lifted object rose with the gripper, as the camera sees it.
 
     Args:
         centers: Centres of the detections of the object's label after the lift,
-            metres, in the planning frame.
+            metres, in the planning frame (Z up).
         start: Centre of the object before the grasp, metres.
-        lift: How the gripper moved from the grasp pose to the pre-grasp pose, metres.
+        lift: How the gripper moved from the grasp pose to where it is now, metres.
         radius: Detections farther than this (metres) from both ``start`` and
             ``start + lift`` are taken to be other objects.
 
-    Returns the farthest any remaining detection moved along the lift direction,
-    metres, or None when no detection remains.
+    Returns the most any remaining detection rose above ``start``, metres, or
+    None when no detection remains. Sliding sideways does not count.
     """
     lifted_to = start + lift
     nearby = [
@@ -1125,8 +1179,19 @@ def _distance_along(
     ]
     if not nearby:
         return None
-    direction = lift.normalize()
-    return max((center - start).dot(direction) for center in nearby)
+    return max(center.z - start.z for center in nearby)
+
+
+def _inside(point: Vector3, box: ScannedObject, margin: float) -> bool:
+    """Whether a point lies in an object's detected 3D box, grown by ``margin`` metres."""
+    # The point in the box's own axes, R^T (p - c).
+    local = box.orientation.inverse().rotate_vector(point - box.position)
+    half = box.size * 0.5
+    return (
+        abs(local.x) <= half.x + margin
+        and abs(local.y) <= half.y + margin
+        and abs(local.z) <= half.z + margin
+    )
 
 
 def _crop(pointcloud: PointCloud2, box: ScannedObject, margin: float) -> PointCloud2:

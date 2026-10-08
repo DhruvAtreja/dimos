@@ -13,6 +13,7 @@
 # limitations under the License.
 
 from collections.abc import Iterator
+import math
 import time
 from types import SimpleNamespace
 from typing import Any
@@ -668,7 +669,7 @@ def test_pick_fails_when_the_object_did_not_rise(
     result = module.pick_object("cup-1")
 
     assert result.message == (
-        f"Lifted the gripper 0.10 m, but the camera sees object cup-1 moved {object_lift:.2f} m "
+        f"Lifted the gripper 0.10 m, but the camera sees object cup-1 rose {object_lift:.2f} m "
         "with it; it stayed on the table. Reopened the gripper. "
         "Object cup-1 is still not held after 1 try."
     )
@@ -1149,50 +1150,70 @@ def test_a_gripper_that_never_settles_is_a_fault_not_a_handoff(
     assert manipulation.plan_to_poses.call_count == 1
 
 
-# The scan pose's joints, and where the tool tip is there: 30 cm above the cup.
+# The scan pose's joints, and where the tool tip is there: 30 cm above the grasp.
 SCAN_JOINTS = _joints(0.0, -0.2, 0.9)
 SCAN_TIP = Vector3(0.1, 0.0, 0.5)
 
 
-def _scanned_from_the_scan_pose(module: PickAndPlaceModule) -> list[str]:
-    """Scan the cup from the scan pose, and have the mock arm follow the moves.
+class _Arm:
+    """A mock arm whose joints, tool tip and jaws follow pick_object's moves.
 
-    Each move to a grasp leaves the arm away from the scan pose, and each move
-    to joint positions brings it back. Returns the order of scans and moves
-    back to the scan pose, starting with the scan.
+    It scans the cup from the scan pose. A move to a pose puts the tip there, a
+    straight move shifts it, and a move to joint positions brings the arm back
+    to the scan pose. ``order`` records scans, straight moves (by their height
+    change, metres) and moves back to the scan pose.
     """
-    scene: Any = module._scene
-    manipulation: Any = module._manipulation
-    order: list[str] = []
-    at_scan = _group_state(joints=SCAN_JOINTS, tip=SCAN_TIP)
-    away = _group_state(joints=_joints(0.3, 0.5, 1.2))
 
-    def plan_to_poses(*args: Any, **kwargs: Any) -> PlanResult:
-        manipulation.get_state.return_value = away
+    def __init__(self, module: PickAndPlaceModule) -> None:
+        self.tip = SCAN_TIP
+        self.joints = SCAN_JOINTS
+        self.jaws = 0.5
+        # Jaw readback once the arm reaches the scan pose; None leaves it as it is.
+        self.jaws_at_scan_pose: float | None = None
+        self.order: list[str] = []
+        self._manipulation: Any = module._manipulation
+        self._scene: Any = module._scene
+        self._manipulation.get_state.side_effect = lambda: _group_state(
+            self.jaws, self.joints, self.tip
+        )
+        self._manipulation.plan_to_poses.side_effect = self._to_pose
+        self._manipulation.move_linear.side_effect = self._straight
+        self._manipulation.plan_to_joints.side_effect = self._to_scan_pose
+        self._scene.scan_scene.return_value = _cup_at(0.1, 0.0, 0.2)
+        self._scene.scan_scene.side_effect = self._scan
+        module.scan_objects(["cup"])
+
+    def _to_pose(self, targets: dict[str, PoseStamped]) -> PlanResult:
+        (pose,) = targets.values()
+        self.tip, self.joints = pose.position, _joints(0.3, 0.5, 1.2)
         return PLANNED
 
-    def plan_to_joints(targets: dict[str, JointState]) -> PlanResult:
-        order.append("back to scan pose")
-        manipulation.get_state.return_value = at_scan
+    def _straight(self, dx: float, dy: float, dz: float, *args: Any, **kwargs: Any) -> MoveResult:
+        self.order.append(f"line {dz:+.2f}")
+        self.tip = self.tip + Vector3(dx, dy, dz)
+        return _linear_move()
+
+    def _to_scan_pose(self, targets: dict[str, JointState]) -> PlanResult:
+        self.order.append("back to scan pose")
+        self.tip, self.joints = SCAN_TIP, targets["arm/tool"]
+        if self.jaws_at_scan_pose is not None:
+            self.jaws = self.jaws_at_scan_pose
         return PLANNED
 
-    def scan(text: list[str]) -> Detection3DArray:
-        order.append("scan")
-        return scene.scan_scene.return_value
+    def _scan(self, text: list[str]) -> Detection3DArray:
+        self.order.append("scan")
+        result: Detection3DArray = self._scene.scan_scene.return_value
+        return result
 
-    manipulation.get_state.return_value = at_scan
-    manipulation.plan_to_poses.side_effect = plan_to_poses
-    manipulation.plan_to_joints.side_effect = plan_to_joints
-    scene.scan_scene.return_value = _cup_at(0.1, 0.0, 0.2)
-    scene.scan_scene.side_effect = scan
-    module.scan_objects(["cup"])
-    return order
+
+# Grasp, back out, rise 8 cm to 18 cm above the grasp, then on to the scan pose.
+ONE_CARRY = ["line -0.10", "line +0.10", "line +0.08", "back to scan pose"]
 
 
 def test_a_cup_left_on_the_table_is_seen_from_the_scan_pose(module: PickAndPlaceModule) -> None:
     """At the pre-grasp pose the camera may be too close to see the cup at all."""
     manipulation: Any = module._manipulation
-    order = _scanned_from_the_scan_pose(module)
+    arm = _Arm(module)
     module.config.max_grasp_retries = 1
 
     result = module.pick_object("cup-1")
@@ -1200,20 +1221,23 @@ def test_a_cup_left_on_the_table_is_seen_from_the_scan_pose(module: PickAndPlace
     assert "it stayed on the table" in result.message
     assert result.metadata["grasped"] is False
     assert result.metadata["gripper_lift_m"] == pytest.approx(0.3)
-    assert order == ["scan", "back to scan pose", "scan"]
+    assert arm.order == ["scan", *ONE_CARRY, "scan"]
     manipulation.plan_to_joints.assert_called_once_with({"arm/tool": SCAN_JOINTS})
+    rise = manipulation.move_linear.call_args_list[2]
+    assert rise.kwargs["check_collision"] is False
 
 
 def test_a_cup_carried_to_the_scan_pose_completes_the_pick(module: PickAndPlaceModule) -> None:
     scene: Any = module._scene
-    _scanned_from_the_scan_pose(module)
-    # The camera sees the cup in the jaws, 30 cm above where it stood.
-    scene.scan_scene.return_value = _cup_at(0.1, 0.0, 0.5)
+    _Arm(module)
+    # In the jaws the cup is closer to the wrist camera than it can see.
+    scene.scan_scene.return_value = _detections()
 
     result = module.pick_object("cup-1")
 
     assert result.message == "Pick complete"
-    assert result.metadata["object_lift_m"] == pytest.approx(0.3)
+    assert result.metadata["gripper_lift_m"] == pytest.approx(0.3)
+    assert result.metadata["object_lift_m"] is None
     assert _held_id(module) == "cup-1"
 
 
@@ -1222,10 +1246,8 @@ def test_a_failed_move_to_the_scan_pose_falls_back_to_the_jaws(
 ) -> None:
     manipulation: Any = module._manipulation
     scene: Any = module._scene
-    _scanned_from_the_scan_pose(module)
-    manipulation.plan_to_joints.side_effect = None
-    manipulation.plan_to_joints.return_value = NO_PATH
-    # From the pre-grasp pose the camera is too close to see the cup.
+    _Arm(module)
+    manipulation.plan_to_joints.side_effect = lambda targets: NO_PATH
     scene.scan_scene.return_value = _detections()
 
     result = module.pick_object("cup-1")
@@ -1235,18 +1257,76 @@ def test_a_failed_move_to_the_scan_pose_falls_back_to_the_jaws(
         "planner returned FAILED: unreachable; the camera looked from where the arm stopped."
     )
     assert result.metadata["grasped"] is True
+    # The gripper stopped 18 cm above the grasp, after the straight rise.
+    assert result.metadata["gripper_lift_m"] == pytest.approx(0.18)
     assert _held_id(module) == "cup-1"
+
+
+def test_a_cup_that_falls_out_on_the_way_up_is_a_miss(module: PickAndPlaceModule) -> None:
+    arm = _Arm(module)
+    arm.jaws_at_scan_pose = 0.0
+    module.config.max_grasp_retries = 1
+
+    result = module.pick_object("cup-1")
+
+    assert result.message == (
+        "After carrying object cup-1 up, the gripper reads 0.00: the object fell out. "
+        "Reopened the gripper. Object cup-1 is still not held after 1 try."
+    )
+    assert result.metadata["grasped"] is False
+    assert _held_id(module) is None
+    assert arm.order == ["scan", *ONE_CARRY]
+
+
+def test_a_cup_pushed_along_a_tilted_approach_did_not_rise(module: PickAndPlaceModule) -> None:
+    """Backing out of a tilted grasp moves the gripper 8 cm sideways and 5 cm up."""
+    scene: Any = module._scene
+    grasp_generator: Any = module._grasp_generator
+    tilted = Quaternion.from_euler(Vector3(-math.pi + 1.0, 0.0, 0.0))
+    grasp_generator.propose_grasps.return_value = GraspCandidateArray(
+        Header(1.0, "world"), [_grasp_at(0.1, 0.0, 1.0, tilted)]
+    )
+    # Pushed 10 cm the way the gripper backed out, still on the table.
+    scene.scan_scene.return_value = _cup_at(0.1, -0.1, 0.2)
+    module.config.max_grasp_retries = 1
+
+    result = module.pick_object("cup-1")
+
+    assert result.metadata["grasped"] is False
+    assert result.metadata["object_lift_m"] == pytest.approx(0.0)
+
+
+@pytest.mark.parametrize(
+    ("seen_at", "grasped"),
+    [
+        # 13 cm off, outside the cup's old box: a neighbour, not the cup left behind.
+        (Vector3(0.1, 0.13, 0.2), True),
+        # Inside the cup's old box: the cup itself, under a new ID.
+        (Vector3(0.1, 0.02, 0.2), False),
+    ],
+    ids=["neighbour", "same-spot"],
+)
+def test_from_the_scan_pose_only_the_cup_s_own_spot_counts(
+    module: PickAndPlaceModule, seen_at: Vector3, grasped: bool
+) -> None:
+    scene: Any = module._scene
+    _Arm(module)
+    module.config.max_grasp_retries = 1
+    scene.scan_scene.return_value = _detections(("cup-9", "cup", seen_at))
+
+    result = module.pick_object("cup-1")
+
+    assert result.metadata["grasped"] is grasped
 
 
 def test_after_a_miss_seen_from_the_scan_pose_the_re_scan_looks_from_there(
     module: PickAndPlaceModule,
 ) -> None:
-    manipulation: Any = module._manipulation
     grasp_generator: Any = module._grasp_generator
     grasp_generator.propose_grasps.return_value = GraspCandidateArray(
         Header(1.0, "world"), [_grasp_at(0.1, 0.0, 0.9), _grasp_at(0.1, 0.05, 0.5)]
     )
-    order = _scanned_from_the_scan_pose(module)
+    arm = _Arm(module)
     module.config.max_grasp_retries = 2
 
     result = module.pick_object("cup-1")
@@ -1254,30 +1334,27 @@ def test_after_a_miss_seen_from_the_scan_pose_the_re_scan_looks_from_there(
     assert _tries(result, "rank") == [0, 1]
     # Each lift check looks from the scan pose; the re-scan after the first miss
     # finds the arm already there.
-    assert order == ["scan", "back to scan pose", "scan", "scan", "back to scan pose", "scan"]
-    assert manipulation.plan_to_joints.call_count == 2
+    assert arm.order == ["scan", *ONE_CARRY, "scan", "scan", *ONE_CARRY, "scan"]
 
 
 def test_after_jaws_closed_on_nothing_the_re_scan_looks_from_the_scan_pose(
     module: PickAndPlaceModule, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    order = _scanned_from_the_scan_pose(module)
+    arm = _Arm(module)
     module.config.max_grasp_retries = 2
     _close_on_nothing(monkeypatch)
 
     module.pick_object("cup-1")
 
-    assert order == ["scan", "back to scan pose", "scan"]
+    assert arm.order == ["scan", "line -0.10", "line +0.10", "back to scan pose", "scan"]
 
 
 def test_a_pick_that_cannot_return_to_the_scan_pose_stops(
     module: PickAndPlaceModule, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     manipulation: Any = module._manipulation
-    scene: Any = module._scene
-    _scanned_from_the_scan_pose(module)
-    manipulation.plan_to_joints.side_effect = None
-    manipulation.plan_to_joints.return_value = NO_PATH
+    arm = _Arm(module)
+    manipulation.plan_to_joints.side_effect = lambda targets: NO_PATH
     _close_on_nothing(monkeypatch)
 
     result = module.pick_object("cup-1")
@@ -1289,8 +1366,8 @@ def test_a_pick_that_cannot_return_to_the_scan_pose_stops(
     assert result.metadata["grasped"] is False
     assert result.metadata["handoff"] is False
     assert len(result.metadata["tries"]) == 1
-    # Only the scan; no re-scan from the pre-grasp pose.
-    assert scene.scan_scene.call_count == 1
+    # Only the first scan; no re-scan from the pre-grasp pose.
+    assert arm.order.count("scan") == 1
 
 
 def test_without_a_scan_pose_both_checks_look_from_where_the_arm_is(
