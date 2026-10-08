@@ -45,6 +45,7 @@ from dimos.msgs.geometry_msgs.Quaternion import Quaternion
 from dimos.msgs.geometry_msgs.Vector3 import Vector3
 from dimos.msgs.manipulation_msgs.GraspCandidate import GraspCandidate
 from dimos.msgs.manipulation_msgs.GraspCandidateArray import GraspCandidateArray
+from dimos.msgs.sensor_msgs.JointState import JointState
 from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
 from dimos.msgs.vision_msgs.Detection3DArray import Detection3DArray
 from dimos.perception.experimental.object_scene_registration_spec import ObjectSceneRegistrationSpec
@@ -205,6 +206,8 @@ class PickAndPlaceModule(Module):
         # True while a pick has left the gripper inside the target's ignored box;
         # the box then stays so the next plan can start from there.
         self._arm_in_target = False
+        # Joint positions of each planning group when the latest scan_objects ran.
+        self._scan_joints: dict[PlanningGroupID, JointState] = {}
 
     @skill
     def scan_objects(self, prompts: list[str]) -> SkillResult:
@@ -219,6 +222,11 @@ class PickAndPlaceModule(Module):
         if self._held is None:
             self._clear_proposals()
         self._objects = {}
+        self._scan_joints = {
+            group_id: state.joints
+            for group_id, state in self._manipulation.get_state().groups.items()
+            if state.joints is not None
+        }
         detections = self._scene.scan_scene(text=prompts)
         self._objects = _scanned(detections)
         return SkillResult(
@@ -241,9 +249,10 @@ class PickAndPlaceModule(Module):
         """Grasp one object from the latest scan and lift it.
 
         After the lift the camera checks the object came up with the gripper. On
-        a miss the arm backs out, scans again and tries another grasp, a limited
-        number of times. ``tries`` in the result lists each grasp; ``handoff: true``
-        means it stopped trying after misses and the object is not held.
+        a miss the arm backs out, returns to where scan_objects saw the object,
+        scans again and tries another grasp, a limited number of times. ``tries``
+        in the result lists each grasp; ``handoff: true`` means it stopped trying
+        after misses and the object is not held.
 
         Args:
             object_id: Exact object ID returned by the latest scan_objects call.
@@ -367,6 +376,13 @@ class PickAndPlaceModule(Module):
                     f"Object {target.object_id} is still not held after {len(tries)} "
                     f"{'try' if len(tries) == 1 else 'tries'}.",
                 )
+            if moved := self._return_to_scan_pose(group):
+                stopped = self._stopped(
+                    f"Move back to where object {target.object_id} was scanned from", moved
+                )
+                return self._stop_trying(
+                    SkillResult(f"{last.message} {stopped.message}", metadata=last.metadata), tries
+                )
             found = self._rescan(target)
             if found is None:
                 return self._stop_trying(
@@ -476,6 +492,23 @@ class PickAndPlaceModule(Module):
                 f"for object {object_id}; last planner result {last_plan}."
             )
         )
+
+    def _return_to_scan_pose(self, group: PlanningGroupID) -> PlanResult | ExecutionResult | None:
+        """Move the arm back to its joint positions from the latest scan_objects call.
+
+        After a miss the wrist camera is just above the object, too close to see
+        it whole; from the scan pose it has already seen it once.
+
+        Args:
+            group: Planning group to move.
+
+        Returns the planner or execution result that stopped the move, or None
+        when the arm arrived or no scan pose was recorded for the group.
+        """
+        joints = self._scan_joints.get(group)
+        if joints is None:
+            return None
+        return self._run(self._manipulation.plan_to_joints({group: joints}))
 
     def _rescan(self, target: ScannedObject) -> ScannedObject | None:
         """Detect the object again after a missed grasp and record it in the latest scan.
@@ -897,7 +930,14 @@ class PickAndPlaceModule(Module):
         Returns the planner or execution result that stopped the leg, or None
         when the arm arrived.
         """
-        plan = self._manipulation.plan_to_poses({planning_group: pose})
+        return self._run(self._manipulation.plan_to_poses({planning_group: pose}))
+
+    def _run(self, plan: PlanResult) -> PlanResult | ExecutionResult | None:
+        """Run a plan to the end.
+
+        Returns the plan when it failed, the execution result when the motion
+        stopped part-way, or None when the arm arrived.
+        """
         if not plan.succeeded:
             return plan
         execution = self._manipulation.execute(blocking=True)

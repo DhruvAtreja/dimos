@@ -45,6 +45,7 @@ from dimos.msgs.geometry_msgs.Quaternion import Quaternion
 from dimos.msgs.geometry_msgs.Vector3 import Vector3
 from dimos.msgs.manipulation_msgs.GraspCandidate import GraspCandidate
 from dimos.msgs.manipulation_msgs.GraspCandidateArray import GraspCandidateArray
+from dimos.msgs.sensor_msgs.JointState import JointState
 from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
 from dimos.msgs.std_msgs.Header import Header
 from dimos.msgs.vision_msgs.Detection3D import Detection3D
@@ -87,11 +88,24 @@ def _detections(*found: tuple[str, str, Vector3], ts: float = FRAME_TS) -> Detec
     )
 
 
-def _group_state(gripper_position: float = 0.5) -> SimpleNamespace:
-    """Manipulation state with the tool tip at (0.4, 0.0, 0.2) and the given jaw readback."""
+def _joints(*position: float) -> JointState:
+    """Joint positions of the test arm, radians."""
+    return JointState(name=[f"j{i}" for i in range(len(position))], position=list(position))
+
+
+def _group_state(
+    gripper_position: float = 0.5, joints: JointState | None = None
+) -> SimpleNamespace:
+    """Manipulation state with the tool tip at (0.4, 0.0, 0.2) and the given jaw readback.
+
+    Args:
+        gripper_position: Jaw readback, 0.0 closed to 1.0 open.
+        joints: Joint positions the arm reports, or None for none.
+    """
     return SimpleNamespace(
         groups={
             "arm/tool": SimpleNamespace(
+                joints=joints,
                 gripper_position=gripper_position,
                 end_effector_pose=PoseStamped(
                     frame_id="world",
@@ -125,6 +139,7 @@ def module() -> Iterator[PickAndPlaceModule]:
     instance._manipulation.list_planning_groups.return_value = [GROUP]
     instance._manipulation.get_state.return_value = _group_state()
     instance._manipulation.plan_to_poses.return_value = PLANNED
+    instance._manipulation.plan_to_joints.return_value = PLANNED
     instance._manipulation.execute.return_value = COMPLETED
     instance._manipulation.move_linear.return_value = _linear_move()
     instance._manipulation.set_gripper_position.return_value = ACCEPTED
@@ -1129,3 +1144,76 @@ def test_a_gripper_that_never_settles_is_a_fault_not_a_handoff(
     assert result.metadata["handoff"] is False
     assert len(result.metadata["tries"]) == 1
     assert manipulation.plan_to_poses.call_count == 1
+
+
+def test_a_re_scan_looks_from_where_the_scan_found_the_object(
+    module: PickAndPlaceModule,
+) -> None:
+    """Right after a miss the camera is too close to the object; the scan pose saw it."""
+    scene: Any = module._scene
+    manipulation: Any = module._manipulation
+    grasp_generator: Any = module._grasp_generator
+    grasp_generator.propose_grasps.return_value = GraspCandidateArray(
+        Header(1.0, "world"), [_grasp_at(0.1, 0.0, 0.9), _grasp_at(0.1, 0.05, 0.5)]
+    )
+    scan_pose = _joints(0.0, -0.2, 0.9)
+    manipulation.get_state.return_value = _group_state(joints=scan_pose)
+    order: list[str] = []
+
+    def scan(text: list[str]) -> Detection3DArray:
+        order.append("scan")
+        return _cup_at(0.1, 0.0, 0.2)
+
+    def plan_to_joints(targets: dict[str, JointState]) -> PlanResult:
+        order.append("back to scan pose")
+        return PLANNED
+
+    scene.scan_scene.side_effect = scan
+    manipulation.plan_to_joints.side_effect = plan_to_joints
+    module.scan_objects(["cup"])
+    # Later readings come from wherever the pick has taken the arm.
+    manipulation.get_state.return_value = _group_state(joints=_joints(0.3, 0.5, 1.2))
+    module.config.max_grasp_retries = 2
+
+    result = module.pick_object("cup-1")
+
+    assert _tries(result, "rank") == [0, 1]
+    manipulation.plan_to_joints.assert_called_once_with({"arm/tool": scan_pose})
+    # The scan that found it, the first lift check, then back up before looking again.
+    assert order == ["scan", "scan", "back to scan pose", "scan", "scan"]
+
+
+def test_a_pick_that_cannot_return_to_the_scan_pose_stops(module: PickAndPlaceModule) -> None:
+    scene: Any = module._scene
+    manipulation: Any = module._manipulation
+    manipulation.get_state.return_value = _group_state(joints=_joints(0.0, -0.2, 0.9))
+    scene.scan_scene.return_value = _cup_at(0.1, 0.0, 0.2)
+    module.scan_objects(["cup"])
+    manipulation.plan_to_joints.return_value = NO_PATH
+
+    result = module.pick_object("cup-1")
+
+    assert result.message.endswith(
+        "Move back to where object cup-1 was scanned from did not complete; "
+        "planner returned FAILED: unreachable"
+    )
+    assert result.metadata["grasped"] is False
+    assert result.metadata["handoff"] is False
+    assert len(result.metadata["tries"]) == 1
+    # The scan and the lift check; no re-scan from the pre-grasp pose.
+    assert scene.scan_scene.call_count == 2
+
+
+def test_without_a_scan_pose_the_re_scan_looks_from_where_the_arm_is(
+    module: PickAndPlaceModule,
+) -> None:
+    scene: Any = module._scene
+    manipulation: Any = module._manipulation
+    scene.scan_scene.return_value = _cup_at(0.1, 0.0, 0.2)
+    module.scan_objects(["cup"])
+
+    module.pick_object("cup-1")
+
+    manipulation.plan_to_joints.assert_not_called()
+    # The scan, the lift check and the re-scan.
+    assert scene.scan_scene.call_count == 3
