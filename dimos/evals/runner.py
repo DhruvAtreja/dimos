@@ -161,6 +161,7 @@ class EvalRunner(Configurable):
         trajectory: Trajectory | None = None
         agent_duration_s = 0.0
         tools: list[str] = []
+        settled = True
         try:
             try:
                 env = case.environment.start(agent.config.modules)
@@ -182,7 +183,7 @@ class EvalRunner(Configurable):
                 finally:
                     agent_duration_s = time.monotonic() - started
                 _write_trajectory(case_dir, trajectory, tools)
-                case.environment.settle(max(0.0, case.timeout_s - agent_duration_s))
+                settled = case.environment.settle(max(0.0, case.timeout_s - agent_duration_s))
             finally:
                 case.environment.stop()
             if violation := forbidden_call(
@@ -211,13 +212,18 @@ class EvalRunner(Configurable):
             graded = case.grade(Outcome(trajectory=trajectory, artifacts=env.artifacts))
             if not isinstance(graded, Graded):
                 graded = Graded(score=graded, details={})
+            details = graded.details
+            if settled is False:
+                # Graded without the robot seen at rest; kept so such cases can be found.
+                logger.warning("grading without the robot seen at rest", case=case.id)
+                details = {**details, "settled": False}
             return self._result(
                 case,
                 t0,
                 trajectory,
                 agent_duration_s=agent_duration_s,
                 score=graded.score,
-                details=graded.details,
+                details=details,
             )
         except Exception as e:
             return self._result(

@@ -165,6 +165,27 @@ def test_latest_pose_needs_odom():
         assert env.latest_pose(store).ts == 5
 
 
+def test_settle_gives_up_at_the_settle_timeout() -> None:
+    env = Sim2Environment(
+        blueprint=["xarm7-planner-coordinator"],
+        scene="/scenes/xarm_table",
+        at_rest_s=0.0,
+        settle_poll_s=0.01,
+        settle_timeout_s=0.2,
+    )
+    with MemoryStore() as store:
+        joints = store.stream("coordinator_joint_state", JointState)
+        joints.append(JointState(ts=1.0, name=["j1"], position=[0.0], velocity=[0.5]))
+        env._recording = store
+        started = time.monotonic()
+        assert env.settle(700.0) is False
+        assert 0.2 <= time.monotonic() - started < 1.0
+
+        joints.append(JointState(ts=2.0, name=["j1"], position=[0.0], velocity=[0.0]))
+        assert env.settle(700.0) is True
+    env._recording = None
+
+
 def test_launch_and_cleanup(tmp_path, mocker):
     proc = mocker.patch("dimos.evals.environments.sim.DimosCliCall").return_value
     proc.extra_env = {}

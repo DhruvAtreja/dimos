@@ -60,9 +60,12 @@ class Environment(Configurable, ABC):
     def start(self, modules: Sequence[str]) -> RunningEnvironment:
         """Start the environment with the agent's additional blueprint names."""
 
-    def settle(self, budget_s: float) -> None:
-        """Wait for ongoing actions to finish, within the remaining case budget."""
-        return None
+    def settle(self, budget_s: float) -> bool:
+        """Wait for ongoing actions to finish, within the remaining case budget.
+
+        Returns False if the world was not seen at rest within the wait.
+        """
+        return True
 
     def stop(self) -> None:
         """Release every acquired resource, including after a failed start."""

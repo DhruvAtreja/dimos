@@ -66,6 +66,7 @@ from dimos.evals.suites.dimsim_pointcloud_mapping import N_ROOMS, ROOMS, grade_r
 from dimos.evals.types import (
     EvalCase,
     EvalResult,
+    Graded,
     Metrics,
     Observation,
     ObservationResult,
@@ -126,6 +127,7 @@ class FakeEnvironment(Environment):
         self.path = path
         self.calls = calls
         self.settled_budget: float | None = None
+        self.at_rest = True
 
     def preflight(self, agent: Any) -> None:
         self.calls.append("preflight")
@@ -134,9 +136,10 @@ class FakeEnvironment(Environment):
         self.calls.append("start")
         return RunningEnvironment(mcp_url="", streams=(), artifacts={"recording": self.path})
 
-    def settle(self, budget_s: float) -> None:
+    def settle(self, budget_s: float) -> bool:
         self.calls.append("settle")
         self.settled_budget = budget_s
+        return self.at_rest
 
     def stop(self) -> None:
         self.calls.append("stop")
@@ -366,6 +369,47 @@ def test_sim_settle_stops_at_rest_or_at_the_budget(
         env.settle(budget_s)
 
     assert elapsed == pytest.approx(expected_s, abs=env.config.settle_poll_s)
+
+
+def test_sim_settle_gives_up_at_the_settle_timeout(monkeypatch: pytest.MonkeyPatch) -> None:
+    elapsed = 0.0
+    with MemoryStore() as store:
+        odom = store.stream("odom", PoseStamped)
+        odom.append(_pose(0.0, 0.0), ts=0.0)
+
+        def advance(seconds: float) -> None:
+            nonlocal elapsed
+            elapsed += seconds
+            odom.append(_pose(elapsed, 0.0), ts=elapsed)  # never stops moving
+
+        monkeypatch.setattr(
+            "dimos.evals.environments.sim.time",
+            SimpleNamespace(monotonic=lambda: elapsed, sleep=advance),
+        )
+        env = _sim(at_rest_m=0.01, at_rest_s=0.1, settle_poll_s=0.02, settle_timeout_s=0.5)
+        env._recording = store
+        settled = env.settle(700.0)
+
+    assert settled is False
+    assert elapsed == pytest.approx(0.5, abs=env.config.settle_poll_s)
+
+
+def test_sim_settle_reports_rest(monkeypatch: pytest.MonkeyPatch) -> None:
+    elapsed = 0.0
+
+    def advance(seconds: float) -> None:
+        nonlocal elapsed
+        elapsed += seconds
+
+    monkeypatch.setattr(
+        "dimos.evals.environments.sim.time",
+        SimpleNamespace(monotonic=lambda: elapsed, sleep=advance),
+    )
+    with MemoryStore() as store:
+        store.stream("odom", PoseStamped).append(_pose(0.0, 0.0), ts=0.0)
+        env = _sim(at_rest_m=0.01, at_rest_s=0.1, settle_poll_s=0.02)
+        env._recording = store
+        assert env.settle(10.0) is True
 
 
 def test_sim_settle_without_motion_data_returns_immediately(mocker: MockerFixture) -> None:
@@ -640,6 +684,26 @@ def test_runner_gives_the_world_the_budget_the_agent_did_not_use(
     EvalRunner(out_dir=tmp_path).run([case], agent)
 
     assert env.settled_budget == remaining_s
+
+
+@pytest.mark.parametrize("at_rest", [True, False])
+def test_runner_records_grading_before_the_robot_came_to_rest(
+    tmp_path: Path, at_rest: bool
+) -> None:
+    env = FakeEnvironment(tmp_path, [])
+    env.at_rest = at_rest
+    case = EvalCase(
+        id="c",
+        inputs="x",
+        environment=env,
+        grade=lambda o: Graded(score=0.5, details={"lifted": True}),
+    )
+
+    result = EvalRunner(out_dir=tmp_path).run([case], FakeAgent(answer="ok"))[0]
+
+    assert result.score == 0.5
+    expected: dict[str, Any] = {"lifted": True} if at_rest else {"lifted": True, "settled": False}
+    assert result.details == expected
 
 
 def test_runner_stops_before_grading_a_timeout(tmp_path: Path) -> None:

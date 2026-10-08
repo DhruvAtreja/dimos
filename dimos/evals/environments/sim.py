@@ -52,6 +52,10 @@ class SimConfig(EnvironmentConfig):
     at_rest_m: float = 0.05
     at_rest_s: float = 2.0
     settle_poll_s: float = 0.5
+    # Longest wait, in seconds, for the robot to come to rest after the agent
+    # finishes. Grading then goes ahead, and a case graded without the robot
+    # seen at rest gets settled=false in its details.
+    settle_timeout_s: float = 30.0
     agent_artifacts: tuple[str, ...] = ("recording",)
 
 
@@ -204,18 +208,22 @@ class Sim(Environment):
                 )
             time.sleep(1.0)
 
-    def settle(self, budget_s: float) -> None:
-        """Wait until the robot is at rest after skills that start asynchronous motion."""
+    def settle(self, budget_s: float) -> bool:
+        """Wait until the robot is at rest after skills that start asynchronous motion.
+
+        Waits at most ``budget_s`` or ``settle_timeout_s`` seconds, whichever is
+        shorter. Returns False if the robot was not seen at rest in that time.
+        """
         if self._recording is None:
-            return
+            return True
         anchor = None
         anchor_t = 0.0
-        deadline = time.monotonic() + budget_s
+        deadline = time.monotonic() + min(budget_s, self.config.settle_timeout_s)
         while time.monotonic() < deadline:
             try:
                 pose = self.latest_pose(self._recording)
             except LookupError:
-                return
+                return True
             position = pose.position
             if (
                 anchor is None
@@ -223,8 +231,9 @@ class Sim(Environment):
             ):
                 anchor, anchor_t = position, time.monotonic()
             elif time.monotonic() - anchor_t >= self.config.at_rest_s:
-                return
+                return True
             time.sleep(self.config.settle_poll_s)
+        return False
 
     def stop(self) -> None:
         try:

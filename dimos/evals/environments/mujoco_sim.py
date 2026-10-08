@@ -117,24 +117,28 @@ class MujocoEnvironment(Sim):
             raise LookupError("No MuJoCo odometry recorded")
         return cast("PoseStamped", recording.streams.odom.last().data)
 
-    def settle(self, budget_s: float) -> None:
-        """At rest once every joint is slower than ``at_rest_rad_s`` for ``at_rest_s``."""
+    def settle(self, budget_s: float) -> bool:
+        """At rest once every joint is slower than ``at_rest_rad_s`` for ``at_rest_s``.
+
+        Waits at most ``budget_s`` or ``settle_timeout_s`` seconds, whichever is
+        shorter. Returns False if the joints were not seen at rest in that time.
+        """
         recording = self._recording
         if recording is None or "coordinator_joint_state" not in recording.streams:
-            super().settle(budget_s)
-            return
+            return super().settle(budget_s)
         rest_since: float | None = None
-        deadline = time.monotonic() + budget_s
+        deadline = time.monotonic() + min(budget_s, self.config.settle_timeout_s)
         while time.monotonic() < deadline:
             try:
                 state = recording.streams.coordinator_joint_state.last().data
             except LookupError:
-                return
+                return True
             now = time.monotonic()
             if any(abs(v) > self.config.at_rest_rad_s for v in state.velocity):
                 rest_since = None
             elif rest_since is None:
                 rest_since = now
             elif now - rest_since >= self.config.at_rest_s:
-                return
+                return True
             time.sleep(self.config.settle_poll_s)
+        return False

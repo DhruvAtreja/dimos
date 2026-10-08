@@ -321,8 +321,10 @@ stays with the grader. Pass `agent_artifacts=(...)` to the environment to
 change it.
 
 **Limits.** The case's `timeout_s` sets the time budget for the agent and
-subsequent motion settling. `McpClientAdapter` returns what it has when its
-wait expires, marked `timeout`; `QuestionAnswer` and `Blind` rely on the
+subsequent motion settling. Simulator environments wait at most
+`settle_timeout_s` (30 s) for the robot to come to rest; a case graded without
+the robot seen at rest gets `settled: false` in its details. `McpClientAdapter`
+returns what it has when its wait expires, marked `timeout`; `QuestionAnswer` and `Blind` rely on the
 model provider's timeout. Environment startup has a separate
 `launch_timeout_s`. Pi and dimcode bound model HTTP requests with `max_steps`
 (including retries), and optionally cap output per request with `max_output_tokens`.
