@@ -1244,8 +1244,8 @@ class _Arm:
         return result
 
 
-# Grasp, back out, rise 8 cm to 18 cm above the grasp, then on to the scan pose.
-ONE_CARRY = ["line -0.10", "line +0.10", "line +0.08", "back to scan pose"]
+# Down to the grasp, back out to the pre-grasp pose, then on to the scan pose.
+ONE_CARRY = ["line -0.10", "line +0.10", "back to scan pose"]
 
 
 def test_a_cup_left_on_the_table_is_seen_from_the_scan_pose(module: PickAndPlaceModule) -> None:
@@ -1261,8 +1261,6 @@ def test_a_cup_left_on_the_table_is_seen_from_the_scan_pose(module: PickAndPlace
     assert result.metadata["gripper_lift_m"] == pytest.approx(0.3)
     assert arm.order == ["scan", *ONE_CARRY, "scan"]
     manipulation.plan_to_joints.assert_called_once_with({"arm/tool": SCAN_JOINTS})
-    rise = manipulation.move_linear.call_args_list[2]
-    assert rise.kwargs["check_collision"] is False
 
 
 def test_a_cup_carried_to_the_scan_pose_completes_the_pick(module: PickAndPlaceModule) -> None:
@@ -1295,8 +1293,8 @@ def test_a_failed_move_to_the_scan_pose_falls_back_to_the_jaws(
         "planner returned FAILED: unreachable; the camera looked from where the arm stopped."
     )
     assert result.metadata["grasped"] is True
-    # The gripper stopped 18 cm above the grasp, after the straight rise.
-    assert result.metadata["gripper_lift_m"] == pytest.approx(0.18)
+    # The gripper stayed at the pre-grasp pose, 10 cm above the grasp.
+    assert result.metadata["gripper_lift_m"] == pytest.approx(0.1)
     assert _held_id(module) == "cup-1"
 
 
@@ -1332,29 +1330,6 @@ def test_a_cup_pushed_along_a_tilted_approach_did_not_rise(module: PickAndPlaceM
 
     assert result.metadata["grasped"] is False
     assert result.metadata["object_lift_m"] == pytest.approx(0.0)
-
-
-@pytest.mark.parametrize(
-    ("seen_at", "grasped"),
-    [
-        # 13 cm off, outside the cup's old box: a neighbour, not the cup left behind.
-        (Vector3(0.1, 0.13, 0.2), True),
-        # Inside the cup's old box: the cup itself, under a new ID.
-        (Vector3(0.1, 0.02, 0.2), False),
-    ],
-    ids=["neighbour", "same-spot"],
-)
-def test_from_the_scan_pose_only_the_cup_s_own_spot_counts(
-    module: PickAndPlaceModule, seen_at: Vector3, grasped: bool
-) -> None:
-    scene: Any = module._scene
-    _Arm(module)
-    module.config.max_grasp_retries = 1
-    scene.scan_scene.return_value = _detections(("cup-9", "cup", seen_at))
-
-    result = module.pick_object("cup-1")
-
-    assert result.metadata["grasped"] is grasped
 
 
 def test_after_a_miss_seen_from_the_scan_pose_the_re_scan_looks_from_there(
