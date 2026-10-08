@@ -56,6 +56,8 @@ VOXEL_MAP_EXCLUSION_ID = "pick-and-place/target"
 _FRESH_FRAME_POLL = 0.1
 # Half a turn about the gripper's approach axis (its local z), as (x, y, z, w).
 _HALF_TURN_ABOUT_APPROACH = Quaternion(0.0, 0.0, 1.0, 0.0)
+# Joints this close (radians) to the scan pose count as being there already.
+_AT_SCAN_POSE_TOLERANCE = 0.01
 
 
 class PickAndPlaceModuleConfig(ModuleConfig):
@@ -480,7 +482,7 @@ class PickAndPlaceModule(Module):
                     self._stopped(f"Retract after grasping object {object_id}", blocked),
                     (rank, candidate),
                 )
-            result = self._verify_lift(target, pregrasp.position - grasp.position, group)
+            result = self._verify_lift(target, grasp, pregrasp, group)
             result.metadata.update(
                 rank=rank, score=candidate.score, candidates=len(candidates.candidates)
             )
@@ -496,17 +498,26 @@ class PickAndPlaceModule(Module):
     def _return_to_scan_pose(self, group: PlanningGroupID) -> PlanResult | ExecutionResult | None:
         """Move the arm back to its joint positions from the latest scan_objects call.
 
-        After a miss the wrist camera is just above the object, too close to see
-        it whole; from the scan pose it has already seen it once.
+        At the pre-grasp pose the wrist camera is too close to the object to see
+        it whole; from the scan pose it has already seen it once. The move is
+        collision checked and carries a held object along.
 
         Args:
             group: Planning group to move.
 
         Returns the planner or execution result that stopped the move, or None
-        when the arm arrived or no scan pose was recorded for the group.
+        when the arm arrived, was already there, or no scan pose was recorded
+        for the group.
         """
         joints = self._scan_joints.get(group)
         if joints is None:
+            return None
+        state = self._manipulation.get_state().groups.get(group)
+        if (
+            state is not None
+            and state.joints is not None
+            and np.allclose(state.joints.position, joints.position, atol=_AT_SCAN_POSE_TOLERANCE)
+        ):
             return None
         return self._run(self._manipulation.plan_to_joints({group: joints}))
 
@@ -629,24 +640,30 @@ class PickAndPlaceModule(Module):
         return self._verify_place(held, place.position, released_at)
 
     def _verify_lift(
-        self, target: ScannedObject, lift: Vector3, planning_group: PlanningGroupID
+        self,
+        target: ScannedObject,
+        grasp: PoseStamped,
+        pregrasp: PoseStamped,
+        planning_group: PlanningGroupID,
     ) -> SkillResult:
         """Check that the object came up with the gripper, and report the pick.
 
         Jaws that stop on an edge, or on an object pushed aside, read the same as
-        a hold, so after the lift the jaws are read again and the camera looks for
-        the object.
+        a hold, so after the lift the jaws are read again, the arm carries the
+        object to the scan pose (when one was recorded) and the camera looks for
+        it there. If that move fails the camera looks from where the arm stopped.
 
         Args:
             target: The object being picked, with where it was scanned.
-            lift: How the gripper moved from the grasp pose to the pre-grasp pose,
-                metres, in the planning frame.
+            grasp: Gripper pose that closed on the object, planning frame.
+            pregrasp: Gripper pose the arm lifted to, planning frame.
             planning_group: Group whose gripper closed on the object.
 
         Returns "Pick complete" with ``grasped: True``, else opens the gripper,
         forgets the held object and returns ``grasped: False``.
         """
-        lifted_at = time.time()
+        # How far (metres) and which way the gripper, and a held object, moved.
+        lift = pregrasp.position - grasp.position
         facts: dict[str, Any] = {
             **_summary(target),
             "gripper_lift_m": round(lift.length(), 3),
@@ -661,7 +678,18 @@ class PickAndPlaceModule(Module):
                 jaws=round(jaws, 3),
                 **facts,
             )
-        detections = self._detect_after(target.name, lifted_at)
+        note = ""
+        if self._scan_joints.get(planning_group) is not None:
+            if moved_arm := self._return_to_scan_pose(planning_group):
+                stopped = self._stopped(
+                    f"Move to the scan pose to look for object {target.object_id}", moved_arm
+                )
+                note = f" {stopped.message}; the camera looked from where the arm stopped."
+            tip = self._tip_position(planning_group)
+            if tip is not None:
+                lift = tip - grasp.position
+                facts["gripper_lift_m"] = round(lift.length(), 3)
+        detections = self._detect_after(target.name, time.time())
         moved = _distance_along(
             [obj.position for obj in self._sightings(target, detections)],
             target.position,
@@ -673,10 +701,11 @@ class PickAndPlaceModule(Module):
             return self._missed_grasp(
                 planning_group,
                 f"Lifted the gripper {lift.length():.2f} m, but the camera sees object "
-                f"{target.object_id} moved {moved:.2f} m with it; it stayed on the table.",
+                f"{target.object_id} moved {moved:.2f} m with it; it stayed on the table.{note}",
                 **facts,
             )
-        return SkillResult("Pick complete", metadata={**facts, "grasped": True})
+        complete = f"Pick complete.{note}" if note else "Pick complete"
+        return SkillResult(complete, metadata={**facts, "grasped": True})
 
     def _sightings(
         self, target: ScannedObject, detections: Detection3DArray

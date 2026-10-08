@@ -168,12 +168,14 @@ app.PickAndPlaceModule.place_at(0.45, -0.25, 0.25)
 It opens the gripper, plans to the pregrasp, servos in, closes, verifies, and
 retreats; with a learned provider it walks the ranked candidates until one is
 reachable, and the result metadata carries the winning rank, its score and the
-candidate count. After the retreat it re-reads the jaws and runs one detection
-for the object's label: `grasped` in the metadata is false when the jaws closed
-on nothing or the object did not rise with the gripper, and the gripper is then
-open again. After such a miss the arm backs out to the pregrasp, returns to its
-joint positions from the last `scan_objects` call (closer in, the wrist camera
-sees too little of the object to find it), scans for the label again, keeps
+candidate count. After the retreat it re-reads the jaws, carries the gripper to
+its joint positions from the last `scan_objects` call (closer in, the wrist
+camera sees too little of the object to find it; if that move fails it looks
+from where the arm stopped) and runs one detection for the object's label:
+`grasped` in the metadata is false when the jaws closed on nothing or the object
+did not move with the gripper, and the gripper is then open again. After such a
+miss the arm goes back to that scan pose if it is not there yet, scans for the
+label again, keeps
 only the cloud points inside the new detection's box, and grasps with the best
 new candidate, skipping any within `retry_skip_distance` (2 cm, relative to the object's centre) and `retry_skip_angle` (0.35 rad) of
 one already tried; it stops after `max_grasp_retries` (3) tries in total.
