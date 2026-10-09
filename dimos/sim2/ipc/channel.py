@@ -22,6 +22,7 @@ from multiprocessing import resource_tracker
 from multiprocessing.shared_memory import SharedMemory
 import os
 import struct
+import time
 from typing import Any, Literal
 
 import numpy as np
@@ -48,6 +49,9 @@ _OBSERVATION_SEQUENCE_OFFSET = 32
 _EPISODE_OFFSET = 40
 _TRACKER_PID_OFFSET = 48
 _OWNER_PID_OFFSET = 56
+# Pause between read attempts, in seconds. Gives a writer that is mid-publish
+# time to finish; 20 attempts then wait about 1-2 ms in all.
+_RETRY_PAUSE = 50e-6
 
 LifecycleState = Literal["starting", "ready", "faulted", "closed"]
 _LIFECYCLE_TO_INT: dict[LifecycleState, int] = {
@@ -75,8 +79,31 @@ class ChannelFrame:
     values: dict[str, NDArray[Any]]
 
 
+class IncoherentFrameError(RuntimeError):
+    """No complete frame could be copied: the writer kept rewriting it during the copy.
+
+    This is a timing problem, not a broken channel; the next read normally
+    succeeds. `reason` says what the last attempt saw.
+    """
+
+    def __init__(self, direction: str, attempts: int, reason: str) -> None:
+        super().__init__(
+            f"could not read a coherent {direction} frame after {attempts} attempts: {reason}"
+        )
+        self.direction = direction
+        self.attempts = attempts
+        self.reason = reason
+
+
 class RobotChannel:
-    """One action writer and one observation writer sharing coherent frames."""
+    """One action writer and one observation writer sharing coherent frames.
+
+    Each direction has two frame slots and a header word naming the slot that
+    holds the newest complete frame. A writer fills the other slot, then
+    switches the header to it. A reader copies the named slot and checks that
+    slot's sequence number did not change during the copy. A writer paused at
+    any point never blocks readers: the named slot is always complete.
+    """
 
     def __init__(self, descriptor: ChannelDescriptor, shm: SharedMemory, *, owner: bool) -> None:
         if descriptor.abi_version != ABI_VERSION:
@@ -92,6 +119,8 @@ class RobotChannel:
         self._shm = shm
         self._owner = owner
         self._closed = False
+        # Read attempts by this process that found a frame being rewritten.
+        self.incoherent_reads = 0
 
     @property
     def _buffer(self) -> memoryview[int]:
@@ -172,9 +201,15 @@ class RobotChannel:
         return self._publish("observation", values, metadata)
 
     def read_action(self, *, retries: int = 20) -> ChannelFrame | None:
+        """Newest complete action frame, or None if none has been published yet.
+
+        Raises IncoherentFrameError if `retries` attempts in a row each saw
+        the frame being rewritten.
+        """
         return self._read("action", retries=retries)
 
     def read_observation(self, *, retries: int = 20) -> ChannelFrame | None:
+        """Newest complete observation frame; see `read_action`."""
         return self._read("observation", retries=retries)
 
     def reset_frames(self, episode_id: int) -> None:
@@ -219,8 +254,10 @@ class RobotChannel:
             destination[...] = values[field.name]
 
         struct.pack_into("<Q", self._buffer, slot_offset, sequence)
-        struct.pack_into("<Q", self._buffer, sequence_offset, sequence)
+        # Point readers at the finished slot before announcing its sequence, so
+        # the header never names a slot that is still being written.
         struct.pack_into("<I", self._buffer, active_offset, target)
+        struct.pack_into("<Q", self._buffer, sequence_offset, sequence)
         return sequence
 
     def _read(
@@ -230,14 +267,23 @@ class RobotChannel:
         retries: int,
     ) -> ChannelFrame | None:
         layout, base_offset, active_offset, sequence_offset = self._direction(direction)
-        for _ in range(retries):
-            sequence_before = struct.unpack_from("<Q", self._buffer, sequence_offset)[0]
-            if sequence_before == 0:
+        reason = "no attempt made"
+        for attempt in range(retries):
+            if attempt:
+                time.sleep(_RETRY_PAUSE)
+            # The header sequence is stored last in a publish; zero means no
+            # publish has finished yet.
+            if struct.unpack_from("<Q", self._buffer, sequence_offset)[0] == 0:
                 return None
-            active_before = struct.unpack_from("<I", self._buffer, active_offset)[0]
-            slot_offset = base_offset + active_before * layout.slot_size
+            active = struct.unpack_from("<I", self._buffer, active_offset)[0]
+            slot_offset = base_offset + active * layout.slot_size
             meta_raw = _FRAME_META.unpack_from(self._buffer, slot_offset)
-            if meta_raw[0] != sequence_before:
+            # A writer zeroes a slot's sequence before rewriting it. Zero here
+            # means the writer switched slots after `active` was read and has
+            # started on this one.
+            if meta_raw[0] == 0:
+                self.incoherent_reads += 1
+                reason = "the frame was being rewritten"
                 continue
             values = {
                 field.name: np.ndarray(
@@ -248,26 +294,22 @@ class RobotChannel:
                 ).copy()
                 for field in layout.fields
             }
-            sequence_after = struct.unpack_from("<Q", self._buffer, sequence_offset)[0]
-            active_after = struct.unpack_from("<I", self._buffer, active_offset)[0]
-            slot_sequence_after = struct.unpack_from("<Q", self._buffer, slot_offset)[0]
-            if (
-                sequence_before == sequence_after
-                and active_before == active_after
-                and slot_sequence_after == meta_raw[0]
-            ):
-                return ChannelFrame(
-                    metadata=FrameMetadata(
-                        sequence=meta_raw[0],
-                        episode_id=meta_raw[1],
-                        physics_tick=meta_raw[2],
-                        control_tick=meta_raw[3],
-                        sim_time=meta_raw[4],
-                        applied_action_sequence=meta_raw[5],
-                    ),
-                    values=values,
-                )
-        raise RuntimeError(f"could not read coherent {direction} frame after {retries} retries")
+            if struct.unpack_from("<Q", self._buffer, slot_offset)[0] != meta_raw[0]:
+                self.incoherent_reads += 1
+                reason = "the frame was overwritten while it was being copied"
+                continue
+            return ChannelFrame(
+                metadata=FrameMetadata(
+                    sequence=meta_raw[0],
+                    episode_id=meta_raw[1],
+                    physics_tick=meta_raw[2],
+                    control_tick=meta_raw[3],
+                    sim_time=meta_raw[4],
+                    applied_action_sequence=meta_raw[5],
+                ),
+                values=values,
+            )
+        raise IncoherentFrameError(direction, retries, reason)
 
     def _direction(
         self,
