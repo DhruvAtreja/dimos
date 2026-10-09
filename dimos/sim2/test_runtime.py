@@ -14,6 +14,7 @@
 
 """Focused emulator contracts with real MuJoCo models and shared-memory devices."""
 
+import logging
 from uuid import uuid4
 
 import mujoco
@@ -24,6 +25,7 @@ from dimos.hardware.whole_body.spec import MotorCommand
 from dimos.robot.manipulators.xarm.sim2 import XARM7
 from dimos.robot.unitree.g1.sim2 import G1_GROOT
 from dimos.sim2.control.adapters import ManipulatorAdapter, WholeBodyAdapter
+from dimos.sim2.ipc.channel import IncoherentFrameError
 from dimos.sim2.runtime import SimulationRuntime
 from dimos.sim2.scene import scene_path
 from dimos.sim2.sensors.camera.renderers.mujoco import MujocoCamera
@@ -108,6 +110,44 @@ def test_xarm_moves_and_uses_real_gripper_units(runtime, device):
     world.reset()
     world.step()
     assert client.read_joint_positions()[0] == pytest.approx(0, abs=0.005)
+
+
+def test_failed_action_read_holds_the_last_command(runtime, device, monkeypatch, caplog):
+    world = runtime(XARM7, "arm", "workbench.xml", (0, 0, 0.12))
+    client = device(world, "arm", ManipulatorAdapter)
+    target = client.read_joint_positions()
+    target[0] = 0.25
+    assert client.write_joint_positions(target)
+    world.step()
+    binding = world.robots["arm"]
+    commanded = world.data.ctrl[binding.actuators].copy()
+
+    def unreadable(**_):
+        raise IncoherentFrameError("action", 20, "the frame was being rewritten")
+
+    monkeypatch.setattr(binding.channel, "read_action", unreadable)
+    runtime_logger = logging.getLogger("dimos/sim2/runtime.py")
+    runtime_logger.addHandler(caplog.handler)
+    try:
+        for _ in range(5):
+            world.step()
+    finally:
+        runtime_logger.removeHandler(caplog.handler)
+    # Position-controlled joints keep the commanded target, not the home pose.
+    assert world.data.ctrl[binding.actuators] == pytest.approx(commanded)
+    assert binding.action_read_failures == 5
+    warnings = [r for r in caplog.records if "holding its last command" in str(r.msg)]
+    assert len(warnings) == 1
+    monkeypatch.undo()
+    world.step()
+    assert binding.action_read_failures == 5
+
+
+def test_closed_action_channel_still_stops_physics(runtime):
+    world = runtime(XARM7, "arm", "workbench.xml", (0, 0, 0.12))
+    world.robots["arm"].channel.close()
+    with pytest.raises(RuntimeError, match="shared memory buffer is closed"):
+        world.step()
 
 
 def test_arm_respawn_does_not_recompile(runtime):

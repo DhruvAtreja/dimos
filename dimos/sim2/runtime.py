@@ -35,13 +35,18 @@ from dimos.sim2.ipc.abi import (
     FrameField,
     FrameLayout,
 )
-from dimos.sim2.ipc.channel import FrameMetadata, RobotChannel
+from dimos.sim2.ipc.channel import ChannelFrame, FrameMetadata, IncoherentFrameError, RobotChannel
 from dimos.sim2.scene import describe_scene, load_scene
 from dimos.sim2.scene_types import EntityState, RegionState, SceneState, SceneUpdate
 from dimos.sim2.sensors.spec import Imu
 from dimos.sim2.spec import ControlInterface, RobotConfig, WorldConfig
+from dimos.utils.logging_config import setup_logger
+
+logger = setup_logger()
 
 STATE = mujoco.mjtState.mjSTATE_INTEGRATION
+# Shortest gap between two warnings about failed action reads for one robot, in seconds.
+READ_WARNING_INTERVAL = 5.0
 
 
 @dataclass
@@ -56,6 +61,12 @@ class RobotBinding:
     offset: NDArray[np.float64]
     imu: tuple[int, int, int] | None
     enabled: bool = True
+    # Last action frame read from the channel; reused when a read fails.
+    last_action: ChannelFrame | None = None
+    # Physics steps that reused `last_action` because the read failed.
+    action_read_failures: int = 0
+    # time.monotonic() of the last warning about a failed read.
+    last_read_warning: float = float("-inf")
 
 
 class SimulationRuntime:
@@ -326,8 +337,32 @@ class SimulationRuntime:
             self.tick += 1
             self._publish()
 
+    def _read_action(self, b: RobotBinding) -> ChannelFrame | None:
+        """Newest action for robot `b`; the previous one if this read fails.
+
+        A read fails when the controller kept rewriting the frame while it was
+        being copied, which can happen when the machine is overloaded. The
+        robot then holds its last command for this step, the failure is
+        counted in `b.action_read_failures`, and a warning is logged at most
+        once per READ_WARNING_INTERVAL. Any other channel error is raised.
+        """
+        try:
+            b.last_action = b.channel.read_action()
+        except IncoherentFrameError as error:
+            b.action_read_failures += 1
+            now = time.monotonic()
+            if now - b.last_read_warning >= READ_WARNING_INTERVAL:
+                b.last_read_warning = now
+                logger.warning(
+                    "sim2 could not read the robot's action frame; holding its last command",
+                    robot=b.channel.descriptor.robot_id,
+                    reason=error.reason,
+                    failures=b.action_read_failures,
+                )
+        return b.last_action
+
     def _apply(self, b: RobotBinding) -> None:
-        action = b.channel.read_action()
+        action = self._read_action(b)
         q = self.data.qpos[b.qpos]
         dq = self.data.qvel[b.dofs]
         if action is not None and action.metadata.episode_id == self.episode:

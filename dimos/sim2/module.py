@@ -209,6 +209,11 @@ class SimulationModule(Module):
                         name: runtime.data.xpos[b.root].tolist()
                         for name, b in runtime.robots.items()
                     },
+                    # Physics steps per robot that held the last command
+                    # because the action frame could not be read.
+                    "action_read_failures": {
+                        name: b.action_read_failures for name, b in runtime.robots.items()
+                    },
                 }
 
     @rpc
