@@ -33,7 +33,9 @@ install -m 755 "$S"/desktop/*.desktop ~/Desktop/
 install -m 644 "$S"/systemd/go2-upload.service "$S"/systemd/go2-upload.timer ~/.config/systemd/user/
 systemctl --user daemon-reload
 systemctl --user enable --now go2-upload.timer
-[ -f ~/.config/dimos/go2-keys ] || { [ -f "$HERE/go2-keys" ] && install -m 600 "$HERE/go2-keys" ~/.config/dimos/go2-keys; } || echo "note: add ~/.config/dimos/go2-keys (see go2-keys.example)"
+# the fleet key file on the stick wins, so a rerun picks up new robots
+if [ -f "$HERE/go2-keys" ]; then install -m 600 "$HERE/go2-keys" ~/.config/dimos/go2-keys
+elif [ ! -f ~/.config/dimos/go2-keys ]; then echo "note: add ~/.config/dimos/go2-keys (see go2-keys.example)"; fi
 
 # 3. root bits: memlock for zenoh's shm pool, the stick unlock helper and its sudo rule
 sudo bash -c "
