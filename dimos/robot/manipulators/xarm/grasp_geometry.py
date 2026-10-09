@@ -32,6 +32,19 @@ XARM_GRIPPER_SWEEP_VOLUME = {
     "fingertip_depth": 0.1606,
 }
 
+# The gripper's solid parts with the jaws open, as boxes in the same frame as the
+# sweep volume, metres: the palm (as wide as its mounting flange), then the
+# knuckles and the finger on each side. GraspGenX checks these against the scene
+# around an object. Measured from the xarm_gripper URDF meshes at drive_joint = 0;
+# every mesh vertex lies inside a box.
+XARM_GRIPPER_BODY = (
+    {"extents": (0.1022, 0.075, 0.1121), "offset": (0.0, 0.0, 0.0471)},
+    {"extents": (0.0774, 0.0282, 0.0707), "offset": (0.0478, 0.0, 0.0868)},
+    {"extents": (0.0774, 0.0282, 0.0707), "offset": (-0.0478, 0.0, 0.0868)},
+    {"extents": (0.0319, 0.032, 0.0669), "offset": (0.0605, 0.0, 0.1287)},
+    {"extents": (0.0319, 0.032, 0.0669), "offset": (-0.0605, 0.0, 0.1287)},
+)
+
 # Where the planner's tool tip (link_tcp) sits in the frame GraspGenX predicts, as
 # a 4x4 row-major transform, metres. 0.172 m out along the approach axis
 # (xarm_gripper.urdf.xacro joint_tcp), and a quarter turn about it that takes

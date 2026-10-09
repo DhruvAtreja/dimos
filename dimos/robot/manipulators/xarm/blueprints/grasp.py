@@ -55,6 +55,7 @@ from dimos.robot.manipulators.xarm.config import (
 )
 from dimos.robot.manipulators.xarm.grasp_geometry import (
     XARM_GRASP_FRAME_TO_TCP,
+    XARM_GRIPPER_BODY,
     XARM_GRIPPER_SWEEP_VOLUME,
 )
 from dimos.simulation.engines.mujoco_sim_module import MujocoSimModule
@@ -244,5 +245,6 @@ xarm_grasp_graspgenx = autoconnect(
     GraspGenXModule.blueprint(
         gripper=XARM_GRIPPER_SWEEP_VOLUME,
         grasp_frame_to_tcp=XARM_GRASP_FRAME_TO_TCP,
+        gripper_body=XARM_GRIPPER_BODY,
     ),
 ).remappings(_REMAPPINGS)
