@@ -11,7 +11,8 @@ when a network is available. No terminal or keyboard needed after setup.
    names the device `deck-<mac>`.
 2. `bash /run/media/deck/<STICK>/steamos/setup.sh`, 15 minutes. `WITH_SIM=1` adds MuJoCo; `DIMOS_BRANCH=<branch>`
    checks out a branch other than `main`. A `go2-keys` file next to it on the stick is installed as step 3.
-3. `~/.config/dimos/go2-keys`: the robots' AES keys, see `go2-keys.example`. Not in git, ever.
+3. `~/.config/dimos/go2-keys`: the robots' AES keys, see `go2-keys.example`. The DIMOS stick carries the
+   fleet's file as `go2-keys`, which setup installs. Not in git, ever.
 4. `dimos login` inside the container, device code, enables uploads.
 
 ## What's installed
