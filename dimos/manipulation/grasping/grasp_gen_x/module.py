@@ -90,8 +90,9 @@ class GraspGenXConfig(IsolatedPythonModuleConfig):
     gripper: SweepVolumeGripperConfig
     grasp_frame_to_tcp: RigidTransform = IDENTITY_TRANSFORM
     # How many grasps the model samples per call. More samples leave more grasps
-    # after the scene check, at more GPU time and memory.
-    num_samples: PositiveCount = 200
+    # after the scene check, at more GPU time: sampling and checking 500 takes
+    # about 0.3 s on a laptop RTX 5070 Ti.
+    num_samples: PositiveCount = 500
     # How many grasps a call returns at most, best score first. The scene check
     # runs on every sample before this cut.
     max_candidates: PositiveCount = 100
