@@ -127,6 +127,9 @@ class SimBackend:
         self._lidar_rng = np.random.default_rng(0)
         self._lidar_data = mujoco.MjData(m)
         self._robot_geom = m.body_rootid[m.geom_bodyid] == m.body_rootid[self._hub]
+        # geom group 2 is drawn but invisible to the lidar: scenes put detailed visual-only
+        # geometry there and give the lidar (and physics) a cheaper stand-in, e.g. group 3
+        self._lidar_groups = np.array([1, 1, 0, 1, 1, 1], dtype=np.uint8)
 
         # start seated: every slab straight down, slides retracted, hub at the spawn point
         mujoco.mj_resetData(m, self.data)
@@ -264,7 +267,8 @@ class SimBackend:
 
         Each sweep rotates the pattern by a random sub-step in azimuth, so successive scans
         fill the gaps between beams (like the Mid-360's non-repetitive pattern). Returns
-        hits on the environment only: beams that hit TARS itself are dropped.
+        hits on the environment only: beams that hit TARS itself are dropped. Geom group 2
+        is invisible to the lidar.
         """
         m, d = self.model, self._lidar_data
         with self.lock:
@@ -287,7 +291,7 @@ class SimBackend:
             d,
             origin,
             dirs_world.ravel(),
-            None,
+            self._lidar_groups,
             1,
             self._lidar_body,
             geom,

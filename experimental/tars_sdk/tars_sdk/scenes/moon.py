@@ -31,7 +31,11 @@ import sys
 import numpy as np
 
 SIZE = 90.0  # terrain side (m), centered on the spawn point
-N = 900  # heightfield samples per side (0.1 m)
+N = 901  # heightfield samples per side (0.1 m), drawn; (N - 1) divisible by COARSE
+# Physics and the lidar use every COARSE-th sample (0.5 m): ray casts against the fine
+# heightfield cost ~0.7 s per lidar sweep, the coarse one ~0.05 s. The walking strip is
+# smooth, so feet land where they are drawn.
+COARSE = 5
 # a walk that skirts the craters; TARS spawns at the first point facing the second
 ROUTE = [(0.0, 0.0), (7.0, 1.5), (13.0, -1.0), (19.0, 2.5), (25.0, 0.5)]
 ROUTE_CLEARANCE = 3.5  # walking strip: flat to 2 m, blended out to this; no rocks closer (m)
@@ -159,8 +163,10 @@ def _lander(x0: float, y0: float) -> str:
     </body>"""
 
 
-def scene_xml(hfield_file: str, h: np.ndarray) -> str:
+def scene_xml(hfield_file: str, coarse_file: str, h: np.ndarray) -> str:
     lo, hi = float(h.min()), float(h.max())
+    hc = h[::COARSE, ::COARSE]
+    clo, chi = float(hc.min()), float(hc.max())
     rocks = "\n".join(
         f'<geom type="ellipsoid" pos="{x:.3f} {y:.3f} {_ground(h, x, y) + sz * 0.45:.3f}" '
         f'size="{sx:.3f} {sy:.3f} {sz:.3f}" euler="0.15 0.1 {yaw:.3f}" material="rock"/>'
@@ -194,11 +200,18 @@ def scene_xml(hfield_file: str, h: np.ndarray) -> str:
     <material name="hull" rgba="0.82 0.83 0.85 1" specular="0.5" shininess="0.5"/>
     <material name="strut" rgba="0.3 0.3 0.32 1" specular="0.4" shininess="0.4"/>
     <hfield name="terrain" file="{hfield_file}" size="{SIZE / 2} {SIZE / 2} {hi - lo:.4f} 0.5"/>
+    <hfield name="terrain_coarse" file="{coarse_file}"
+            size="{SIZE / 2} {SIZE / 2} {chi - clo:.4f} 0.5"/>
   </asset>
   <worldbody>
     <light name="sun" directional="true" pos="{sun_pos}" dir="{sun_dir}"
            diffuse="1.35 1.32 1.25" specular="0.3 0.3 0.3" castshadow="true"/>
-    <geom name="floor" type="hfield" hfield="terrain" pos="0 0 {lo:.4f}" material="regolith"/>
+    <!-- drawn (group 2: the lidar ignores it); the coarse copy carries physics and lidar -->
+    <geom name="terrain" type="hfield" hfield="terrain" pos="0 0 {lo:.4f}" material="regolith"
+          group="2" contype="0" conaffinity="0"/>
+    <!-- group 3 is hidden in viewers and renders by default; not alpha 0: rays skip those -->
+    <geom name="floor" type="hfield" hfield="terrain_coarse" pos="0 0 {clo:.4f}" group="3"
+          material="regolith"/>
 {rocks}
 {_lander(*LANDER_XY)}
   </worldbody>
@@ -225,11 +238,12 @@ def write(out_dir: Path) -> Path:
     check_route()
     out_dir.mkdir(parents=True, exist_ok=True)
     h = heights()
-    with open(out_dir / "moon_terrain.bin", "wb") as f:
-        np.array([N, N], dtype=np.int32).tofile(f)
-        h.astype(np.float32).tofile(f)
+    for name, grid in (("moon_terrain.bin", h), ("moon_terrain_coarse.bin", h[::COARSE, ::COARSE])):
+        with open(out_dir / name, "wb") as f:
+            np.array(grid.shape, dtype=np.int32).tofile(f)
+            grid.astype(np.float32).tofile(f)
     path = out_dir / "moon.xml"
-    path.write_text(scene_xml("moon_terrain.bin", h))
+    path.write_text(scene_xml("moon_terrain.bin", "moon_terrain_coarse.bin", h))
     return path
 
 
