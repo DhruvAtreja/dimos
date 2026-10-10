@@ -105,15 +105,25 @@ python docker/mujoco-eval/verify.py "$EVAL_RESULT_DIR"
 ```
 
 Use a 120-second trusted duration for `lift`; the negative cases need 30 seconds.
-`lift` is a fixture-specific scripted positive control: public RGB-D selects the
-red cube, public robot FK/IK sets the grasp, and existing coordinator trajectory
-and gripper tasks move it. It reads no scene, seed or private object TF. The
-host verifier requires trusted score **1**; motion completion alone cannot pass.
-This checks control/transport capability, not general autonomous agent capability.
-The scripted client is not yet a repeatable positive control on the seed-0
-export: identical-fixture live runs have scored both 0 and 1. Keep failures
-visible; the passing hold baseline is not successful Lift.
+`lift` is a fixture-specific scripted positive control. It replays nine target
+plateaus extracted from the successful robot-generated `commands.jsonl` trace
+(SHA256 `1d6296aed3786407c28f3d7a7389046690aa3a4b77273e3b878b23d0e16c61b4`).
+Only public arm/gripper commands were retained. Existing coordinator trajectory
+and gripper tasks execute the original fixed move durations and recorded
+dwells (three seconds, or eight for the two original settling pauses); fresh public joint feedback gates each phase before advancement. The
+normal gripper task stays active until trusted sensor publication ends.
+It reads no scene, seed or object TF. The host verifier requires trusted score
+**1**; motion completion alone cannot pass. This is a control/transport test,
+not an agent model score or evidence of general autonomous capability.
 
+The earlier live RGB-D/FK/IK helper produced scores 0 and 1 on repeated identical
+fixtures and was not a reliable positive control. Its failed runs and paired
+comparison remain recorded as diagnostic evidence; the fixed public replay
+replaces live grasp estimation for acceptance. The score-0 hold baseline remains
+separate. The corrected fixed replay passed three fresh 120-second isolated
+episodes with trusted scores 1, 1 and 1; all six containers exited zero. The
+first compressed replay omitted the two recorded settling pauses and failed;
+those failures remain evidence rather than being counted as successful runs.
 A diagnostic comparison captures only the robot-generated commands and their
 applied simulation steps, then replays that exact sequence through the existing
 `ShmMujocoAdapter` and `_WholeBodySimHooks` in a single trusted container. It uses
@@ -123,10 +133,10 @@ sequence scored 1 on both paths; a failed sequence scored 0 on both paths.
 Actuator targets and all eight joint positions matched exactly at every recorded
 step in both comparisons. The close command remained active at maximum actuator
 target through the failure; there was no transport-induced release or reset.
-For these sequences the missing acceptance condition is a repeatable successful
-public controller/trajectory, not a different grading formula. The successful
-robot-generated command trace is retained as diagnostic evidence, but is not
-a private testcase or ground-truth input shipped in the robot image.
+These comparisons motivated the public replay client above, without changing
+physics or grading. The source trace is retained as diagnostic evidence; the
+robot-side replay contains public actuator targets and timing, with no private
+testcase, scene, seed, grading result or object truth.
 
 The default robot client uses normal ControlCoordinator trajectory APIs and
 camera ports for a deterministic hold baseline on the existing lift task.
