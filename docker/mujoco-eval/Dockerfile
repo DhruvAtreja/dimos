@@ -7,7 +7,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     && rm -rf /var/lib/apt/lists/*
 
 FROM base AS build
-RUN apt-get update && apt-get install -y --no-install-recommends git \
+RUN apt-get update && apt-get install -y --no-install-recommends git build-essential \
     && rm -rf /var/lib/apt/lists/*
 COPY --from=ghcr.io/astral-sh/uv:0.10.0 /uv /usr/local/bin/uv
 ENV UV_PYTHON_INSTALL_DIR=/opt/python UV_PROJECT_ENVIRONMENT=/opt/venv
@@ -51,8 +51,12 @@ COPY --from=build /robot/dimos /app/dimos
 COPY --from=build /models/xarm_ros2/xarm_description /opt/models/xarm_ros2/xarm_description
 COPY --from=pi /usr/local/bin/node /usr/local/bin/node
 COPY --from=pi /usr/local/lib/node_modules /usr/local/lib/node_modules
-COPY --from=pi /usr/local/bin/pi /usr/local/bin/pi
 COPY --chmod=755 docker/mujoco-eval/dimos.py /usr/local/bin/dimos
 COPY docker/mujoco-eval/probe.py /app/probe.py
+USER root
+RUN apt-get update && apt-get install -y --no-install-recommends git \
+    && rm -rf /var/lib/apt/lists/* \
+    && ln -s /usr/local/lib/node_modules/@earendil-works/pi-coding-agent/dist/bundle/cli.js /usr/local/bin/pi
+USER 1000:1000
 # Agent controls this container. It receives public IDs and an endpoint only.
 CMD ["python", "/app/probe.py"]
