@@ -38,17 +38,22 @@ from dimos.control.task import (
     JointCommandOutput,
     JointStateSnapshot,
     ResourceClaim,
+    SensorStateSnapshot,
 )
+from dimos.msgs.geometry_msgs.Transform import Transform
 from dimos.msgs.sensor_msgs.JointState import JointState
+from dimos.msgs.tf2_msgs.TFMessage import TFMessage
 from dimos.utils.logging_config import setup_logger
 
 if TYPE_CHECKING:
     from collections.abc import Callable
 
     from dimos.control.components import HardwareId, JointName, JointState as JointReading, TaskName
+    from dimos.control.connection_source import ConnectionSource
     from dimos.control.hardware_interface import ConnectedHardware
     from dimos.hardware.manipulators.spec import ControlMode
     from dimos.hardware.whole_body.spec import IMUState
+    from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
 
 logger = setup_logger()
 
@@ -71,7 +76,8 @@ class TickLoop:
     3. ARBITRATE: Per-joint conflict resolution (highest priority wins)
     4. NOTIFY: Send preemption notifications to affected tasks
     5. ROUTE: Convert joint-centric commands to hardware-centric
-    6. WRITE: Send commands to hardware
+    6. WRITE: Send commands to hardware, and a complete command to every
+       robot behind a connection module
     7. PUBLISH: Output aggregated JointState, plus one stream per robot
 
     Args:
@@ -83,8 +89,14 @@ class TickLoop:
         joint_to_hardware: Dict mapping joint_name -> hardware_id
         publish_callback: Optional callback to publish the merged JointState
         publish_robot_callback: Optional callback, called with (hardware_id, msg)
+        publish_tf_callback: Optional callback publishing tasks' measured frame poses as TF
+        frame_pose_hz: Maximum rate for publish_tf_callback
         frame_id: Frame ID for published JointState
         log_ticks: Whether to log tick information
+        connections: Robots driven through connection modules, by name. Guarded
+            by hardware_lock; their joints are in joint_to_hardware too.
+        command_callback: Called once per tick for each robot in
+            ``connections`` that is ready, with (name, command by key)
     """
 
     def __init__(
@@ -97,17 +109,28 @@ class TickLoop:
         joint_to_hardware: dict[JointName, HardwareId],
         publish_callback: Callable[[JointState], None] | None = None,
         publish_robot_callback: Callable[[HardwareId, JointState], None] | None = None,
+        publish_tf_callback: Callable[[TFMessage], None] | None = None,
+        frame_pose_hz: float = 30.0,
         frame_id: str = "coordinator",
         log_ticks: bool = False,
+        connections: dict[str, ConnectionSource] | None = None,
+        command_callback: Callable[[str, dict[str, float]], None] | None = None,
     ) -> None:
         self._tick_rate = tick_rate
         self._hardware = hardware
+        self._connections: dict[str, ConnectionSource] = (
+            connections if connections is not None else {}
+        )
+        self._command_callback = command_callback
         self._hardware_lock = hardware_lock
         self._tasks = tasks
         self._task_lock = task_lock
         self._joint_to_hardware = joint_to_hardware
         self._publish_callback = publish_callback
         self._publish_robot_callback = publish_robot_callback
+        self._publish_tf_callback = publish_tf_callback
+        self._frame_pose_period = 1.0 / frame_pose_hz if publish_tf_callback else 0.0
+        self._last_frame_pose_time = float("-inf")
         self._frame_id = frame_id
         self._log_ticks = log_ticks
 
@@ -182,7 +205,13 @@ class TickLoop:
 
         joint_states, per_hardware = self._read_all_hardware()
         imu_states = self._read_all_imu()
-        state = CoordinatorState(joints=joint_states, imu=imu_states, t_now=t_now, dt=dt)
+        state = CoordinatorState(
+            joints=joint_states,
+            imu=imu_states,
+            t_now=t_now,
+            dt=dt,
+            sensors=self._read_all_sensors(),
+        )
 
         commands = self._compute_all_tasks(state)
 
@@ -194,11 +223,20 @@ class TickLoop:
 
         self._write_all_hardware(hw_commands)
 
+        self._write_all_connections(hw_commands)
+
         if self._publish_callback:
             self._publish_joint_state(joint_states)
 
         if self._publish_robot_callback:
             self._publish_robot_joint_states(per_hardware, joint_states.timestamp)
+
+        if (
+            self._publish_tf_callback
+            and t_now - self._last_frame_pose_time >= self._frame_pose_period
+        ):
+            self._last_frame_pose_time = t_now
+            self._publish_frame_poses(state)
 
         # Optional logging
         if self._log_ticks:
@@ -232,6 +270,13 @@ class TickLoop:
                         per_hardware[hw.hardware_id] = state
                 except Exception as e:
                     logger.error(f"Failed to read {hw.hardware_id}: {e}")
+            # Read whether or not a robot can be commanded yet: one described
+            # again keeps its joints in the state while it waits to report.
+            for source in self._connections.values():
+                joints = source.read_joints()
+                joint_positions.update(joints.joint_positions)
+                joint_velocities.update(joints.joint_velocities)
+                joint_efforts.update(joints.joint_efforts)
 
         snapshot = JointStateSnapshot(
             joint_positions=joint_positions,
@@ -265,6 +310,14 @@ class TickLoop:
                 except Exception as e:
                     logger.error(f"Failed to read IMU from {hw_id}: {e}")
         return out
+
+    def _read_all_sensors(self) -> SensorStateSnapshot:
+        """Collect the latest sensor readings from every connection."""
+        readings: dict[str, dict[str, float]] = {}
+        with self._hardware_lock:
+            for source in self._connections.values():
+                readings.update(source.read_sensors())
+        return SensorStateSnapshot(readings=readings)
 
     def _compute_all_tasks(
         self, state: CoordinatorState
@@ -427,6 +480,34 @@ class TickLoop:
                     except Exception as e:
                         logger.error(f"Failed to write to {hw_id}: {e}")
 
+    def _write_all_connections(
+        self,
+        hw_commands: dict[str, tuple[dict[str, float], ControlMode]],
+    ) -> None:
+        """Send every robot behind a connection module its complete command.
+
+        Every robot that is ready gets one, every tick, whether or not a task
+        drives it, so its connection's deadman never fires while the
+        coordinator runs.
+        """
+        publish = self._command_callback
+        if publish is None:
+            return
+        now = time.monotonic()
+        with self._hardware_lock:
+            for name, source in self._connections.items():
+                # Not until it has reported again, nor once its readings stop.
+                if not source.ready_for_control(now):
+                    continue
+                winners: dict[str, float] = {}
+                mode: ControlMode | None = None
+                if name in hw_commands:
+                    winners, mode = hw_commands[name]
+                try:
+                    publish(name, source.command(winners, mode))
+                except Exception as e:
+                    logger.error(f"Failed to send a command to {name}: {e}")
+
     def _publish_joint_state(self, snapshot: JointStateSnapshot) -> None:
         """Publish aggregated JointState for external consumers."""
         names = list(snapshot.joint_positions.keys())
@@ -440,6 +521,33 @@ class TickLoop:
         )
         if self._publish_callback:
             self._publish_callback(msg)
+
+    def _publish_frame_poses(self, state: CoordinatorState) -> None:
+        """Publish each task's measured frame poses (FK on this tick's joints) as TF."""
+        with self._task_lock:
+            tasks = list(self._tasks.values())
+        poses: dict[str, PoseStamped] = {}
+        for task in tasks:
+            poses.update(task.measured_frame_poses(state))
+        if not poses or self._publish_tf_callback is None:
+            return
+        ts = state.joints.timestamp
+        self._publish_tf_callback(
+            TFMessage(
+                *(
+                    Transform(
+                        translation=pose.position,
+                        rotation=pose.orientation,
+                        # IK solvers return world coordinates (base pose applied), but
+                        # stamp them with the base link's name.
+                        frame_id="world",
+                        child_frame_id=frame,
+                        ts=ts,
+                    )
+                    for frame, pose in poses.items()
+                )
+            )
+        )
 
     def _publish_robot_joint_states(
         self,

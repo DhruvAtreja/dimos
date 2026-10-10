@@ -4,6 +4,8 @@ from typing import Any
 from . import MjData, MjModel, MjvOption
 
 class _Camera:
+    type: int
+    trackbodyid: int
     lookat: Any
     distance: float
     azimuth: float
