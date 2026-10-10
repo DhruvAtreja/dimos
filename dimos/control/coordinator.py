@@ -1060,6 +1060,9 @@ class ControlCoordinator(Module):
         tasks only.
         """
         results: dict[str, bool] = {}
+        with self._hardware_lock:
+            for connection in self._connections.values():
+                connection.drop_holds()
         with self._task_lock:
             for name, task in self._tasks.items():
                 if "reset_runtime_state" not in self._task_commands.get(name, frozenset()):

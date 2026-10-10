@@ -119,7 +119,7 @@ class ConnectionSource:
     Raises:
         ValueError: If a joint can neither be told a velocity nor held at a
             position it reports (an arm left with effort 0 falls under
-            gravity), or takes stiffness and damping (``kp``, ``kd``).
+            gravity), or PD joints have no valid configured gains.
     """
 
     def __init__(
@@ -226,6 +226,10 @@ class ConnectionSource:
         # Joint name -> the position it is held at. Only the tick loop touches it.
         self._holds: dict[str, float] = {}
         self._last_warned = float("-inf")
+        # PD policies need a whole feedback sample, not new joints with an old IMU.
+        self._coherent_feedback = bool(self._motor_joints and "imu" in self._readers)
+        self._pending: dict[float, Values] = {}
+        self._last_frame_ts = float("-inf")
 
     @property
     def hardware_id(self) -> str:
@@ -282,6 +286,20 @@ class ConnectionSource:
             return
         now = time.monotonic()
         with self._lock:
+            ts = getattr(msg, "ts", None)
+            if ts is not None and (not math.isfinite(ts) or ts <= self._last_frame_ts):
+                return
+            if self._coherent_feedback:
+                assert ts is not None
+                pending = self._pending.setdefault(ts, {})
+                pending.update(mine)
+                if len(pending) != len(self._state_keys):
+                    while len(self._pending) > 4:
+                        del self._pending[min(self._pending)]
+                    return
+                mine = pending
+                self._last_frame_ts = ts
+                self._pending = {t: v for t, v in self._pending.items() if t > ts}
             latest = self._latest
             last = self._freshness.last_receipt
             if last is not None and now - last > self._description.deadman_timeout_s:
@@ -304,9 +322,11 @@ class ConnectionSource:
         with other._lock:
             latest, received_at = other._latest, other._received_at
             last_receipt, drop_holds = other._freshness.last_receipt, other._drop_holds
+            last_frame_ts = other._last_frame_ts
         with self._lock:
             self._latest, self._received_at = latest, received_at
             self._freshness.last_receipt, self._drop_holds = last_receipt, drop_holds
+            self._last_frame_ts = last_frame_ts
             self._awaiting_reading = True
         self._holds = dict(other._holds)
 
@@ -317,6 +337,8 @@ class ConnectionSource:
         with self._lock:
             self._drop_holds = True
             self._awaiting_reading = True
+            self._pending.clear()
+            self._last_frame_ts = time.time()
 
     def ready_for_control(self, now: float | None = None) -> bool:
         """Whether a command can be sent: everything the robot reports has

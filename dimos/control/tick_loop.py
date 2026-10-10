@@ -31,7 +31,10 @@ import threading
 import time
 from typing import TYPE_CHECKING, NamedTuple
 
+from scipy.spatial.transform import Rotation
+
 from dimos.constants import DEFAULT_THREAD_JOIN_TIMEOUT
+from dimos.control.contract.convert import IMU_INTERFACES
 from dimos.control.task import (
     ControlTask,
     CoordinatorState,
@@ -40,6 +43,7 @@ from dimos.control.task import (
     ResourceClaim,
     SensorStateSnapshot,
 )
+from dimos.hardware.whole_body.spec import IMUState
 from dimos.msgs.geometry_msgs.Transform import Transform
 from dimos.msgs.sensor_msgs.JointState import JointState
 from dimos.msgs.tf2_msgs.TFMessage import TFMessage
@@ -52,7 +56,6 @@ if TYPE_CHECKING:
     from dimos.control.connection_source import ConnectionSource
     from dimos.control.hardware_interface import ConnectedHardware
     from dimos.hardware.manipulators.spec import ControlMode
-    from dimos.hardware.whole_body.spec import IMUState
     from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
 
 logger = setup_logger()
@@ -133,6 +136,7 @@ class TickLoop:
         self._last_frame_pose_time = float("-inf")
         self._frame_id = frame_id
         self._log_ticks = log_ticks
+        self._connection_sensors: dict[str, dict[str, float]] = {}
 
         self._stop_event = threading.Event()
         self._stop_event.set()  # Initially stopped
@@ -255,6 +259,7 @@ class TickLoop:
         joint_velocities: dict[str, float] = {}
         joint_efforts: dict[str, float] = {}
         per_hardware: dict[HardwareId, dict[JointName, JointReading]] = {}
+        self._connection_sensors = {}
 
         with self._hardware_lock:
             for hw in self._hardware.values():
@@ -277,6 +282,8 @@ class TickLoop:
                 joint_positions.update(joints.joint_positions)
                 joint_velocities.update(joints.joint_velocities)
                 joint_efforts.update(joints.joint_efforts)
+                if source.ready_for_control():
+                    self._connection_sensors.update(source.read_sensors())
 
         snapshot = JointStateSnapshot(
             joint_positions=joint_positions,
@@ -309,15 +316,22 @@ class TickLoop:
                     out[hw_id] = read_imu()
                 except Exception as e:
                     logger.error(f"Failed to read IMU from {hw_id}: {e}")
+        for name, reading in self._connection_sensors.items():
+            if not set(IMU_INTERFACES) <= reading.keys():
+                continue
+            q = tuple(reading[key] for key in ("qx", "qy", "qz", "qw"))
+            rpy = Rotation.from_quat(q).as_euler("xyz")
+            out[name.split("/", 1)[0]] = IMUState(
+                quaternion=(q[3], q[0], q[1], q[2]),
+                gyroscope=(reading["gx"], reading["gy"], reading["gz"]),
+                accelerometer=(reading["ax"], reading["ay"], reading["az"]),
+                rpy=(float(rpy[0]), float(rpy[1]), float(rpy[2])),
+            )
         return out
 
     def _read_all_sensors(self) -> SensorStateSnapshot:
-        """Collect the latest sensor readings from every connection."""
-        readings: dict[str, dict[str, float]] = {}
-        with self._hardware_lock:
-            for source in self._connections.values():
-                readings.update(source.read_sensors())
-        return SensorStateSnapshot(readings=readings)
+        """Sensors captured under the same lock as this tick's joint readings."""
+        return SensorStateSnapshot(readings=self._connection_sensors)
 
     def _compute_all_tasks(
         self, state: CoordinatorState

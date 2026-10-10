@@ -269,9 +269,11 @@ def test_dropped_holds_are_taken_again_from_the_next_reading() -> None:
     source.on_message("joint_state", reading(0.4, 0.0))
     assert source.command({}, None)[f"{J1}/position"] == 0.5
 
+    queued = reading(0.41, 0.0)
     source.drop_holds()
 
     # The last reading may predate the halt, so wait for the next one.
+    source.on_message("joint_state", queued)
     assert not source.ready_for_control()
     source.on_message("joint_state", reading(0.42, 0.0))
     assert source.ready_for_control()
@@ -365,3 +367,40 @@ def test_pd_reset_drops_targets_but_keeps_explicit_gains(pd_source):
 def test_pd_gains_must_match_the_description_and_be_finite_nonnegative(gains):
     with pytest.raises(ValueError, match="gains"):
         ConnectionSource(arm(command=MOTOR_INTERFACES), motor_gains=gains)
+
+
+def test_pd_feedback_requires_matching_joint_and_imu_samples():
+    source = ConnectionSource(
+        arm(command=MOTOR_INTERFACES, others=[imu_resource()]),
+        motor_gains=WholeBodyConfig(kp=(80, 40), kd=(2, 1)),
+    )
+    first = time.time()
+    joints = JointState(ts=first, name=[J1, J2], position=[0.2, 0.3])
+    source.on_message("joint_state", joints)
+    source.on_message("imu", Imu(ts=first - 1, orientation=Quaternion(0, 0, 0, 1)))
+    assert not source.ready_for_control()
+    assert source.read_joints().joint_positions == {}
+
+    source.on_message("imu", Imu(ts=first, orientation=Quaternion(0, 0, 0, 1)))
+    assert source.ready_for_control()
+    assert source.read_joints().joint_positions == {J1: 0.2, J2: 0.3}
+    source.on_message("joint_state", JointState(ts=first + 1, name=[J1, J2], position=[0.4, 0.5]))
+    assert source.read_joints().joint_positions == {J1: 0.2, J2: 0.3}
+    assert not source.ready_for_control(time.monotonic() + 1)
+
+    source.drop_holds()
+    source.on_message("joint_state", joints)
+    source.on_message("imu", Imu(ts=first, orientation=Quaternion(0, 0, 0, 1)))
+    assert not source.ready_for_control()
+
+
+def test_pd_frame_in_progress_cannot_mix_with_another_frame():
+    source = ConnectionSource(
+        arm(command=MOTOR_INTERFACES, others=[imu_resource()]),
+        motor_gains=WholeBodyConfig(kp=(80, 40), kd=(2, 1)),
+    )
+    for ts in range(10):
+        source.on_message("joint_state", JointState(ts=ts, name=[J1, J2], position=[ts, ts]))
+    source.on_message("imu", Imu(ts=9, orientation=Quaternion(0, 0, 0, 1)))
+    source.on_message("imu", Imu(ts=8, orientation=Quaternion(0, 0, 0, 1)))
+    assert source.read_joints().joint_positions == {J1: 9, J2: 9}

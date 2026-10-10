@@ -28,6 +28,7 @@ from abc import ABC, abstractmethod
 import asyncio
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass
+import math
 import threading
 import time
 from typing import Any, ClassVar
@@ -69,6 +70,7 @@ from dimos.core.stream import In, Out
 from dimos.msgs.control_msgs.ControlValues import ControlValues
 from dimos.msgs.geometry_msgs.Twist import Twist
 from dimos.msgs.sensor_msgs.JointState import JointState
+from dimos.msgs.sensor_msgs.MotorCommandArray import MotorCommandArray
 from dimos.utils.logging_config import setup_logger
 
 logger = setup_logger()
@@ -190,6 +192,8 @@ class ConnectionModule(Module, ABC):
         self._deadman_fired = False
         self._last_rejection: str | None = None
         self._last_error: str | None = None
+        # Stamped commands queued before a halt must not restart the device.
+        self._command_not_before = float("-inf")
         # When a rejection (True) or an error (False) was last logged.
         self._last_logged: dict[bool, float] = {}
 
@@ -466,13 +470,20 @@ class ConnectionModule(Module, ABC):
                 return
             mine = {key: value for key, value in values.items() if key.startswith(prefix)}
             if mine:
-                self._apply(source, mine)
+                timestamp = (
+                    msg.ts
+                    if isinstance(msg, JointState)
+                    else msg.timestamp
+                    if isinstance(msg, MotorCommandArray)
+                    else None
+                )
+                self._apply(source, mine, timestamp=timestamp)
 
         return self.process_observable(
             port.pure_observable().pipe(ops.filter(carries_source)), handle
         )
 
-    def _apply(self, source: str, values: Values) -> None:
+    def _apply(self, source: str, values: Values, *, timestamp: float | None = None) -> None:
         try:
             # validate_command takes a ControlValues; this one never leaves the
             # process. Typed messages carry no sequence number, so order is
@@ -485,15 +496,20 @@ class ConnectionModule(Module, ABC):
         if isinstance(result, Rejected):
             self._report(f"{source}: {result.reason}: {result.detail}", rejection=True)
             return
-        with self._lock:
-            self._last_command_time = time.time()
-            self._deadman_fired = False
-        self._start_deadman()
         try:
             with self._hardware_lock:
                 if not self._connected:
                     return
+                if timestamp is not None and (
+                    not math.isfinite(timestamp) or timestamp < self._command_not_before
+                ):
+                    self._report(f"{source}: command predates the last halt", rejection=True)
+                    return
                 self.write(result.values)
+                with self._lock:
+                    self._last_command_time = time.time()
+                    self._deadman_fired = False
+                self._start_deadman()
         except Exception as error:
             self._report(f"write for {source!r} failed: {type(error).__name__}: {error}")
             self._cancel_deadman()
@@ -523,6 +539,7 @@ class ConnectionModule(Module, ABC):
 
     def _call_halt(self) -> bool:
         """Call ``halt``. True if it did not raise; a failure goes to ``status``."""
+        self._command_not_before = time.time()
         try:
             self.halt()
         except Exception as error:

@@ -290,6 +290,20 @@ def test_a_position_command_is_written_and_the_readings_follow(rig: Callable[...
     assert r.module.status().last_command_time is not None
 
 
+def test_halt_rejects_queued_pre_halt_commands_but_accepts_new_ones(rig):
+    r = rig(deadman_timeout_s=1.0)
+    old_command = JointState(name=["mock/joint1"], position=[0.9])
+    r.move(joint1=0.2)
+    assert wait_until(lambda: writes(r) == [{JOINT1: 0.2}])
+    assert r.module.halt_robot()
+
+    r.send("position_command", old_command)
+    assert wait_until(lambda: r.module.status().last_rejection is not None)
+    assert writes(r) == [{JOINT1: 0.2}]
+    r.move(joint1=0.4)
+    assert wait_until(lambda: writes(r)[-1] == {JOINT1: 0.4})
+
+
 def test_motor_base_and_position_commands_become_named_values(rig: Callable[..., Rig]) -> None:
     r = rig(BodyAndBase)
     r.send(
