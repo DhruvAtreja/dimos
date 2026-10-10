@@ -462,20 +462,15 @@ def test_xarm_depth_search_lifts_a_grasp_on_a_flat_marker_off_the_table(
 
 
 @pytest.mark.self_hosted
-def test_xarm_depth_search_takes_the_depth_holding_the_most_of_the_box(
-    xarm: GripperContactModel,
-) -> None:
-    # High on the box, the pads hold only its top: deeper holds more of it.
+def test_xarm_depth_search_leaves_a_passing_grasp_where_it_is(xarm: GripperContactModel) -> None:
+    # High on the box, the pads hold only its top, but the grasp passes.
     grasp = _top_down(0.0, 0.0, 0.055)
 
     [found] = xarm.fit_depth(
         grasp[None], BOX, {"table": BOX_TABLE}, CONTACT_MARGIN, OBSTACLE_MARGIN, 0, SHIFTS
     )
 
-    assert found.clear
-    assert found.depth_shift > 0.0
-    deeper = _top_down(0.0, 0.0, 0.055 - found.depth_shift)
-    assert _check(xarm, deeper, BOX, table=BOX_TABLE) == CLEAR
+    assert found == _check(xarm, grasp, BOX, table=BOX_TABLE) == CLEAR
 
 
 @pytest.mark.self_hosted
@@ -508,11 +503,12 @@ def test_xarm_depth_search_with_no_shifts_is_the_check(xarm: GripperContactModel
 
 
 @pytest.mark.self_hosted
-def test_xarm_depth_search_holds_the_marker_at_its_middle_not_its_top(
+def test_xarm_depth_search_backs_a_deep_grasp_off_only_until_it_passes(
     xarm: GripperContactModel,
 ) -> None:
-    # Started 4 cm up: the closed pads only reach the marker by sliding deeper.
-    grasp = _top_down(0.0, 0.0, 0.04)
+    # The tool tip 2 cm under the table, as a grasp source centring the marker
+    # in the open fingers gives it: the nearest depth that passes is the lowest.
+    grasp = _top_down(0.0, 0.0, -0.02)
 
     [found] = xarm.fit_depth(
         grasp[None],
@@ -522,11 +518,12 @@ def test_xarm_depth_search_holds_the_marker_at_its_middle_not_its_top(
         OBSTACLE_MARGIN,
         MIN_GAP_POINTS,
         depth_shifts(0.05, 0.0025),
+        floor=0.0,
     )
 
     assert found.clear
     # Low enough that the fingers meet the 2 cm marker's sides, not just its top.
-    assert 0.04 - found.depth_shift < 0.01
+    assert -0.02 - found.depth_shift < 0.01
 
 
 @pytest.mark.self_hosted

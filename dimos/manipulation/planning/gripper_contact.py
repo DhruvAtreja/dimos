@@ -302,14 +302,14 @@ class GripperContactModel:
         floor: float | None = None,
         enough: int = 0,
     ) -> list[GraspContact]:
-        """Slide each grasp along its approach to the depth that holds the most of the object.
+        """Move each grasp that fails where it is along its approach to the nearest depth that passes.
 
-        Each grasp is checked (see ``check``) at every shift. A shift passes when
-        the check is clear, a contact patch presses on the object as the fingers
-        close, and where they stop at least ``min_gap_points`` object points (one
-        per 5 mm cube, and at least one) lie between the contact patches. Of the shifts that pass, the one holding
-        the most points wins; on a tie, the smallest shift, backing off before
-        going deeper.
+        A grasp clear where it is (see ``check``) stays there. Any other is tried
+        at each shift, nearest first and backing off before going deeper, and
+        moves to the first where the check is clear, a contact patch presses on
+        the object as the fingers close, and where they stop at least
+        ``min_gap_points`` object points (one per 5 mm cube, and at least one)
+        lie between the contact patches.
 
         Args:
             grasps: Tool tip poses, shape (N, 4, 4), in the frame of the points.
@@ -350,31 +350,31 @@ class GripperContactModel:
         target = _thin(_finite(target), _TARGET_CELL)
         held_points = _thin(target, _GAP_CELL)
         least = max(min_gap_points, 1)
-        order = sorted({0.0, *(float(shift) for shift in shifts)}, key=lambda s: (abs(s), s))
-        verdicts: list[list[GraspContact]] = []
-        counts = np.zeros((len(order), len(grasps)), dtype=np.int64)
-        for index, shift in enumerate(order):
-            moved = grasps.copy()
+        order = sorted({float(shift) for shift in shifts} - {0.0}, key=lambda s: (abs(s), s))
+        results, _ = self._check(
+            grasps, target, obstacles, contact_margin, obstacle_margin, min_gap_points, floor
+        )
+        failing = np.flatnonzero([not verdict.clear for verdict in results])
+        for shift in order:
+            if not len(failing):
+                break
+            moved = grasps[failing].copy()
             # The tool tip's z axis is the third column of each pose's rotation.
-            moved[:, :3, 3] += shift * grasps[:, :3, 2]
+            moved[:, :3, 3] += shift * moved[:, :3, 2]
             found, stops = self._check(
                 moved, target, obstacles, contact_margin, obstacle_margin, min_gap_points, floor
             )
-            counts[index] = self._held_counts(moved, held_points, stops)
-            verdicts.append([dataclasses.replace(v, depth_shift=shift) for v in found])
-        results = []
-        for grasp in range(len(grasps)):
-            passing = [
-                index
-                for index in range(len(order))
-                if verdicts[index][grasp].clear and counts[index, grasp] >= least
-            ]
-            if not passing:
-                results.append(verdicts[0][grasp])
-                continue
-            # max() keeps the first of equal counts: the smallest shift.
-            best = max(passing, key=lambda index: counts[index, grasp])
-            results.append(verdicts[best][grasp])
+            held = self._held_counts(moved, held_points, stops)
+            passed = np.array(
+                [
+                    verdict.clear and count >= least
+                    for verdict, count in zip(found, held, strict=True)
+                ],
+                dtype=bool,
+            )
+            for index in np.flatnonzero(passed):
+                results[failing[index]] = dataclasses.replace(found[index], depth_shift=shift)
+            failing = failing[~passed]
         return results
 
     def _check(
