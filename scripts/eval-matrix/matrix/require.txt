@@ -1,0 +1,3 @@
+# Commits every config's branch must contain before a round (same eval harness everywhere).
+# One commit per line; `matrix.sh check` (and so `round`) refuses a config that lacks one.
+c1728fd47  eval speed fixes (mustafa/perf/eval-overhead, on mustafa/feat/sim-grasp-evals)

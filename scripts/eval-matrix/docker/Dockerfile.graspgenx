@@ -1,0 +1,44 @@
+# The sim2 eval image plus a ready GraspGenX environment, so GraspGenXModule starts on the
+# GPU without downloading anything when a container boots.
+#
+# GraspGenXModule runs `uv run --frozen --with-editable /app ...` in
+# /app/native/python/graspgenx, with its venv at
+# $XDG_CACHE_HOME/dimos/isolated-python/<key>/.venv. That venv lives here, in the image, at
+# /opt/graspgenx-venv; the path the module asks for is a symlink to it, kept in the host
+# cache folder that is mounted on /cache. The extra layer of dimos packages that
+# `--with-editable /app` adds is built per checkout into the shared uv cache on the host
+# (/cache/uv) by `matrix.sh prepare`, and uv runs offline, so a container reuses it.
+#
+# Build context: a folder holding native/python/graspgenx (from a dimos checkout) and
+# gx_link.py. See build_graspgenx.sh.
+
+FROM dimos-evals/sim2:latest
+
+# sha256("/app/native/python/graspgenx")[:16], the key IsolatedPythonModule uses.
+ARG GX_KEY=08dc71384eb87574
+ARG GX_VENV=/opt/graspgenx-venv
+
+COPY native/python/graspgenx /app/native/python/graspgenx
+COPY gx_link.py /opt/gx_link.py
+
+# Packages of the same version as in /opt/venv (torch, CUDA, triton: about 6 GB) become
+# symlinks to /opt/venv instead of a second copy. Importing graspgenx once downloads its
+# gripper descriptions into the venv, so that happens here and not in every container.
+RUN set -eux; \
+    site=lib/python3.12/site-packages; \
+    link=/cache/dimos/isolated-python/${GX_KEY}/.venv; \
+    mkdir -p "$(dirname "$link")"; \
+    ln -s "${GX_VENV}" "$link"; \
+    export UV_CACHE_DIR=/tmp/uv-cache; \
+    uv venv --python 3.12 "${GX_VENV}"; \
+    /opt/venv/bin/python /opt/gx_link.py prelink /opt/venv/$site "${GX_VENV}/$site" \
+        /app/native/python/graspgenx/uv.lock; \
+    cd /app/native/python/graspgenx; \
+    env -u VIRTUAL_ENV UV_PROJECT_ENVIRONMENT="$link" uv sync --frozen --inexact; \
+    "${GX_VENV}/bin/python" -c "import graspgenx, torch; print('graspgenx env ok', torch.__version__)"; \
+    /opt/venv/bin/python /opt/gx_link.py dedupe /opt/venv/$site "${GX_VENV}/$site"; \
+    rm -rf /tmp/uv-cache /root/.cache /opt/uv-cache; \
+    du -sh "${GX_VENV}"
+
+ENV UV_CACHE_DIR=/cache/uv \
+    UV_OFFLINE=1

@@ -1,0 +1,12 @@
+# Targeted camera reruns (M1 chat, 2026-10-10), on the lab branch's fast tip with camera
+# perception; A (pad gap) and B (one accurate check) are env switches. Scripted single pick,
+# sim overlay, cases in matrix/batches-tgt.tsv, each config twice (-r1, -r2):
+#   round 1 (A only) and 2 (both): pg-graspgen and the control
+#   round 2 and 3 (B only): sac-graspgen and the control
+# The self filter runs the old trimesh query (the fast one adds arm refusals). If the fast tip is not used, the ref is mustafa/test/grasp-lab (6215ace91) with the same env.
+pg-graspgen-r1   mustafa/perf/self-filter-fast  dimos.evals.suites.scenereplica  3  -  SCENEREPLICA_PERCEPTION=camera SCENEREPLICA_GRASP=graspgenx PICKANDPLACEMODULE__GRASP_REQUIRE_OBJECT_IN_GAP=true POINTCLOUDSELFFILTER__MESH_QUERY=trimesh MANIPULATIONMODULE__VISUALIZATION__BACKEND=none MATRIX_AGENT=matrix_scripted
+pg-graspgen-r2   mustafa/perf/self-filter-fast  dimos.evals.suites.scenereplica  3  -  SCENEREPLICA_PERCEPTION=camera SCENEREPLICA_GRASP=graspgenx PICKANDPLACEMODULE__GRASP_REQUIRE_OBJECT_IN_GAP=true POINTCLOUDSELFFILTER__MESH_QUERY=trimesh MANIPULATIONMODULE__VISUALIZATION__BACKEND=none MATRIX_AGENT=matrix_scripted
+sac-graspgen-r1  mustafa/perf/self-filter-fast  dimos.evals.suites.scenereplica  3  -  SCENEREPLICA_PERCEPTION=camera SCENEREPLICA_GRASP=graspgenx PICKANDPLACEMODULE__GRASP_SCENE_FILTER=false GRASPGENXMODULE__MAX_CANDIDATES=500 POINTCLOUDSELFFILTER__MESH_QUERY=trimesh MANIPULATIONMODULE__VISUALIZATION__BACKEND=none MATRIX_AGENT=matrix_scripted
+sac-graspgen-r2  mustafa/perf/self-filter-fast  dimos.evals.suites.scenereplica  3  -  SCENEREPLICA_PERCEPTION=camera SCENEREPLICA_GRASP=graspgenx PICKANDPLACEMODULE__GRASP_SCENE_FILTER=false GRASPGENXMODULE__MAX_CANDIDATES=500 POINTCLOUDSELFFILTER__MESH_QUERY=trimesh MANIPULATIONMODULE__VISUALIZATION__BACKEND=none MATRIX_AGENT=matrix_scripted
+ctl-graspgen-r1  mustafa/perf/self-filter-fast  dimos.evals.suites.scenereplica  3  -  SCENEREPLICA_PERCEPTION=camera SCENEREPLICA_GRASP=graspgenx POINTCLOUDSELFFILTER__MESH_QUERY=trimesh MANIPULATIONMODULE__VISUALIZATION__BACKEND=none MATRIX_AGENT=matrix_scripted
+ctl-graspgen-r2  mustafa/perf/self-filter-fast  dimos.evals.suites.scenereplica  3  -  SCENEREPLICA_PERCEPTION=camera SCENEREPLICA_GRASP=graspgenx POINTCLOUDSELFFILTER__MESH_QUERY=trimesh MANIPULATIONMODULE__VISUALIZATION__BACKEND=none MATRIX_AGENT=matrix_scripted

@@ -1,0 +1,16 @@
+*
+!Cargo.toml
+!Cargo.lock
+!native
+!examples/native-modules
+!dimos
+!pyproject.toml
+!uv.lock
+!README.md
+!setup.py
+!MANIFEST.in
+**/__pycache__
+**/*.pyc
+**/target
+**/node_modules
+dimos/**/*.so
