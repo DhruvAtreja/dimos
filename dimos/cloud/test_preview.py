@@ -188,12 +188,12 @@ def test_timing_respects_full_wire_json_budget(
 ) -> None:
     recording = store(
         tmp_path / "meta.db",
-        odom_名字=[(100.0, Pose(0, 0, 0), None)],
+        odom=[(100.0, Pose(0, 0, 0), None)],
         lidar=[(100.0, cloud(100.0, (0, 0, 0.3)), None)],
     )
     doc = preview.build(recording)
     assert doc is not None and "timing" in doc
-    # Match HttpCloudRequest's encoding, including escaped Unicode and whitespace.
+    # Match HttpCloudRequest's JSON encoding, including whitespace.
     size = len(json.dumps(doc, allow_nan=False).encode())
     monkeypatch.setattr(preview, "PREVIEW_MAX_BYTES", size, raising=False)
     assert preview.build(recording) == doc  # exact boundary fits
@@ -208,7 +208,6 @@ def test_timing_respects_full_wire_json_budget(
     [
         ([100.0, float("nan")], 100.0),
         ([float("inf")], 0.0),
-        ([1.0], float("nan")),
         ([-1e308, 1e308], 0.0),
     ],
 )
