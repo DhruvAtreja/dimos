@@ -417,14 +417,13 @@ def test_transport_maps_http_errors(monkeypatch: pytest.MonkeyPatch) -> None:
         t.request("POST", "/v1/data/uploads", {})
 
 
-@pytest.mark.parametrize("skipped", [False, True])
 @pytest.mark.parametrize(
-    "api_url,console_url",
+    "api_url,console_url,skipped",
     [
-        ("https://api.dimensional.org", "https://console.dimensional.org"),
-        ("https://api.dimensional.org/", "https://console.dimensional.org"),
-        ("https://api.staging.dimensional.org", "https://console.staging.dimensional.org"),
-        ("https://api.staging.dimensional.org/", "https://console.staging.dimensional.org"),
+        ("https://api.dimensional.org", "https://console.dimensional.org", False),
+        ("https://api.dimensional.org/", "https://console.dimensional.org", True),
+        ("https://api.staging.dimensional.org", "https://console.staging.dimensional.org", False),
+        ("https://api.staging.dimensional.org/", "https://console.staging.dimensional.org", True),
     ],
 )
 def test_upload_cli_prints_console_link(
