@@ -20,7 +20,7 @@ from pathlib import Path
 
 
 def verify(root: Path) -> None:
-    for mode in ("normal", "blocked", "forgery"):
+    for mode in ("normal", "blocked", "forgery", "lift"):
         directory = root / mode
         result = json.loads((directory / "result.json").read_text())
         manifest = json.loads((directory / "episode.json").read_text())
@@ -28,16 +28,18 @@ def verify(root: Path) -> None:
         assert result["episode"] == manifest["episode"]
         assert result["case"] == "robosuite_lift_cube"
         assert result["error"] == "", result
-        assert result["score"] == 0.0, result
+        expected = 1.0 if mode == "lift" else 0.0
+        assert result["score"] == expected, result
         assert result["attempts"] >= 2
         events = [
             json.loads(line) for line in (directory / "boundary.jsonl").read_text().splitlines()
         ]
         assert any(event["accepted"] for event in events)
-        if mode != "normal":
+        if mode in ("blocked", "forgery"):
             assert any(not event["accepted"] for event in events)
             assert any(event["reason"] == "replay" for event in events)
-        print(f"{mode}: trusted hold-baseline score=0; attempts={result['attempts']}")
+        label = "scripted Lift positive control" if mode == "lift" else "hold baseline"
+        print(f"{mode}: trusted {label} score={expected}; attempts={result['attempts']}")
 
 
 if __name__ == "__main__":

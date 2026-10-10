@@ -53,6 +53,7 @@ COPY --from=pi /usr/local/bin/node /usr/local/bin/node
 COPY --from=pi /usr/local/lib/node_modules /usr/local/lib/node_modules
 COPY --chmod=755 docker/mujoco-eval/dimos.py /usr/local/bin/dimos
 COPY docker/mujoco-eval/probe.py /app/probe.py
+COPY docker/mujoco-eval/lift.py /app/lift.py
 USER root
 RUN apt-get update && apt-get install -y --no-install-recommends git \
     && rm -rf /var/lib/apt/lists/* \

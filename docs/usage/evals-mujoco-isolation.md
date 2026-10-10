@@ -68,7 +68,7 @@ security setting or privileged container is required.
 
 Create a private input directory and a writable, initially empty result root.
 Copy the exported `robosuite/lift` directory into the private input as `lift`.
-For each mode `normal`, `blocked`, `forgery`, write a fresh private
+For each mode `normal`, `blocked`, `forgery`, `lift`, write a fresh private
 `episode.json`, using a distinct episode and output directory:
 
 ```json
@@ -78,7 +78,7 @@ For each mode `normal`, `blocked`, `forgery`, write a fresh private
   "endpoint": "tcp/127.0.0.1:7449",
   "scene": "/private/lift/scene.xml",
   "output": "/results/normal",
-  "duration_s": 10,
+  "duration_s": 30,
   "seed": 0,
   "case": "robosuite_lift_cube",
   "camera": "wrist_camera",
@@ -100,9 +100,19 @@ docker compose -f docker/mujoco-eval/compose.yaml up
 # Inspect both container exit codes; both must be zero. Then remove this run:
 docker compose -f docker/mujoco-eval/compose.yaml ps -a
 docker compose -f docker/mujoco-eval/compose.yaml down
-# Repeat with fresh manifests for blocked and forgery, then:
+# Repeat with fresh manifests for blocked, forgery and lift, then:
 python docker/mujoco-eval/verify.py "$EVAL_RESULT_DIR"
 ```
+
+Use a 120-second trusted duration for `lift`; the negative cases need 30 seconds.
+`lift` is a fixture-specific scripted positive control: public RGB-D selects the
+red cube, public robot FK/IK sets the grasp, and existing coordinator trajectory
+and gripper tasks move it. It reads no scene, seed or private object TF. The
+host verifier requires trusted score **1**; motion completion alone cannot pass.
+This checks control/transport capability, not general autonomous agent capability.
+The exported seed-0 fixture currently fails this positive check: the scripted
+client raises the cube but loses the grasp before the final measurement. Keep
+this acceptance failure visible; the passing hold baseline is not successful Lift.
 
 The default robot client uses normal ControlCoordinator trajectory APIs and
 camera ports for a deterministic hold baseline on the existing lift task.

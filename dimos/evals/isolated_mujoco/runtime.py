@@ -235,6 +235,7 @@ class TrustedRuntime:
         self._sensor_sequence = 0
         self._samples = 0
         self._error = ""
+        self._holding = False
 
     def _before_step(self, engine: MujocoEngine) -> None:
         if self._samples == 0:
@@ -243,7 +244,7 @@ class TrustedRuntime:
             packet = self.boundary.pending
             self.boundary.pending = None
             if packet is None:
-                if time.monotonic() - self.boundary.last_action > 0.5:
+                if not self._holding and time.monotonic() - self.boundary.last_action > 0.5:
                     self._hold(engine)
                 return
             if abs(time.time() - packet.sent_at) > 0.5:
@@ -263,6 +264,7 @@ class TrustedRuntime:
                 self.boundary.events.flush()
                 return
             if packet.kind == "position":
+                self._holding = False
                 self._apply_positions(engine, packet.values)
             else:
                 self._hold(engine)
@@ -276,9 +278,17 @@ class TrustedRuntime:
     def _hold(self, engine: MujocoEngine) -> None:
         positions = [
             max(lo, min(hi, q))
-            for lo, hi, q in zip(self.lower, self.upper, engine.joint_positions, strict=True)
+            for lo, hi, q in zip(self.lower, self.upper, self._positions(engine), strict=True)
         ]
         self._apply_positions(engine, positions)
+        self._holding = True
+
+    def _positions(self, engine: MujocoEngine) -> list[float]:
+        positions = list(engine.joint_positions)
+        positions[7] = max(
+            self.lower[7], min(self.upper[7], self.lower[7] + self.upper[7] - positions[7])
+        )
+        return positions
 
     def _after_step(self, engine: MujocoEngine) -> None:
         now = time.time()
@@ -304,10 +314,14 @@ class TrustedRuntime:
                     ),
                     ts=now,
                 )
+                velocity = list(engine.joint_velocities)
+                effort = list(engine.joint_efforts)
+                velocity[7] = -velocity[7]
+                effort[7] = -effort[7]
                 joints = JointState(
-                    position=engine.joint_positions,
-                    velocity=engine.joint_velocities,
-                    effort=engine.joint_efforts,
+                    position=self._positions(engine),
+                    velocity=velocity,
+                    effort=effort,
                     ts=now,
                 )
                 self.store.stream("coordinator_joint_state", JointState).append(joints, ts=now)

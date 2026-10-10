@@ -22,10 +22,11 @@ import socket
 import threading
 import time
 
+from lift import run_lift
 import zenoh
 
 from dimos.control.components import HardwareComponent, HardwareType
-from dimos.control.coordinator import ControlCoordinator
+from dimos.control.coordinator import ControlCoordinator, TaskConfig
 from dimos.control.tasks.trajectory_task.trajectory_task import (
     TrajectoryExecutionStatus,
     joint_trajectory_task,
@@ -54,7 +55,16 @@ def main() -> None:
                     adapter_kwargs={"run": run, "episode": episode},
                 )
             ],
-            tasks=[joint_trajectory_task(joints)],
+            tasks=(
+                [
+                    joint_trajectory_task(joints[:7]),
+                    TaskConfig(
+                        name="arm_gripper", type="gripper", joint_names=["arm/gripper"], priority=20
+                    ),
+                ]
+                if mode == "lift"
+                else [joint_trajectory_task(joints)]
+            ),
             publish_joint_state=False,
         )
         cleanup.callback(coordinator.stop)
@@ -65,6 +75,10 @@ def main() -> None:
         camera.camera_info.subscribe(lambda _: calibrated.set())
         camera.start()
         assert calibrated.wait(5), "Trusted camera calibration unavailable"
+        if mode == "lift":
+            run_lift(coordinator, camera)
+            print(json.dumps({"mode": mode, "scripted_positive_control": True}))
+            return
         # Deterministic hold baseline on the exported lift task: expected score 0.
         positions = list(coordinator.get_joint_positions().values())
         accepted = coordinator.execute_trajectory(

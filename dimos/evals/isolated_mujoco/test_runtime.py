@@ -160,3 +160,32 @@ def test_missing_scene_produces_unknown_infrastructure_result(tmp_path):
     result = json.loads((config.output / "result.json").read_text())
     assert result["score"] is None
     assert result["error"].startswith("Infrastructure startup error:")
+
+
+def test_hold_preserves_open_gripper_in_command_coordinates(tmp_path, mocker):
+    scene = tmp_path / "scene.xml"
+    synthetic_scene(scene)
+    with socket.socket() as sock:
+        sock.bind(("127.0.0.1", 0))
+        endpoint = f"tcp/127.0.0.1:{sock.getsockname()[1]}"
+    with ExitStack() as cleanup:
+        runtime = TrustedRuntime(
+            EpisodeConfig(
+                run="run",
+                episode="episode",
+                endpoint=endpoint,
+                scene=scene,
+                output=tmp_path / "private",
+                duration_s=1,
+                home=[0.0] * 7,
+            )
+        )
+        cleanup.callback(runtime._resources.close)
+        assert runtime._positions(runtime.engine)[7] == 0.8
+        target = mocker.patch.object(runtime.engine, "set_position_target")
+        runtime._hold(runtime.engine)
+        target.assert_called_once_with(7, 0.0)
+        runtime.boundary.last_action = 0.0
+        runtime._before_step(runtime.engine)
+        runtime._before_step(runtime.engine)
+        target.assert_called_once_with(7, 0.0)
