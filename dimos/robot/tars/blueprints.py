@@ -107,15 +107,30 @@ def _convert_global_map(
         cloud = PointCloud2.from_numpy(points[keep], frame_id=cloud.frame_id)
     if cube is not None:
         # spheres, not mode="boxes": to_rerun's boxes mode passes one half_size, and
-        # Boxes3D draws one box per half_size. Colored by height on a fixed scale (turbo,
-        # -1.2..1.5 m): crater floors blue, the plain green, rims and tall things warm.
-        from matplotlib import colormaps
-
+        # Boxes3D draws one box per half_size
         points, _ = cloud.as_numpy()
-        z = np.clip((points[:, 2] + 1.2) / 2.7, 0.0, 1.0)
-        colors = (colormaps["turbo"](z)[:, :3] * 255).astype(np.uint8)
-        return cloud.to_rerun(voxel_size=cube, colors=colors)
+        return cloud.to_rerun(voxel_size=cube, colors=_height_colors(points[:, 2]))
     return cloud.to_rerun(bottom_cutoff=0)
+
+
+def _height_colors(z: Any) -> Any:
+    """Turbo on a fixed -1.2..1.5 m scale: crater floors blue, the plain green, tall things warm."""
+    from matplotlib import colormaps
+
+    return (colormaps["turbo"](np.clip((z + 1.2) / 2.7, 0.0, 1.0))[:, :3] * 255).astype(np.uint8)
+
+
+def _convert_live_scan(cloud: Any, xy_box: tuple[float, float, float, float], cube: float) -> Any:
+    """Each registered scan, cut to xy_box and drawn like the map. With a visible time range
+    on this entity, the viewer keeps the last few seconds of scans: the map grows at the
+    lidar rate while the full map only needs re-sending every few scans."""
+    import rerun as rr
+
+    points, _ = cloud.as_numpy()
+    x0, x1, y0, y1 = xy_box
+    keep = (points[:, 0] > x0) & (points[:, 0] < x1) & (points[:, 1] > y0) & (points[:, 1] < y1)
+    points = points[keep]
+    return rr.Points3D(points, colors=_height_colors(points[:, 2]), radii=cube / 2)
 
 
 def _convert_navigation_costmap(grid: Any) -> Any:
@@ -136,6 +151,7 @@ def _tars_rerun_blueprint(
     eye: tuple[float, float, float],
     target: tuple[float, float, float] | None = None,
     camera_share: float = 1.0,
+    scan_trail_s: float | None = None,
 ) -> Any:
     """target None: the eye follows TARS from `eye` (relative); else a fixed world eye."""
     import rerun as rr
@@ -156,6 +172,18 @@ def _tars_rerun_blueprint(
                     eye_up=[0.0, 0.0, 1.0],
                     tracking_entity=None if target else "world/robot_body",
                 ),
+                # keep the last scan_trail_s of live scans on screen
+                overrides={
+                    "world/registered_lidar": rrb.VisibleTimeRanges(
+                        rrb.VisibleTimeRange(
+                            "log_time",
+                            start=rrb.TimeRangeBoundary.cursor_relative(seconds=-scan_trail_s),
+                            end=rrb.TimeRangeBoundary.cursor_relative(),
+                        )
+                    )
+                }
+                if scan_trail_s
+                else None,
             ),
             column_shares=[camera_share, 2],
         ),
@@ -181,6 +209,10 @@ def _tars_rerun_config(
     }
     if map_xy_box is not None:  # the viewer frames everything: hide what reaches beyond it
         overrides |= {
+            # the live scan, in world coordinates and cut to the same box
+            "world/registered_lidar": partial(
+                _convert_live_scan, xy_box=map_xy_box, cube=map_cube or 0.05
+            ),
             "world/lidar": None,
             "world/global_costmap": None,
             "world/navigation_costmap": None,
@@ -191,6 +223,7 @@ def _tars_rerun_config(
         "visual_override": overrides,
         "max_hz": {
             "world/global_map": 0,
+            "world/registered_lidar": 0,
             "world/global_costmap": 0,
             "world/color_image": 0,
             "world/lidar": 2,
@@ -205,6 +238,7 @@ def _tars_sim(
     spawn: tuple[float, float, float],
     rerun_config: dict[str, Any],
     carve_columns: bool = True,
+    map_every: int = 5,
 ) -> Any:
     """TARS + TF-registered lidar map + rerun. Teleop (rerun viewer WASD -> tele_cmd_vel)
     and navigation (nav_cmd_vel) both go through MovementManager, which owns cmd_vel and
@@ -216,7 +250,8 @@ def _tars_sim(
         LidarRegistration.blueprint(),
         # carving clears each scanned (x, y) column before inserting: it removes things that
         # moved, but keeps only the latest scan's slice of anything tall
-        VoxelGridMapper.blueprint(emit_every=5, carve_columns=carve_columns).remappings(
+        # emits the global map every `map_every` scans (lidar runs at 10 Hz)
+        VoxelGridMapper.blueprint(emit_every=map_every, carve_columns=carve_columns).remappings(
             [(VoxelGridMapper, "lidar", "registered_lidar")]
         ),
         MovementManager.blueprint(),
@@ -264,7 +299,9 @@ tars_sim_nav = _tars_nav(tars_sim).global_config(n_workers=8)
 _moon_yaw = math.atan2(moon.ROUTE[1][1] - moon.ROUTE[0][1], moon.ROUTE[1][0] - moon.ROUTE[0][0])
 # The map shown in rerun is cut to the landing site around the route, so the viewer frames
 # it closely. Nothing moves on the moon, so the map keeps every scan (no column carving).
-_moon_rerun = partial(_tars_rerun_blueprint, (-4.0, -1.5, 4.5), (9.0, 0.5, -0.8), 0.5)
+_moon_rerun = partial(
+    _tars_rerun_blueprint, (-4.0, -1.5, 4.5), (9.0, 0.5, -0.8), 0.5, scan_trail_s=3.0
+)
 tars_sim_moon = _tars_nav(
     _tars_sim(
         "moon",
