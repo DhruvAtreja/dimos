@@ -20,8 +20,8 @@ part of the gripper overlaps anything else. At the open pose a contact patch may
 come near the object but not press into it: the fingers would have to push the
 object aside to get there. It can also be asked to hold enough of the object
 between the contact patches, or the fingers would close on nothing, and to slide
-each grasp along its approach to the depth that passes and holds the most of the
-object (``GripperContactModel.fit_depth``).
+each grasp that fails along its approach to the nearest depth that passes
+(``GripperContactModel.fit_depth``).
 """
 
 from __future__ import annotations

@@ -140,9 +140,10 @@ def drop_touching(
         planning_group: Group whose tool tip the grasps pose.
         min_gap_points: Fewest object points (one per 5 mm cube) the gap
             between the finger pads must hold; 0 skips this.
-        depth_search: How far (metres) each grasp may slide along its approach,
-            each way, to the depth that passes and holds the most of the object;
-            kept grasps come back at that depth. 0 checks each grasp where it is.
+        depth_search: How far (metres) a grasp that fails where it is may slide
+            along its approach, each way, to the nearest depth that passes. Moved
+            grasps come back at that depth, and only when no grasp passes where
+            its source put it. 0 checks each grasp where it is.
         depth_step: Spacing (metres) of the depths tried.
         floor: Height (metres) of the table's top; a grasp with any gripper
             part below it is dropped. None skips this.
@@ -194,15 +195,22 @@ def drop_touching(
     facts["while_closing"] = sum(verdict.while_closing for verdict in verdicts)
     if depth_enough > 0:
         facts["unchecked"] = sum(UNCHECKED in verdict.touches for verdict in verdicts)
+    # Moved grasps are a fallback: when any grasp passes where its source put
+    # it, only those are kept.
+    unmoved = any(verdict.clear and verdict.depth_shift == 0.0 for verdict in verdicts)
+    keep = [verdict.clear and (verdict.depth_shift == 0.0 or not unmoved) for verdict in verdicts]
     if depth_search > 0.0:
-        facts["moved"] = sum(verdict.clear and verdict.depth_shift != 0.0 for verdict in verdicts)
+        facts["moved"] = sum(
+            kept and verdict.depth_shift != 0.0
+            for kept, verdict in zip(keep, verdicts, strict=True)
+        )
     facts["seconds"] = round(time.monotonic() - started, 3)
     provided_count = 0 if proposals.provided is None else len(proposals.provided.candidates)
     return (
         replace(
             proposals,
-            provided=_kept(proposals.provided, verdicts[:provided_count]),
-            heuristic=_kept(proposals.heuristic, verdicts[provided_count:]),
+            provided=_kept(proposals.provided, verdicts[:provided_count], keep[:provided_count]),
+            heuristic=_kept(proposals.heuristic, verdicts[provided_count:], keep[provided_count:]),
         ),
         facts,
     )
@@ -303,16 +311,18 @@ def add_facts(total: dict[str, Any], more: dict[str, Any]) -> None:
 
 
 def _kept(
-    array: GraspCandidateArray | None, verdicts: Sequence[GraspContact]
+    array: GraspCandidateArray | None,
+    verdicts: Sequence[GraspContact],
+    keep: Sequence[bool],
 ) -> GraspCandidateArray | None:
-    """The candidates of an array whose verdict is clear, in order, each moved
-    along its approach by the verdict's ``depth_shift``."""
+    """The candidates of an array marked ``keep``, in order, each moved along its
+    approach by its verdict's ``depth_shift``."""
     if array is None:
         return None
     kept = [
-        _shifted(c, verdict.depth_shift)
-        for c, verdict in zip(array.candidates, verdicts, strict=True)
-        if verdict.clear
+        _shifted(candidate, verdict.depth_shift)
+        for candidate, verdict, chosen in zip(array.candidates, verdicts, keep, strict=True)
+        if chosen
     ]
     return GraspCandidateArray(array.header, kept)
 

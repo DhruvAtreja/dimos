@@ -183,6 +183,27 @@ def test_drop_touching_moves_kept_grasps_to_the_depth_the_search_found() -> None
     assert facts["moved"] == 1
 
 
+def test_drop_touching_uses_moved_grasps_only_when_none_pass_where_they_are() -> None:
+    down = GraspCandidate(Pose(Vector3(0.1, 0.2, 0.1), Quaternion(1.0, 0.0, 0.0, 0.0)), 0.9)
+    proposals = GraspProposals(
+        "graspgenx", ["graspgenx"], GraspCandidateArray(Header(1.0, "world"), [down, down]), None
+    )
+    manipulation = MagicMock()
+
+    def kept_scores(verdicts: list[GraspContact]) -> list[float]:
+        manipulation.check_grasp_contacts.return_value = verdicts
+        kept, _ = drop_touching(
+            manipulation, proposals, _cloud(), {}, 0.005, 0.003, "arm", 10, 0.05
+        )
+        assert kept.provided is not None
+        return [round(c.pose.position.z, 3) for c in kept.provided.candidates]
+
+    # One passes where it is: the moved one is dropped.
+    assert kept_scores([GraspContact(depth_shift=-0.01), GraspContact()]) == [0.1]
+    # None passes where it is: the moved one is used, 1 cm higher.
+    assert kept_scores([GraspContact(depth_shift=-0.01), GraspContact(("table",))]) == [0.11]
+
+
 def test_drop_touching_keeps_everything_without_a_gripper_spec() -> None:
     proposals = GraspProposals("graspgenx", ["graspgenx"], _array(0.9), None)
     manipulation = MagicMock()

@@ -148,10 +148,11 @@ class PickAndPlaceModuleConfig(ModuleConfig):
     # gap the finger pads close across.
     grasp_require_object_in_gap: bool = True
     grasp_min_gap_points: int = Field(default=10, gt=0)
-    # With the contact check, slide each grasp up to this far (metres) along its
-    # approach, either way, and keep it at the depth where the gripper's
-    # modelled close passes and holds the most of the target between the finger
-    # pads. 0 checks each grasp only where it is.
+    # With the contact check, a grasp that fails where its source put it may
+    # slide up to this far (metres) along its approach, either way, to the
+    # nearest depth where the gripper's modelled close passes and the finger
+    # pads hold the target. Moved grasps are tried only when no grasp passes
+    # unmoved. 0 checks each grasp only where it is.
     grasp_depth_search: float = Field(default=0.0, ge=0.0)
     # Spacing (metres) of the depths tried.
     grasp_depth_step: float = Field(default=0.005, gt=0.0)

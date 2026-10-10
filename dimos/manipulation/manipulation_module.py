@@ -571,11 +571,11 @@ class ManipulationModule(Module):
             min_gap_points: Fewest target points (one per 5 mm cube) the gap
                 between the finger pads must hold; fewer marks the grasp
                 ``empty_gap``. 0 skips this.
-            depth_search: How far (metres) to try sliding each candidate along
-                its approach, each way, for the depth that passes and holds the
-                most of the target (see ``GripperContactModel.fit_depth``); the
-                verdict's ``depth_shift`` says how far it moved. 0 checks each
-                candidate where it is.
+            depth_search: How far (metres) a candidate that fails where it is
+                may slide along its approach, each way, to the nearest depth that
+                passes (see ``GripperContactModel.fit_depth``); the verdict's
+                ``depth_shift`` says how far it moved. 0 checks each candidate
+                where it is.
             depth_step: Spacing (metres) of the depths tried.
             floor: Height (metres) of the table's top; a candidate with any
                 gripper part below it touches "floor". None skips this.
