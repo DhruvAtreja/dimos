@@ -240,6 +240,8 @@ class GripperControlTaskParams(BaseConfig):
     """Task-specific gripper parameters."""
 
     hold_duration: float = 0.0
+    # Stream connections have no in-process hardware adapter to query.
+    position_limits: dict[str, tuple[float, float]] | None = None
 
 
 def _resolve_limits(cfg: Any, hardware: Any) -> list[tuple[float, float]]:
@@ -287,6 +289,12 @@ def _resolve_limits(cfg: Any, hardware: Any) -> list[tuple[float, float]]:
 
 def create_task(cfg: Any, hardware: Any) -> GripperControlTask:
     params = GripperControlTaskParams.model_validate(cfg.params)
+    if params.position_limits is not None:
+        if set(params.position_limits) != set(cfg.joint_names):
+            raise ValueError("gripper position_limits must name exactly the task's joints")
+        limits = [params.position_limits[name] for name in cfg.joint_names]
+    else:
+        limits = _resolve_limits(cfg, hardware)
     return GripperControlTask(
         cfg.name,
         GripperControlTaskConfig(
@@ -294,5 +302,5 @@ def create_task(cfg: Any, hardware: Any) -> GripperControlTask:
             priority=cfg.priority,
             hold_duration=params.hold_duration,
         ),
-        limits=_resolve_limits(cfg, hardware),
+        limits=limits,
     )

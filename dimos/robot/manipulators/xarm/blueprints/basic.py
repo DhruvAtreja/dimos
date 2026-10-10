@@ -17,11 +17,14 @@
 from __future__ import annotations
 
 from dimos.control.coordinator import ControlCoordinator, TaskConfig
+from dimos.control.tasks.trajectory_task.trajectory_task import joint_trajectory_task
 from dimos.core.coordination.blueprints import autoconnect
 from dimos.core.global_config import global_config
+from dimos.core.stream import In, Out
 from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
 from dimos.msgs.geometry_msgs.Quaternion import Quaternion
 from dimos.msgs.geometry_msgs.Vector3 import Vector3
+from dimos.msgs.sensor_msgs.JointState import JointState
 from dimos.robot.manipulators.common.blueprints import coordinator, planner, trajectory_task
 from dimos.robot.manipulators.common.sim import mujoco_if_sim
 from dimos.robot.manipulators.xarm.config import (
@@ -55,6 +58,13 @@ dual_xarm6_planner_coordinator = autoconnect(
 )
 
 _xarm7_devices = []
+
+
+class _XArm7Coordinator(ControlCoordinator):
+    arm_position_command: Out[JointState]
+    arm_joint_state: In[JointState]
+
+
 if global_config.simulation:
     from dimos.robot.manipulators.xarm.config import make_xarm7_sim_robot_config
     from dimos.robot.manipulators.xarm.sim2 import XARM7
@@ -65,7 +75,7 @@ if global_config.simulation:
         raise ValueError("xarm7-planner-coordinator supports --simulation mujoco")
     _scene = scene_path(global_config.scene_package, "workbench.xml")
     _arm = scene_robot(_scene, XARM7, "workbench", default=(0.0, 0.0, 0.12))
-    _xarm7_model = make_xarm7_sim_robot_config().model_copy(
+    _xarm7_model = make_xarm7_sim_robot_config(prefix="arm/").model_copy(
         update={
             "base_pose": PoseStamped(
                 position=Vector3(*_arm.xyz),
@@ -75,19 +85,25 @@ if global_config.simulation:
         }
     )
     _simulation = simulation(scene=_scene, robots={"arm": _arm}, sim_id="xarm7")
-    _xarm7_hw = _simulation.hardware["arm"]
-    _xarm7_devices = [_simulation.blueprint]
+    _xarm7_devices = [_simulation]
+    _xarm7_hardware = []
+    _xarm7_trajectory = joint_trajectory_task([*_xarm7_model.joint_names, "arm/gripper"])
+    _xarm7_coordinator_cls: type[ControlCoordinator] = _XArm7Coordinator
 else:
     _xarm7_hw = xarm7_hardware("arm", gripper=True, mock_without_address=True)
+    _xarm7_hardware = [_xarm7_hw]
+    _xarm7_trajectory = trajectory_task(_xarm7_hw)
+    _xarm7_coordinator_cls = ControlCoordinator
     _xarm7_model = make_xarm7_model_config(add_gripper=True, gripper_hardware_id="arm")
 
 
-def _gripper_task() -> TaskConfig:
+def _gripper_task(position_limits: dict[str, tuple[float, float]] | None = None) -> TaskConfig:
     return TaskConfig(
         name="arm_gripper",
         type="gripper",
         joint_names=["arm/gripper"],
         priority=20,
+        params={"position_limits": position_limits},
     )
 
 
@@ -95,17 +111,32 @@ xarm7_planner_coordinator = autoconnect(
     *_xarm7_devices,
     planner(model=_xarm7_model),
     coordinator(
-        hardware=[_xarm7_hw],
-        tasks=[trajectory_task(_xarm7_hw), _gripper_task()],
+        cls=_xarm7_coordinator_cls,
+        instance_name="ControlCoordinator",
+        hardware=_xarm7_hardware,
+        tasks=[
+            _xarm7_trajectory,
+            _gripper_task(
+                {j.name: (j.lower, j.upper) for j in XARM7.joints if j.name == "arm/gripper"}
+                if global_config.simulation
+                else None
+            ),
+        ],
     ),
 )
 
-_coordinator_xarm7_hw = _xarm7_hw if global_config.simulation else xarm7_hardware("arm")
+_coordinator_xarm7_hardware = [] if global_config.simulation else [xarm7_hardware("arm")]
 
 coordinator_xarm7 = autoconnect(
     coordinator(
-        hardware=[_coordinator_xarm7_hw],
-        tasks=[trajectory_task(_coordinator_xarm7_hw)],
+        cls=_xarm7_coordinator_cls,
+        instance_name="ControlCoordinator",
+        hardware=_coordinator_xarm7_hardware,
+        tasks=[
+            _xarm7_trajectory
+            if global_config.simulation
+            else trajectory_task(_coordinator_xarm7_hardware[0])
+        ],
     ),
     *_xarm7_devices,
 )

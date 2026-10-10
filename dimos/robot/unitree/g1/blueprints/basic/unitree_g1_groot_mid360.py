@@ -22,6 +22,7 @@ from dimos.hardware.sensors.lidar.pointlio.module import PointLioRust
 from dimos.mapping.ray_tracing.module import RayTracingVoxelMap
 from dimos.mapping.voxels.module import VoxelGridMapper
 from dimos.robot.unitree.g1.blueprints.basic.unitree_g1_groot_wbc import (
+    _G1_JOINTS_ENTITY,
     _g1_real_costmap,
     _g1_real_odometry_root,
     _rerun_config,
@@ -43,7 +44,7 @@ _devices = simulation(
     robots={"g1": scene_robot(_scene, G1_GROOT_MID360, default=(0, 0, 0))},
     sim_id="g1-groot",
 )
-unitree_g1_groot_mid360 = autoconnect(unitree_g1_groot_wbc, _devices.blueprint)
+unitree_g1_groot_mid360 = autoconnect(unitree_g1_groot_wbc, _devices)
 
 # Same device and policy, with the actual estimator instead of truth localization.
 _raw_robot = G1_GROOT_MID360.with_sensor(
@@ -57,7 +58,7 @@ _raw_devices = simulation(
 unitree_g1_groot_mid360_pointlio = (
     autoconnect(
         unitree_g1_groot_wbc,
-        _raw_devices.blueprint,
+        _raw_devices,
         vis_module(
             global_config.viewer,
             rerun_config={
@@ -67,7 +68,7 @@ unitree_g1_groot_mid360_pointlio = (
                 },
                 "visual_override": {
                     **_rerun_config["visual_override"],
-                    "world/g1/joints": g1_urdf_joint_state(root_path="world/odometry/g1"),
+                    _G1_JOINTS_ENTITY: g1_urdf_joint_state(root_path="world/odometry/g1"),
                     "world/odometry": _g1_real_odometry_root,
                     "world/global_costmap": _g1_real_costmap,
                     "world/navigation_costmap": _g1_real_costmap,
@@ -95,7 +96,7 @@ unitree_g1_groot_mid360_pointlio = (
         [
             ("g1_lidar", "raw_pointcloud", "lidar_raw"),
             (PointLioRust, "imu", "imu_raw"),
-            ("g1_connection", "odom", "ground_truth_odom"),
+            ("g1_connection", "root_pose", "ground_truth_odom"),
             ("g1_connection", "tf", "ground_truth_tf"),
         ]
     )

@@ -95,16 +95,15 @@ def patched_ort(monkeypatch: pytest.MonkeyPatch) -> list[str]:
     return call_log
 
 
-@pytest.fixture
-def stub_adapter() -> MagicMock:
-    adapter = MagicMock()
-    adapter.read_imu.return_value = IMUState(
-        quaternion=(1.0, 0.0, 0.0, 0.0),
-        gyroscope=(0.0, 0.0, 0.0),
-        accelerometer=(0.0, 0.0, -9.81),
-        rpy=(0.0, 0.0, 0.0),
-    )
-    return adapter
+def imu_state() -> dict[str, IMUState]:
+    return {
+        "g1": IMUState(
+            quaternion=(1.0, 0.0, 0.0, 0.0),
+            gyroscope=(0.0, 0.0, 0.0),
+            accelerometer=(0.0, 0.0, -9.81),
+            rpy=(0.0, 0.0, 0.0),
+        )
+    }
 
 
 @pytest.fixture
@@ -113,9 +112,7 @@ def joints_29() -> list[str]:
 
 
 @pytest.fixture
-def task(
-    patched_ort: list[str], stub_adapter: MagicMock, joints_29: list[str]
-) -> Iterator[G1GrootWBCTask]:
+def task(patched_ort: list[str], joints_29: list[str]) -> Iterator[G1GrootWBCTask]:
     task = G1GrootWBCTask(
         name="groot_wbc",
         config=G1GrootWBCTaskConfig(
@@ -127,7 +124,6 @@ def task(
             auto_arm=True,
             default_ramp_seconds=0.0,
         ),
-        adapter=stub_adapter,
     )
     try:
         yield task
@@ -136,9 +132,7 @@ def task(
 
 
 @pytest.fixture
-def unarmed_task(
-    patched_ort: list[str], stub_adapter: MagicMock, joints_29: list[str]
-) -> Iterator[G1GrootWBCTask]:
+def unarmed_task(patched_ort: list[str], joints_29: list[str]) -> Iterator[G1GrootWBCTask]:
     task = G1GrootWBCTask(
         name="groot_wbc",
         config=G1GrootWBCTaskConfig(
@@ -150,7 +144,6 @@ def unarmed_task(
             auto_arm=False,
             default_ramp_seconds=0.0,
         ),
-        adapter=stub_adapter,
     )
     try:
         yield task
@@ -160,6 +153,7 @@ def unarmed_task(
 
 def _state_at(t_now: float, joint_names: list[str]) -> CoordinatorState:
     return CoordinatorState(
+        imu=imu_state(),
         joints=JointStateSnapshot(
             joint_positions={n: 0.0 for n in joint_names},
             joint_velocities={n: 0.0 for n in joint_names},
@@ -190,6 +184,15 @@ def test_on_twist_command_sets_velocity_command(task: G1GrootWBCTask) -> None:
 
     assert list(task._cmd) == pytest.approx([0.5, 0.25, 0.3])
     assert task._last_cmd_time == 100.0
+
+
+def test_policy_waits_for_its_own_imu(task, joints_29, patched_ort):
+    task.start()
+    state = _state_at(100, joints_29)
+    state.imu["other"] = state.imu.pop("g1")
+    for _ in range(10):
+        assert task.compute(state) is None
+    assert patched_ort == []
 
 
 def test_observation_layout_matches_policy_contract(task: G1GrootWBCTask) -> None:
@@ -224,6 +227,7 @@ def test_partial_state_keeps_claimed_cache_consistent_with_full_cache(
     velocities = {n: 0.0 for n in joints_29[1:]}
     positions[joints_29[0]] = 0.42
     partial = CoordinatorState(
+        imu=imu_state(),
         joints=JointStateSnapshot(
             joint_positions=positions,
             joint_velocities=velocities,
@@ -255,7 +259,9 @@ def test_unarmed_task_holds_current_pose_without_running_policy(
 
     out = None
     for _ in range(30):
-        out = unarmed_task.compute(CoordinatorState(joints=snap, t_now=100.0, dt=0.002))
+        out = unarmed_task.compute(
+            CoordinatorState(joints=snap, imu=imu_state(), t_now=100.0, dt=0.002)
+        )
 
     assert out is not None
     np.testing.assert_allclose(out.positions, [0.1 * (i + 1) for i in range(15)], atol=1e-6)

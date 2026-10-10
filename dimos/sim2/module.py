@@ -29,6 +29,7 @@ import mujoco
 
 from dimos.core.core import rpc
 from dimos.core.module import Module, ModuleConfig
+from dimos.core.rpc_client import RPCClient
 from dimos.core.stream import Out
 from dimos.sim2.runtime import SimulationRuntime
 from dimos.sim2.scene_types import SceneDescription, SceneState, SceneUpdate
@@ -100,8 +101,6 @@ class SimulationModule(Module):
         super().start()
         self.build()
         self._stop.clear()
-        self._thread = threading.Thread(target=self._run, name="sim2-physics", daemon=True)
-        self._thread.start()
         if self.config.viewer:
             description = self.describe()
             executable = Path(sys.executable)
@@ -115,6 +114,16 @@ class SimulationModule(Module):
                     str(Path(description["model"]).with_suffix(".json")),
                 ]
             )
+
+    @rpc
+    def on_system_modules(self, modules: list[RPCClient]) -> None:
+        """Start time only after devices are connected and sensor initialization is complete."""
+        for module in modules:
+            module.stop_rpc_client()
+        with self._lifecycle_lock:
+            if self._thread is None and not self._stop.is_set():
+                self._thread = threading.Thread(target=self._run, name="sim2-physics", daemon=True)
+                self._thread.start()
 
     def _run(self) -> None:
         runtime = self._runtime

@@ -16,6 +16,7 @@
 
 import math
 
+from dimos.control.contract.keys import Unit
 from dimos.robot.manipulators.xarm.config import XARM7_SIM_HOME
 from dimos.sim2.sensors.spec import Camera
 from dimos.sim2.spec import ControlInterface, Joint, RobotConfig
@@ -65,6 +66,7 @@ XARM7 = RobotConfig(
             lower=0.0,
             upper=850.0,
             max_velocity=0.0,
+            unit=Unit.UNITLESS,
         ),
     ),
     sensors=(Camera("wrist_camera", camera="wrist_camera"),),

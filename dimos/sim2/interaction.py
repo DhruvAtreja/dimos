@@ -48,6 +48,8 @@ def reset_scene(
         time.sleep(0.05)
     sim.set_paused(True)
     for controller in controllers:
+        if not controller.set_estop(True):
+            raise RuntimeError("connection halt failed; world remains paused")
         controller.cancel_trajectory()
         controller.set_activated(False)
     for hook in before_reset:
@@ -61,5 +63,7 @@ def reset_scene(
         hook(app)
     for controller in controllers:
         controller.set_activated(True)
+        if not controller.set_estop(False):
+            raise RuntimeError("connection resume failed; world remains paused")
     sim.set_paused(False)
     return state

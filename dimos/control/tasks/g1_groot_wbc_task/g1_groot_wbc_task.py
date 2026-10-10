@@ -35,7 +35,6 @@ import numpy as np
 from numpy.typing import NDArray
 import onnxruntime as ort  # type: ignore[import-untyped]
 
-from dimos.control.hardware_interface import ConnectedWholeBody
 from dimos.control.task import (
     BaseControlTask,
     ControlMode,
@@ -48,7 +47,6 @@ from dimos.robot.unitree.g1.control_config import G1_GROOT_HOME
 from dimos.utils.logging_config import setup_logger
 
 if TYPE_CHECKING:
-    from dimos.hardware.whole_body.spec import WholeBodyAdapter
     from dimos.msgs.geometry_msgs.Twist import Twist
 
 logger = setup_logger()
@@ -125,6 +123,7 @@ class G1GrootWBCTaskConfig:
     walk_onnx: str | Path
     joint_names: list[str]
     all_joint_names: list[str]
+    hardware_id: str = "g1"
     default_positions_29: list[float] = field(default_factory=lambda: list(G1_GROOT_HOME))
     priority: int = 50
     decimation: int = 10
@@ -171,7 +170,6 @@ class G1GrootWBCTask(BaseControlTask):
         self,
         name: str,
         config: G1GrootWBCTaskConfig,
-        adapter: WholeBodyAdapter,
     ) -> None:
         if len(config.joint_names) != _NUM_ACTIONS:
             raise ValueError(
@@ -193,7 +191,6 @@ class G1GrootWBCTask(BaseControlTask):
 
         self._name = name
         self._config = config
-        self._adapter = adapter
         self._joint_names_list = list(config.joint_names)
         self._joint_names_set = frozenset(config.joint_names)
         self._all_joint_names = list(config.all_joint_names)
@@ -295,6 +292,9 @@ class G1GrootWBCTask(BaseControlTask):
     def compute(self, state: CoordinatorState) -> JointCommandOutput | None:
         if not self._active:
             return None
+        imu = state.imu.get(self._config.hardware_id)
+        if imu is None:
+            return None
 
         # Refresh the last-known-good state caches. If we've never seen
         # a fully-populated state and this tick is also incomplete, hold
@@ -385,16 +385,6 @@ class G1GrootWBCTask(BaseControlTask):
         q_29 = self._cached_q_29.copy()
         dq_29 = self._cached_dq_29.copy()
 
-        # Prefer IMU from CoordinatorState (populated by the coordinator
-        # each tick from every whole-body adapter); fall back to the
-        # adapter-direct read if state.imu is empty (e.g. unit tests
-        # that build a bare CoordinatorState). The state path is what
-        # decouples this task from the WholeBodyAdapter Protocol.
-        if state.imu:
-            # Single whole-body adapter is the common case - take any.
-            imu = next(iter(state.imu.values()))
-        else:
-            imu = self._adapter.read_imu()
         gyro = np.asarray(imu.gyroscope, dtype=np.float32)
         gravity = self._projected_gravity(imu.quaternion)
 
@@ -679,6 +669,7 @@ class G1GrootWBCTask(BaseControlTask):
 class G1GrootWBCTaskParams(BaseConfig):
     model_path: str | Path
     hardware_id: str
+    all_joint_names: list[str]
     auto_arm: bool = False
     auto_dry_run: bool = False
     default_ramp_seconds: float = 10.0
@@ -687,26 +678,14 @@ class G1GrootWBCTaskParams(BaseConfig):
 
 def create_task(cfg: Any, hardware: Any) -> G1GrootWBCTask:
     params = G1GrootWBCTaskParams.model_validate(cfg.params)
-    hw = hardware.get(params.hardware_id) if hardware else None
-    if hw is None:
-        raise ValueError(
-            f"G1GrootWBCTask {cfg.name!r} references unknown hardware "
-            f"{params.hardware_id!r}. Declare the hardware before the task "
-            f"in the blueprint config."
-        )
-    if not isinstance(hw, ConnectedWholeBody):
-        raise TypeError(
-            f"G1GrootWBCTask {cfg.name!r} requires a WHOLE_BODY hardware "
-            f"component for {params.hardware_id!r}, got {type(hw).__name__}. "
-            f"Set hardware_type=HardwareType.WHOLE_BODY."
-        )
 
     model_dir = Path(params.model_path)
     kwargs: dict[str, Any] = dict(
         balance_onnx=model_dir / "balance.onnx",
         walk_onnx=model_dir / "walk.onnx",
         joint_names=cfg.joint_names,
-        all_joint_names=hw.joint_names,
+        all_joint_names=params.all_joint_names,
+        hardware_id=params.hardware_id,
         priority=cfg.priority,
         auto_arm=params.auto_arm,
         auto_dry_run=params.auto_dry_run,
@@ -717,5 +696,4 @@ def create_task(cfg: Any, hardware: Any) -> G1GrootWBCTask:
     return G1GrootWBCTask(
         cfg.name,
         G1GrootWBCTaskConfig(**kwargs),
-        adapter=hw.adapter,
     )

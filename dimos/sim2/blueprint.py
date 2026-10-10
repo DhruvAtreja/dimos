@@ -16,12 +16,9 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass
 from pathlib import Path
 
-from dimos.control.components import HardwareComponent, HardwareType
 from dimos.core.coordination.blueprints import Blueprint, autoconnect
-from dimos.hardware.whole_body.spec import WholeBodyConfig
 from dimos.sim2.connections.manipulator import ManipulatorConnection
 from dimos.sim2.connections.whole_body import WholeBodyConnection
 from dimos.sim2.module import SimulationModule
@@ -31,14 +28,6 @@ from dimos.sim2.sensors.spec import Camera, Imu, Lidar
 from dimos.sim2.spec import ControlInterface, RobotInstance, WorldConfig
 
 
-@dataclass(frozen=True)
-class Simulation:
-    """Two outputs of one composition, not another running service."""
-
-    blueprint: Blueprint
-    hardware: dict[str, HardwareComponent]
-
-
 def simulation(
     *,
     scene: Path,
@@ -46,7 +35,8 @@ def simulation(
     sim_id: str = "sim",
     viewer: bool = True,
     timestep: float = 0.005,
-) -> Simulation:
+) -> Blueprint:
+    """Build the world and devices. Controllers discover their connection contracts."""
     modules = [
         SimulationModule.blueprint(
             world=WorldConfig(scene=scene, robots=robots, timestep=timestep),
@@ -55,25 +45,9 @@ def simulation(
         )
     ]
     multiple = len(robots) > 1
-    hardware = {}
     ports: tuple[str, ...]
     for robot_id, instance in robots.items():
         config = instance.config
-        hardware[robot_id] = HardwareComponent(
-            hardware_id=robot_id,
-            hardware_type=HardwareType(config.control.value),
-            joints=[j.name for j in config.joints],
-            adapter_type="sim2",
-            address=f"{sim_id}/{robot_id}",
-            adapter_kwargs={"definition": config},
-            wb_config=(
-                WholeBodyConfig(
-                    kp=tuple(j.kp for j in config.joints), kd=tuple(j.kd for j in config.joints)
-                )
-                if config.control == ControlInterface.WHOLE_BODY
-                else None
-            ),
-        )
         if config.control == ControlInterface.WHOLE_BODY:
             imu = next(s for s in config.sensors if isinstance(s, Imu))
             connection = WholeBodyConnection.blueprint(
@@ -83,18 +57,27 @@ def simulation(
                 robot_id=robot_id,
                 rate_hz=imu.rate_hz,
             )
-            ports = ("motor_command", "motor_states", "imu", "odom")
+            ports = ("motor_command", "joint_state", "imu")
+            connection = connection.remappings(
+                [
+                    (
+                        f"{robot_id}_connection",
+                        "root_pose",
+                        f"{robot_id}/odom" if multiple else "odom",
+                    )
+                ]
+            )
         else:
             connection = ManipulatorConnection.blueprint(
                 instance_name=f"{robot_id}_connection",
                 definition=config,
                 address=f"{sim_id}/{robot_id}",
+                robot_id=robot_id,
             )
-            ports = ("joint_command", "joint_states")
-        if multiple:
-            connection = connection.remappings(
-                [(f"{robot_id}_connection", port, f"{robot_id}/{port}") for port in ports]
-            )
+            ports = ("position_command", "joint_state")
+        connection = connection.remappings(
+            [(f"{robot_id}_connection", port, f"{robot_id}_{port}") for port in ports]
+        )
         modules.append(connection)
         for sensor in config.sensors:
             kwargs = dict(
@@ -127,4 +110,4 @@ def simulation(
                     ]
                 )
             modules.append(blueprint)
-    return Simulation(blueprint=autoconnect(*modules), hardware=hardware)
+    return autoconnect(*modules)

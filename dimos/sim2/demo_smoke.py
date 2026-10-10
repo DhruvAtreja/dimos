@@ -26,10 +26,13 @@ from dimos.core.coordination.module_coordinator import ModuleCoordinator
 from dimos.core.global_config import global_config
 from dimos.core.transport_factory import make_transport
 from dimos.msgs.geometry_msgs.Twist import Twist
+from dimos.msgs.sensor_msgs.Image import Image
 from dimos.msgs.sensor_msgs.JointState import JointState
 from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
+from dimos.porcelain.dimos import Dimos
 from dimos.protocol.service.zenohservice import ZenohService
 from dimos.robot.get_all_blueprints import get_blueprint_by_name
+from dimos.sim2.interaction import reset_scene
 from dimos.sim2.module import SimulationModule
 
 
@@ -42,6 +45,7 @@ def main() -> None:
     parser.add_argument("--rerun", action="store_true", help="Include the Rerun bridge and viewer")
     parser.add_argument("--transport", choices=["lcm", "zenoh"], default="zenoh")
     parser.add_argument("--local-router", action="store_true")
+    parser.add_argument("--reset", action="store_true", help="Check application reset after motion")
     parser.add_argument(
         "--move", action="store_true", help="Check motion through ordinary command streams"
     )
@@ -88,12 +92,14 @@ def main() -> None:
         camera = coordinator.get_instance(camera_name)
         rgb = camera.peek_stream("color_image", 5.0)
         depth = camera.peek_stream("depth_image", 5.0)
-        assert rgb is not None, "no RGB published"
-        assert depth is not None, "no depth published"
+        assert isinstance(rgb, Image), "no RGB published"
+        assert isinstance(depth, Image), "no depth published"
         assert camera.sensor_status()["error"] is None
         if args.robot == "g1":
             lidar = coordinator.get_instance("g1_lidar")
-            assert lidar.peek_stream("pointcloud", 5.0) is not None, "no lidar published"
+            assert isinstance(lidar.peek_stream("pointcloud", 5.0), PointCloud2), (
+                "no lidar published"
+            )
             assert lidar.sensor_status()["error"] is None
             lidar_initial = lidar.sensor_status()
             if args.mid360:
@@ -119,11 +125,13 @@ def main() -> None:
             command.start()
         arm_target = None
         if args.move and args.robot == "xarm":
-            connection = coordinator.get_instance("arm_connection")
-            joints = connection.peek_stream("joint_states", 5.0)
-            assert joints is not None, "no arm joint feedback"
+            connection = coordinator.get_instance("ControlCoordinator")
+            joints = connection.peek_stream("coordinator_joint_state", 5.0)
+            assert isinstance(joints, JointState) and "arm/joint1" in joints.name, (
+                "no arm joint feedback"
+            )
             target = list(joints.position)
-            target[0] += 0.25
+            target[list(joints.name).index("arm/joint1")] += 0.25
             arm_target = JointState(name=list(joints.name), position=target)
         deadline = started + args.seconds + 5
         while time.monotonic() < deadline:
@@ -150,11 +158,41 @@ def main() -> None:
                     "G1 did not walk forward"
                 )
         elif args.move:
-            joints = connection.peek_stream("joint_states", 5.0)
-            assert joints is not None and arm_target is not None
-            assert abs(joints.position[0] - arm_target.position[0]) < 0.03, (
-                "arm did not reach commanded joint angle"
-            )
+            joints = connection.peek_stream("coordinator_joint_state", 5.0)
+            assert isinstance(joints, JointState) and arm_target is not None
+            target_index = list(arm_target.name).index("arm/joint1")
+            measured_index = list(joints.name).index("arm/joint1")
+            assert (
+                abs(joints.position[measured_index] - arm_target.position[target_index]) < 0.03
+            ), "arm did not reach commanded joint angle"
+        reset_evidence = None
+        if args.reset:
+            coordinator.start_rpc_service()
+            app = Dimos.connect()
+            try:
+                resetting = time.monotonic()
+                reset_scene(app)
+                reset_seconds = time.monotonic() - resetting
+                deadline = time.monotonic() + 5
+                while time.monotonic() < deadline:
+                    after_reset = sim.status()
+                    assert after_reset["error"] is None, after_reset
+                    if after_reset["sim_time"] >= 2:
+                        break
+                    time.sleep(0.05)
+                else:
+                    raise RuntimeError("physics did not resume after reset")
+                assert after_reset["episode"] == state["episode"] + 1
+                if args.robot == "g1":
+                    assert after_reset["robots"]["g1"][2] > 0.5, after_reset
+                    assert abs(after_reset["robots"]["g1"][0]) < 0.2, after_reset
+                else:
+                    joints = connection.peek_stream("coordinator_joint_state", 5.0)
+                    assert isinstance(joints, JointState)
+                    assert abs(joints.position[list(joints.name).index("arm/joint1")]) < 0.03
+                reset_evidence = {"seconds": reset_seconds, "status": after_reset}
+            finally:
+                app.stop()
         print(
             json.dumps(
                 {
@@ -163,6 +201,7 @@ def main() -> None:
                     "rgb": rgb.data.shape,
                     "depth": depth.data.shape,
                     "status": state,
+                    "reset": reset_evidence,
                     "lidar": lidar.sensor_status() if args.robot == "g1" else None,
                     "lidar_hz": (
                         (lidar.sensor_status()["scans"] - lidar_initial["scans"]) / elapsed

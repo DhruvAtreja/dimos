@@ -34,10 +34,7 @@ class AdapterRegistry(LazyAdapterRegistry[ManipulatorAdapter]):
     """Registry for manipulator adapters."""
 
     kind = "adapter"
-    manifest_roots = (
-        ("dimos.hardware.manipulators", 1),
-        ("dimos.sim2.control.manipulator", 0),
-    )
+    manifest_roots = (("dimos.hardware.manipulators", 1),)
 
 
 adapter_registry = AdapterRegistry()

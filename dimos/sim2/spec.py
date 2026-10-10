@@ -22,6 +22,10 @@ import math
 from pathlib import Path
 from typing import Literal
 
+from dimos.control.contract.convert import JOINT_STATE_FIELDS, MOTOR_INTERFACES
+from dimos.control.contract.description import ControlDescription, Limits, Resource, ResourceKind
+from dimos.control.contract.keys import Interface, Unit
+from dimos.control.contract.presets import imu_resource
 from dimos.sim2.sensors.spec import Imu, Lidar, Mount as Mount, Sensor
 
 
@@ -48,6 +52,7 @@ class Joint:
     lower: float = -6.283185307179586
     upper: float = 6.283185307179586
     max_velocity: float = 3.141592653589793
+    unit: Unit = Unit.RAD
 
     def __post_init__(self) -> None:
         if self.scale == 0 or not all(
@@ -118,6 +123,51 @@ class RobotConfig:
     def with_sensor(self, sensor: Sensor) -> RobotConfig:
         sensors = tuple(s for s in self.sensors if s.name != sensor.name)
         return replace(self, sensors=(*sensors, sensor))
+
+    def describe_control(
+        self, source: str, *, rate_hz: float, deadman_timeout_s: float
+    ) -> ControlDescription:
+        """Describe public coordinates, not MJCF actuator coordinates."""
+        pd = self.control == ControlInterface.WHOLE_BODY
+        command = MOTOR_INTERFACES if pd else (Interface.POSITION,)
+        resources = []
+        limits = {}
+        for joint in self.joints:
+            name = joint.name.rsplit("/", 1)[-1]
+            if joint.unit == Unit.RAD:
+                velocity, effort = Unit.RAD_PER_S, Unit.NM
+            elif joint.unit == Unit.M:
+                velocity, effort = Unit.M_PER_S, Unit.N
+            elif not pd and joint.unit == Unit.UNITLESS:
+                velocity = effort = Unit.UNITLESS
+            else:
+                raise ValueError(f"unsupported sim2 joint unit: {joint.unit}")
+            state = (Interface.POSITION,) if joint.unit == Unit.UNITLESS else JOINT_STATE_FIELDS
+            units = dict(zip(JOINT_STATE_FIELDS, (joint.unit, velocity, effort), strict=True))
+            units.update({Interface.KP: Unit.UNITLESS, Interface.KD: Unit.UNITLESS})
+            resources.append(
+                Resource(
+                    name=name,
+                    kind=ResourceKind.JOINT,
+                    state_interfaces=state,
+                    command_interfaces=command,
+                    units={key: units[key] for key in (*state, *command)},
+                )
+            )
+            prefix = f"{source}/{name}"
+            limits[f"{prefix}/position"] = Limits(joint.lower, joint.upper)
+            if pd:
+                limits[f"{prefix}/velocity"] = Limits(-joint.max_velocity, joint.max_velocity)
+                limits[f"{prefix}/kp"] = Limits(lo=0.0)
+                limits[f"{prefix}/kd"] = Limits(lo=0.0)
+        resources.extend(imu_resource(s.name) for s in self.sensors if isinstance(s, Imu))
+        return ControlDescription(
+            source=source,
+            resources=tuple(resources),
+            limits=limits,
+            state_rate_hz=rate_hz,
+            deadman_timeout_s=deadman_timeout_s,
+        )
 
 
 @dataclass(frozen=True)

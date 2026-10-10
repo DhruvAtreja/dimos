@@ -92,6 +92,8 @@ XARM7_COLLISION_LINKS = [
 def make_xarm7_sim_robot_config(
     base_pose: PoseStamped | None = None,
     tf_extra_links: list[str] | None = None,
+    *,
+    prefix: str = "",
 ) -> RobotModelConfig:
     """Build the sim planning model.
 
@@ -100,6 +102,7 @@ def make_xarm7_sim_robot_config(
     more than the tip transform.
     """
     return make_xarm7_model_config(
+        prefix=prefix,
         add_gripper=True,
         gripper_hardware_id="arm",
         base_pose=XARM7_SIM_BASE_POSE if base_pose is None else base_pose,

@@ -18,13 +18,12 @@ import pickle
 import numpy as np
 import pytest
 
-from dimos.control.coordinator import ControlCoordinator, ControlCoordinatorConfig
 from dimos.core.coordination.blueprint_config.parser import BlueprintConfigParser
-from dimos.core.coordination.blueprints import autoconnect
 from dimos.robot.manipulators.xarm.sim2 import XARM7
 from dimos.robot.unitree.g1.sim2 import G1_GROOT, G1_GROOT_MID360
 from dimos.sim2.blueprint import simulation
-from dimos.sim2.control.adapters import ManipulatorAdapter, WholeBodyAdapter
+from dimos.sim2.connections.manipulator import ManipulatorConnectionConfig
+from dimos.sim2.connections.whole_body import WholeBodyConnectionConfig
 from dimos.sim2.module import SimulationModuleConfig
 from dimos.sim2.scene import scene_path
 from dimos.sim2.sensors.camera.module import CameraModuleConfig
@@ -41,19 +40,23 @@ def test_multiple_robots_and_rgb_cameras_have_separate_typed_ports():
         robots={"left": RobotInstance(rgb), "right": RobotInstance(rgb)},
         viewer=False,
     )
-    blueprint = devices.blueprint
+    blueprint = devices
     parsed = BlueprintConfigParser(blueprint).parse(environ={})
     left = next(atom for atom in blueprint.active_blueprints if atom.name == "left_front")
     assert {stream.name for stream in left.streams} == {"color_image", "camera_info", "tf"}
     assert blueprint.remapping_map[("left_front", "color_image")] == "left/front/color_image"
     assert blueprint.remapping_map[("right_front", "color_image")] == "right/front/color_image"
-    assert blueprint.remapping_map[("left_connection", "joint_command")] == "left/joint_command"
-    assert blueprint.remapping_map[("right_connection", "joint_command")] == "right/joint_command"
+    assert (
+        blueprint.remapping_map[("left_connection", "position_command")] == "left_position_command"
+    )
+    assert (
+        blueprint.remapping_map[("right_connection", "position_command")]
+        == "right_position_command"
+    )
     sensor = CameraModuleConfig(**parsed.module_kwargs("left_front")).sensor
     assert sensor == rgb.sensors[0]
-    assert devices.hardware["left"].address == "sim/left"
-    assert devices.hardware["right"].address == "sim/right"
-    assert devices.hardware["left"].adapter_kwargs["definition"] is rgb
+    assert parsed.module_kwargs("left_connection")["address"] == "sim/left"
+    assert parsed.module_kwargs("right_connection")["address"] == "sim/right"
 
 
 def test_second_camera_does_not_require_shared_module_changes():
@@ -62,7 +65,7 @@ def test_second_camera_does_not_require_shared_module_changes():
         scene=scene_path(None, "workbench.xml"),
         robots={"arm": RobotInstance(robot)},
         viewer=False,
-    ).blueprint
+    )
     assert blueprint.remapping_map[("arm_front", "color_image")] == "arm/front/color_image"
     assert (
         blueprint.remapping_map[("arm_wrist_camera", "color_image")]
@@ -85,19 +88,16 @@ class HorizontalRays:
 
 
 @pytest.mark.parametrize(
-    "robot,adapter",
+    "robot,connection_config",
     [
-        (G1_GROOT, WholeBodyAdapter),
-        (G1_GROOT_MID360, WholeBodyAdapter),
-        (XARM7, ManipulatorAdapter),
+        (G1_GROOT, WholeBodyConnectionConfig),
+        (G1_GROOT_MID360, WholeBodyConnectionConfig),
+        (XARM7, ManipulatorConnectionConfig),
     ],
 )
-def test_worker_config_and_coordinator_adapter_reconstruct_the_same_robot(tmp_path, robot, adapter):
-    devices = simulation(
+def test_physics_and_connection_reconstruct_the_same_robot(tmp_path, robot, connection_config):
+    blueprint = simulation(
         scene=tmp_path / "scene.xml", robots={"robot": RobotInstance(robot)}, viewer=False
-    )
-    blueprint = autoconnect(
-        devices.blueprint, ControlCoordinator.blueprint(hardware=[devices.hardware["robot"]])
     )
     parsed = BlueprintConfigParser(blueprint).parse(
         environ={},
@@ -106,9 +106,9 @@ def test_worker_config_and_coordinator_adapter_reconstruct_the_same_robot(tmp_pa
 
     world_kwargs = pickle.loads(pickle.dumps(parsed.module_kwargs("simulationmodule")))
     world = SimulationModuleConfig(**world_kwargs).world
-    control_kwargs = pickle.loads(pickle.dumps(parsed.module_kwargs(ControlCoordinator.name)))
-    hardware = ControlCoordinatorConfig(**control_kwargs).hardware[0]
-    device = adapter(address=hardware.address, dof=len(hardware.joints), **hardware.adapter_kwargs)
+    device = connection_config(
+        **pickle.loads(pickle.dumps(parsed.module_kwargs("robot_connection")))
+    )
 
     assert world.robots["robot"].xyz == (1, 2, 3)
     assert world.robots["robot"].config == robot
@@ -124,7 +124,7 @@ def test_custom_lidar_factory_and_overrides_survive_worker_serialization(tmp_pat
     )
     blueprint = simulation(
         scene=tmp_path / "scene.xml", robots={"robot": RobotInstance(robot)}, viewer=False
-    ).blueprint
+    )
     parsed = BlueprintConfigParser(blueprint).parse(
         environ={},
         overrides={"robot_lidar": {"sensor": {"model_kwargs": {"max_range": 20.0}}}},
@@ -142,7 +142,7 @@ def test_custom_lidar_factory_and_overrides_survive_worker_serialization(tmp_pat
 def test_invalid_lidar_cannot_be_reconstructed_as_an_imu(tmp_path):
     blueprint = simulation(
         scene=tmp_path / "scene.xml", robots={"robot": RobotInstance(G1_GROOT)}, viewer=False
-    ).blueprint
+    )
     parsed = BlueprintConfigParser(blueprint).parse(environ={})
     kwargs = parsed.module_kwargs("simulationmodule")
     lidar = kwargs["world"]["robots"]["robot"]["config"]["sensors"][1]
@@ -158,7 +158,7 @@ def test_timed_lidar_configuration_survives_worker_serialization(tmp_path):
     )
     blueprint = simulation(
         scene=tmp_path / "scene.xml", robots={"g1": RobotInstance(robot)}, viewer=False
-    ).blueprint
+    )
     parsed = BlueprintConfigParser(blueprint).parse(environ={})
     world = SimulationModuleConfig(
         **pickle.loads(pickle.dumps(parsed.module_kwargs("simulationmodule")))

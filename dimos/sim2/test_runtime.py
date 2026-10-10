@@ -15,16 +15,22 @@
 """Focused emulator contracts with real MuJoCo models and shared-memory devices."""
 
 from dataclasses import replace
+import threading
 from uuid import uuid4
 
 import mujoco
 import numpy as np
 import pytest
 
+from dimos.control.contract.validate import validate_description
+from dimos.core.module import Module
 from dimos.hardware.whole_body.spec import MotorCommand
 from dimos.robot.manipulators.xarm.sim2 import XARM7
 from dimos.robot.unitree.g1.sim2 import G1_GROOT, G1_GROOT_MID360
+from dimos.sim2.connections.manipulator import ManipulatorConnection
+from dimos.sim2.connections.whole_body import WholeBodyConnection
 from dimos.sim2.control.adapters import ManipulatorAdapter, WholeBodyAdapter
+from dimos.sim2.module import SimulationModule
 from dimos.sim2.runtime import SimulationRuntime
 from dimos.sim2.scene import scene_path
 from dimos.sim2.sensors.camera.renderers.mujoco import MujocoCamera
@@ -92,6 +98,96 @@ def test_g1_complete_commands_and_coherent_imu(runtime, device):
     before = world.data.qvel[binding.dofs].copy()
     world.step()
     assert world.data.ctrl[binding.actuators] == pytest.approx(2 * (0.2 - before) + 0.3)
+
+
+def test_physics_waits_for_graph_ready_and_starts_only_once(mocker):
+    module = SimulationModule(
+        world=WorldConfig(
+            scene_path(None, "workbench.xml"),
+            {"arm": RobotInstance(XARM7, xyz=(0, 0, 0.12))},
+        ),
+        sim_id=uuid4().hex,
+    )
+    mocker.patch.object(Module, "start")
+    stepped = threading.Event()
+    try:
+        module.start()
+        assert module.status()["steps"] == 0
+        assert not module.status()["running"]
+        runtime = module._runtime
+        assert runtime is not None
+        step = runtime.step
+
+        def signal_step():
+            step()
+            stepped.set()
+
+        mocker.patch.object(runtime, "step", side_effect=signal_step)
+        module.on_system_modules([])
+        worker = module._thread
+        assert stepped.wait(timeout=2)
+        module.on_system_modules([])
+        assert module._thread is worker
+        assert module.status()["running"]
+    finally:
+        module.stop()
+
+
+@pytest.fixture
+def connection(mocker):
+    connections = []
+
+    def create(world, robot_id, cls):
+        module = cls(
+            definition=world.robots[robot_id].config,
+            address=f"{world.snapshot_descriptor.sim_id}/{robot_id}",
+            robot_id=robot_id,
+        )
+        connections.append(module)
+        for stream in module.outputs.values():
+            mocker.patch.object(stream, "publish")
+        validate_description(module.describe())
+        module.connect()
+        return module
+
+    yield create
+    for module in reversed(connections):
+        module.stop()
+
+
+def test_pd_connection_reports_one_sample_and_halts_with_damping(runtime, connection):
+    world = runtime(G1_GROOT, "g1", "logistics.xml", (0, 0, 0.793))
+    module = connection(world, "g1", WholeBodyConnection)
+    readings = module.read_state()
+    assert set(readings) == set(module.describe().state_keys())
+    assert readings["g1/imu/qw"] == pytest.approx(1)
+    assert module.read_state() is None
+    module.halt()
+    action = world.robots["g1"].channel.read_action()
+    assert action.values["kp"].tolist() == [0] * 29
+    assert action.values["kd"].tolist() == [j.kd for j in G1_GROOT.joints]
+
+
+def test_arm_connection_moves_holds_and_reports_reset_without_old_targets(runtime, connection):
+    world = runtime(XARM7, "arm", "workbench.xml", (0, 0, 0.12))
+    module = connection(world, "arm", ManipulatorConnection)
+    readings = module.read_state()
+    assert set(readings) == set(module.describe().state_keys())
+    assert readings["arm/gripper/position"] == pytest.approx(850)
+    module.write({"arm/joint1/position": 0.25})
+    for _ in range(200):
+        world.step()
+    assert module.read_state()["arm/joint1/position"] == pytest.approx(0.25, abs=0.02)
+    module.halt()
+    action = world.robots["arm"].channel.read_action()
+    assert action.values["enabled"].tolist() == [1]
+    assert action.values["position"][0] == pytest.approx(0.25, abs=0.02)
+
+    world.reset()
+    readings = module.read_state()
+    assert readings["arm/joint1/position"] == pytest.approx(0)
+    world.step()
+    assert module.read_state()["arm/joint1/position"] == pytest.approx(0, abs=0.005)
 
 
 def test_xarm_moves_and_uses_real_gripper_units(runtime, device):

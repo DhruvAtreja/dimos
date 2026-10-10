@@ -12,7 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Thin current-ControlCoordinator bridges. No physics or sensor ownership."""
+"""Private SHM devices used by sim2 connection modules, not coordinator adapters."""
 
 from __future__ import annotations
 
@@ -105,7 +105,7 @@ class WholeBodyAdapter(DeviceAdapter):
         ]
 
     def read_imu(self) -> IMUState:
-        # CC reads joints before policy evaluation. Its IMU must use that same frame.
+        # Joints and IMU must use the same observation frame.
         with self._lock:
             if self._sample is None:
                 raise RuntimeError("sim2 device is disconnected")

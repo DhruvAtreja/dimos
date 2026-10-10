@@ -118,6 +118,30 @@ def test_limits_resolve_by_joint_name_in_adapter_order(mocker: MockerFixture) ->
     assert output.positions == pytest.approx([1.57, 0.04])
 
 
+def test_streamed_gripper_uses_declared_native_limits_without_an_adapter():
+    cfg = TaskConfig(
+        name="tool",
+        type="gripper",
+        joint_names=["arm/gripper"],
+        params={"position_limits": {"arm/gripper": (0.0, 850.0)}},
+    )
+    task = create_task(cfg, {})
+    assert task.set_normalized([0.5])
+    output = task.compute(_state())
+    assert output is not None and output.positions == [425.0]
+
+
+def test_streamed_gripper_rejects_limits_for_another_joint():
+    cfg = TaskConfig(
+        name="tool",
+        type="gripper",
+        joint_names=["arm/gripper"],
+        params={"position_limits": {"other/gripper": (0.0, 1.0)}},
+    )
+    with pytest.raises(ValueError, match="exactly"):
+        create_task(cfg, {})
+
+
 def test_configured_hardware_limits_override_adapter_limits(mocker: MockerFixture) -> None:
     hardware = _hardware(mocker)
     configured = JointLimits(

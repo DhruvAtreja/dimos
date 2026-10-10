@@ -12,38 +12,34 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Position-controlled arm/gripper device streams in the robot's declared units."""
+"""Position-controlled arm/gripper connection in the robot's declared units."""
 
 from __future__ import annotations
 
-import threading
-import time
-from typing import Any, Literal
+from typing import Any
 
-from reactivex.disposable import Disposable
-
+from dimos.control.connection.connection_module import ConnectionModule
+from dimos.control.contract.description import ControlDescription
 from dimos.core.core import rpc
-from dimos.core.module import Module, ModuleConfig
+from dimos.core.module import ModuleConfig
 from dimos.core.stream import In, Out
 from dimos.msgs.sensor_msgs.JointState import JointState
 from dimos.sim2.control.adapters import ManipulatorAdapter
 from dimos.sim2.spec import RobotConfig
-from dimos.utils.logging_config import setup_logger
-
-logger = setup_logger()
 
 
 class ManipulatorConnectionConfig(ModuleConfig):
     definition: RobotConfig
     address: str
-    command_source: Literal["coordinator", "stream"] = "coordinator"
-    rate_hz: float = 50.0
+    robot_id: str
+    rate_hz: float = 100.0
+    deadman_timeout_s: float = 0.2
 
 
-class ManipulatorConnection(Module):
+class ManipulatorConnection(ConnectionModule):
     config: ManipulatorConnectionConfig
-    joint_command: In[JointState]
-    joint_states: Out[JointState]
+    position_command: In[JointState]
+    joint_state: Out[JointState]
 
     def __init__(self, **kwargs: Any) -> None:
         super().__init__(**kwargs)
@@ -52,48 +48,45 @@ class ManipulatorConnection(Module):
             dof=len(self.config.definition.joints),
             definition=self.config.definition,
         )
-        self._stop = threading.Event()
-        self._thread: threading.Thread | None = None
+        self._sequence = -1
+        self._description = self.describe()
 
-    @rpc
-    def start(self) -> None:
-        super().start()
+    def describe(self) -> ControlDescription:
+        return self.config.definition.describe_control(
+            self.config.robot_id,
+            rate_hz=self.config.rate_hz,
+            deadman_timeout_s=self.config.deadman_timeout_s,
+        )
+
+    def connect(self) -> None:
         self._device.connect()
-        if self.config.command_source == "stream":
-            self.register_disposable(Disposable(self.joint_command.subscribe(self._command)))
-        self._stop.clear()
-        self._thread = threading.Thread(target=self._publish, daemon=True)
-        self._thread.start()
 
-    def _command(self, command: JointState) -> None:
-        expected = [j.name for j in self.config.definition.joints]
-        if list(command.name) != expected:
-            raise ValueError("joint_command names must match the complete device order")
-        self._device.write_joint_positions(list(command.position))
+    def read_state(self) -> dict[str, float] | None:
+        frame = self._device.sample()
+        if frame.metadata.sequence == self._sequence:
+            return None
+        self._sequence = frame.metadata.sequence
+        return {
+            f"{self.config.robot_id}/{resource.name}/{field}": float(frame.values[field][i])
+            for i, resource in enumerate(self._description.resources)
+            for field in resource.state_interfaces
+        }
 
-    def _publish(self) -> None:
-        try:
-            while not self._stop.is_set():
-                before = time.monotonic()
-                values = self._device.sample().values
-                self.joint_states.publish(
-                    JointState(
-                        name=[j.name for j in self.config.definition.joints],
-                        position=values["position"].tolist(),
-                        velocity=values["velocity"].tolist(),
-                        effort=values["effort"].tolist(),
-                        ts=float(values["wall_time"][0]),
-                    )
-                )
-                self._stop.wait(max(0, 1.0 / self.config.rate_hz - (time.monotonic() - before)))
-        except Exception:
-            if not self._stop.is_set():
-                logger.exception("sim2 manipulator connection stopped")
+    def write(self, values: dict[str, float]) -> None:
+        # Partial position messages leave other joints at their measured position.
+        positions = self._device.read_joint_positions()
+        for i, name in enumerate(self._description.joint_names()):
+            positions[i] = values.get(f"{name}/position", positions[i])
+        if not self._device.write_joint_positions(positions):
+            raise RuntimeError("sim2 manipulator device is not ready")
+
+    def halt(self) -> None:
+        if not self._device.write_stop():
+            raise RuntimeError("sim2 manipulator device is not ready")
 
     @rpc
     def stop(self) -> None:
-        self._stop.set()
-        if self._thread is not None:
-            self._thread.join(timeout=5)
-        self._device.disconnect()
-        super().stop()
+        try:
+            super().stop()
+        finally:
+            self._device.disconnect()

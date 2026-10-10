@@ -26,7 +26,7 @@ Real hardware (default):
     trajectory task.
 
 Sim (``--simulation``):
-    sim2 world + robot-mounted sensors + coherent SHM device adapter.
+    sim2 world + robot-mounted sensors + streamed motor connection.
     50 Hz tick (matches the rate the policy was trained at). No arming
     ramp and no dry-run. The same bounded arm-command path is available in
     simulation and on hardware.
@@ -53,7 +53,7 @@ from dimos.control.tasks.trajectory_task.trajectory_task import joint_trajectory
 from dimos.control.teleop_coordinator import TeleopControlCoordinator
 from dimos.core.coordination.blueprints import autoconnect
 from dimos.core.global_config import global_config
-from dimos.core.stream import Out
+from dimos.core.stream import In, Out
 from dimos.core.transport import LCMTransport
 from dimos.hardware.whole_body.spec import WholeBodyConfig
 from dimos.manipulation.planning.kinematics.config import PinkKinematicsConfig
@@ -104,11 +104,14 @@ _G1_NAV_SAFE_RADIUS_MARGIN = 0.6
 
 class _G1GrootCoordinator(TeleopControlCoordinator):
     g1_joints: Out[JointState]
+    g1_motor_command: Out[MotorCommandArray]
+    g1_joint_state: In[JointState]
+    g1_imu: In[Imu]
 
 
 # Per-robot joint stream. Namespaced like the rest of the g1 wire topics, which
 # also fixes its Rerun entity path (`world/` + topic).
-_G1_JOINTS_TOPIC = "/g1/joints"
+_G1_JOINTS_TOPIC = "/g1_joint_state" if global_config.simulation else "/g1/joints"
 _G1_JOINTS_ENTITY = f"world{_G1_JOINTS_TOPIC}"
 
 
@@ -127,8 +130,8 @@ if global_config.simulation == "mujoco":
         robots={"g1": scene_robot(_scene, G1_GROOT, default=(0.0, 0.0, 0.0))},
         sim_id="g1-groot",
     )
-    _backend = _simulation.blueprint
-    _hardware = _simulation.hardware["g1"]
+    _backend = _simulation
+    _hardware: list[HardwareComponent] = []
     _tick_rate = 50.0
     _auto_arm = True
     _auto_dry_run = False
@@ -160,14 +163,16 @@ else:
 
     # Real-hw backend: DDS connection module + transport_lcm adapter.
     _backend = G1WholeBodyConnection.blueprint(release_sport_mode=True)
-    _hardware = HardwareComponent(
-        hardware_id="g1",
-        hardware_type=HardwareType.WHOLE_BODY,
-        joints=g1_joints,
-        adapter_type="transport_lcm",
-        address="",
-        wb_config=WholeBodyConfig(kp=tuple(G1_GROOT_KP), kd=tuple(G1_GROOT_KD)),
-    )
+    _hardware = [
+        HardwareComponent(
+            hardware_id="g1",
+            hardware_type=HardwareType.WHOLE_BODY,
+            joints=g1_joints,
+            adapter_type="transport_lcm",
+            address="",
+            wb_config=WholeBodyConfig(kp=tuple(G1_GROOT_KP), kd=tuple(G1_GROOT_KD)),
+        )
+    ]
     # The onboard Jetson can't sustain a 500 Hz tick; it collapses to ~90 Hz
     # and starves the policy, so balance decays.
     _tick_rate = 100.0
@@ -363,9 +368,10 @@ def _viewer() -> Any:
 
 _coordinator = _G1GrootCoordinator.blueprint(
     instance_name="ControlCoordinator",
-    publish_robot_joint_states=True,
+    publish_robot_joint_states=not global_config.simulation,
     tick_rate=_tick_rate,
-    hardware=[_hardware],
+    hardware=_hardware,
+    motor_gains={"g1": WholeBodyConfig(kp=tuple(G1_GROOT_KP), kd=tuple(G1_GROOT_KD))},
     tasks=[
         TaskConfig(
             name="groot_wbc",
@@ -376,6 +382,7 @@ _coordinator = _G1GrootCoordinator.blueprint(
             params={
                 "model_path": _GROOT_MODEL_DIR,
                 "hardware_id": "g1",
+                "all_joint_names": g1_joints,
                 "auto_arm": _auto_arm,
                 "auto_dry_run": _auto_dry_run,
                 "default_ramp_seconds": _default_ramp_seconds,
