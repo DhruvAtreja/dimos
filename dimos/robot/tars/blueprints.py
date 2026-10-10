@@ -80,8 +80,13 @@ coordinator_tars_sim_keyboard_teleop = autoconnect(
 ).remappings([(ControlCoordinator, "twist_command", "cmd_vel")])
 
 
-def _convert_global_map(grid: Any) -> Any:
-    return grid.to_rerun(bottom_cutoff=0)
+def _convert_global_map(cloud: Any) -> Any:
+    # drop the ceiling so the 3D view looks into the room
+    from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
+
+    points, _ = cloud.as_numpy()
+    below = PointCloud2.from_numpy(points[points[:, 2] < 2.0], frame_id=cloud.frame_id)
+    return below.to_rerun(bottom_cutoff=0)
 
 
 def _convert_navigation_costmap(grid: Any) -> Any:
@@ -110,6 +115,14 @@ def _tars_rerun_blueprint() -> Any:
                 name="3D",
                 background=rrb.Background(kind="SolidColor", color=[0, 0, 0]),
                 line_grid=rrb.LineGrid3D(plane=rr.components.Plane3D.XY.with_distance(0.0)),
+                # above and behind TARS, following it
+                eye_controls=rrb.EyeControls3D(
+                    kind=rrb.Eye3DKind.Orbital,
+                    position=[-3.5, -3.0, 3.5],
+                    look_target=[0.0, 0.0, 0.3],
+                    eye_up=[0.0, 0.0, 1.0],
+                    tracking_entity="world/robot_body",
+                ),
             ),
             column_shares=[1, 2],
         ),
