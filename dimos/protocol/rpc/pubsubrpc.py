@@ -32,6 +32,7 @@ from dimos.protocol.pubsub.impl.lcmpubsub import PickleLCM, Topic
 from dimos.protocol.pubsub.spec import PubSub
 from dimos.protocol.rpc.rpc_utils import deserialize_exception, serialize_exception
 from dimos.protocol.rpc.spec import DEFAULT_RPC_TIMEOUT, DEFAULT_RPC_TIMEOUTS, Args, RPCSpec
+from dimos.protocol.service.lcmservice import LCMService
 from dimos.utils.generic import short_id
 from dimos.utils.logging_config import setup_logger
 
@@ -311,6 +312,19 @@ class LCMRPC(PubSubRPCMixin[Topic, Any], PickleLCM):
         PubSubRPCMixin.__init__(
             self, rpc_timeouts=rpc_timeouts, default_rpc_timeout=default_rpc_timeout, **kwargs
         )
+
+    def stop(self) -> None:
+        # Keep the RPC mixin's drain-before-dispatch order, but exclude restart
+        # throughout pool draining and response-subscription cleanup as well.
+        with self._stop_scope():
+            super().stop()
+
+    def _get_call_thread_pool(self) -> ThreadPoolExecutor:
+        # LCM dispatch and RPC handlers share one lifecycle and shutdown policy.
+        return LCMService._get_call_thread_pool(self)
+
+    def _shutdown_thread_pool(self) -> None:
+        LCMService._shutdown_thread_pool(self)
 
     def topicgen(self, name: str, req_or_res: bool) -> Topic:
         suffix = "res" if req_or_res else "req"
