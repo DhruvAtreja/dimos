@@ -1,0 +1,77 @@
+# Slim eval worker for the SceneReplica sim2 suites (MuJoCo + EGL on the GPU, the pi agent).
+# Build context: one branch checkout (all three eval branches share pyproject.toml and uv.lock).
+# At run time the branch to evaluate is mounted read-only on /app, over the copy baked here.
+
+FROM rust:1-bookworm AS voxel
+WORKDIR /src
+COPY Cargo.toml Cargo.lock ./
+COPY native native
+COPY examples/native-modules examples/native-modules
+COPY dimos dimos
+RUN cargo build --release -p dimos-voxel-ray-tracing --bin voxel_ray_tracing \
+    && install -D target/release/voxel_ray_tracing /out/voxel_ray_tracing
+
+FROM ubuntu:24.04
+ENV DEBIAN_FRONTEND=noninteractive
+RUN apt-get update && apt-get install -y --no-install-recommends \
+        ca-certificates curl git build-essential pkg-config iproute2 \
+        libgl1 libegl1 libgles2 libglvnd0 libglx0 libopengl0 \
+        libglib2.0-0t64 libsm6 libxext6 libxrender1 libx11-6 libgomp1 \
+        libturbojpeg portaudio19-dev ffmpeg \
+    && rm -rf /var/lib/apt/lists/*
+
+# The pi eval agent shells out to the `pi` coding-agent CLI (same version as the laptop).
+ARG PI_VERSION=0.99.2
+RUN curl -fsSL https://deb.nodesource.com/setup_22.x | bash - \
+    && apt-get install -y --no-install-recommends nodejs \
+    && npm install -g "@earendil-works/pi-coding-agent@${PI_VERSION}" \
+    && rm -rf /var/lib/apt/lists/* /root/.npm
+
+COPY --from=ghcr.io/astral-sh/uv:0.12.16 /uv /uvx /usr/local/bin/
+ENV UV_PROJECT_ENVIRONMENT=/opt/venv \
+    UV_PYTHON_INSTALL_DIR=/opt/uv-python \
+    UV_CACHE_DIR=/opt/uv-cache \
+    UV_LINK_MODE=hardlink \
+    UV_COMPILE_BYTECODE=0
+
+WORKDIR /app
+# Dependencies first, so a code change does not redo the large layer. The uv cache sits on
+# the same filesystem as the venv so packages are hardlinked, not copied, and is deleted in
+# the same step: the disk holds one copy of the ~13 GB of wheels, never two.
+COPY pyproject.toml uv.lock README.md setup.py MANIFEST.in ./
+RUN uv python install 3.12 \
+    && uv sync --frozen --no-install-project --python 3.12 \
+        --extra manipulation --extra cuda --extra misc \
+    && rm -rf /opt/uv-cache
+
+COPY dimos dimos
+RUN uv sync --frozen --python 3.12 --extra manipulation --extra cuda --extra misc \
+    && rm -rf /opt/uv-cache
+
+COPY --from=voxel /out/voxel_ray_tracing /opt/native/voxel_ray_tracing
+
+# Writable state goes under /state (bind-mounted per worker); model weights under /cache (shared).
+ENV PATH="/opt/venv/bin:${PATH}" \
+    VIRTUAL_ENV=/opt/venv \
+    XDG_STATE_HOME=/state \
+    XDG_CACHE_HOME=/cache \
+    XDG_CONFIG_HOME=/config \
+    HF_HOME=/cache/huggingface \
+    TORCHINDUCTOR_CACHE_DIR=/cache/torchinductor \
+    TRITON_CACHE_DIR=/cache/triton \
+    PYTHONPYCACHEPREFIX=/tmp/pycache \
+    PYTHONUNBUFFERED=1 \
+    VIEWER=none \
+    MUJOCO_GL=egl \
+    PYOPENGL_PLATFORM=egl \
+    NVIDIA_DRIVER_CAPABILITIES=all \
+    GIT_CONFIG_COUNT=1 \
+    GIT_CONFIG_KEY_0=safe.directory \
+    GIT_CONFIG_VALUE_0=*
+# safe.directory: the mounted checkout belongs to the host user, git refuses it to root otherwise.
+
+RUN mkdir -p /state /cache /config
+# Runs as root: umask 0000 keeps what lands on host mounts readable and deletable by the host user.
+RUN printf '#!/usr/bin/env bash\numask 0000\nexec "$@"\n' > /entrypoint.sh && chmod +x /entrypoint.sh
+ENTRYPOINT ["/entrypoint.sh"]
+CMD ["bash"]

@@ -1,0 +1,16 @@
+# batch	case_id	scene	order	object
+# Targeted reruns (M1 chat, 2026-10-10): batch 1 = cases only in set A (cc-graspgen closed on
+# nothing), batch 2 = cases in both A and B, batch 3 = cases only in set B (no grasp left).
+1	scenereplica-scene-03-cracker_box	scene-03	order-1	cracker_box
+1	scenereplica-scene-04-bowl	scene-04	order-2	bowl
+1	scenereplica-scene-05-bowl	scene-05	order-1	bowl
+1	scenereplica-scene-07-cracker_box	scene-07	order-3	cracker_box
+1	scenereplica-scene-08-sugar_box	scene-08	order-2	sugar_box
+1	scenereplica-scene-14-gelatin_box	scene-14	order-1	gelatin_box
+1	scenereplica-scene-14-sugar_box	scene-14	order-3	sugar_box
+1	scenereplica-scene-20-pudding_box	scene-20	order-2	pudding_box
+2	scenereplica-scene-01-tuna_fish_can	scene-01	order-1	tuna_fish_can
+2	scenereplica-scene-18-scissors	scene-18	order-2	scissors
+3	scenereplica-scene-02-large_marker	scene-02	order-3	large_marker
+3	scenereplica-scene-12-extra_large_clamp	scene-12	order-2	extra_large_clamp
+3	scenereplica-scene-13-scissors	scene-13	order-3	scissors
