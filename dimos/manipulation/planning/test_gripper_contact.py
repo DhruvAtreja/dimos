@@ -549,6 +549,15 @@ def test_xarm_floor_rejects_a_grasp_from_under_the_table(xarm: GripperContactMod
 
     assert check(None) == CLEAR
     assert check(0.0) == GraspContact(("floor",))
+    # From above with the open fingertips 2 mm into the table: below the floor too.
+    into = _top_down(0.0, 0.0, -0.002 - XARM_TIP_BEHIND_TCP)
+    short_box = _box((0.0, 0.0, 0.015), (0.04, 0.04, 0.03))
+    assert (
+        "floor"
+        in xarm.check(into[None], short_box, {}, CONTACT_MARGIN, OBSTACLE_MARGIN, floor=0.0)[
+            0
+        ].touches
+    )
     # A grasp from above, its fingertips just over the table, is above the floor.
     assert _check(xarm, _top_down(0.0, 0.0, 0.03), BOX, table=BOX_TABLE) == CLEAR
     assert xarm.check(
