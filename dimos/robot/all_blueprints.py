@@ -119,6 +119,7 @@ all_blueprints = {
     "spot-replay": "dimos.experimental.robot.bosdyn.spot.blueprints.spot_replay:spot_replay",
     "tars-sim": "dimos.robot.tars.blueprints:tars_sim",
     "tars-sim-keyboard-teleop": "dimos.robot.tars.blueprints:tars_sim_keyboard_teleop",
+    "tars-sim-moon": "dimos.robot.tars.blueprints:tars_sim_moon",
     "tars-sim-nav": "dimos.robot.tars.blueprints:tars_sim_nav",
     "teleop-hosted-go2-multicam": "dimos.teleop.hosted.blueprints.cloudflare:teleop_hosted_go2_multicam",
     "teleop-hosted-go2-transport": "dimos.teleop.hosted.blueprints.cloudflare:teleop_hosted_go2_transport",

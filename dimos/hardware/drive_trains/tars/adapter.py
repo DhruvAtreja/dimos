@@ -26,6 +26,7 @@ import time
 from typing import Any
 
 from tars_sdk import TarsClient
+from tars_sdk.scenes import SCENES, scene_path
 
 from dimos.utils.data import get_data
 from dimos.utils.logging_config import setup_logger
@@ -34,9 +35,12 @@ logger = setup_logger()
 
 
 def resolve_scene(scene: str | None) -> Path | None:
-    """dimos scene name ("office1") -> data/mujoco_sim/scene_office1.xml, or a path as-is."""
+    """A tars_sdk built-in scene ("moon"), a dimos MuJoCo scene name ("office1" ->
+    data/mujoco_sim/scene_office1.xml), or a path as-is."""
     if scene is None:
         return None
+    if scene in SCENES:
+        return scene_path(scene)
     if scene.endswith(".xml") or "/" in scene:
         return Path(scene)
     return get_data("mujoco_sim") / f"scene_{scene}.xml"
