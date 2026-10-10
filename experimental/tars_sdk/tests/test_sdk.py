@@ -178,3 +178,19 @@ def test_rolls_and_folds_back_up(client: TarsClient) -> None:
     assert client.get_odometry(ground_truth=True).z == pytest.approx(
         1.45 * Params().scale, abs=0.03
     )
+
+
+def test_moon_scene_route_is_walkable(tmp_path: Path) -> None:
+    from tars_sdk.scenes import moon
+
+    moon.check_route()
+    h = moon.heights()
+    c = np.linspace(-moon.SIZE / 2, moon.SIZE / 2, moon.N)
+    gy, gx = np.gradient(h, c[1] - c[0])
+    x, y = np.meshgrid(c, c)
+    assert np.hypot(gx, gy)[moon._route_distance(x, y) < 2.0].max() < 0.03  # < 3% slope
+    client = TarsClient(realtime=False, cmd_timeout=None, scene=moon.write(tmp_path))
+    client.connect()
+    client.stand()
+    assert client.wait_for_mode("ready", timeout=5)
+    client.disconnect()

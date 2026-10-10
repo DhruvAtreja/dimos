@@ -30,7 +30,9 @@ short steps unstable, so the step length is fixed and speed is set by cadence in
 Every slab only pitches about the hub axis, so the robot cannot yaw without a foot
 slipping. Turning is a "twist": while the hub sits over pair B, pair A (the wide pair)
 stays planted and pushes its left and right feet in opposite directions, which spins
-the hub while B's feet skid. A then swings as usual.
+the hub while B's feet skid. A then swings as usual. Twists are for turning in place;
+while walking, turns up to `steer_wz_max` steer through the stride instead (the sim assist
+tracks the heading while the feet skid), so the gait never stops to turn.
 """
 
 from __future__ import annotations
@@ -73,6 +75,9 @@ class GaitParams:
     # (pure torque) a pusher planted behind the hub whose foot slips swings freely, up to
     # horizontal or past vertical, when turning while walking
     twist_hold: float = 1.0
+    # while walking, turn commands up to this rate steer without stopping to twist (the feet
+    # skid as the hub yaws); larger ones, and any turn in place, use a twist
+    steer_wz_max: float = 0.6
     vx_deadband: float = 0.01
     wz_deadband: float = 0.03
     hinge_kp: float = 900.0
@@ -120,6 +125,7 @@ class GaitParams:
                 "twist_torque": sc.TORQUE,
                 "vx_deadband": sc.SPEED,
                 "wz_deadband": sc.ANG_VEL,
+                "steer_wz_max": sc.ANG_VEL,
                 "hinge_kp": sc.ROT_STIFF,
                 "hinge_kd": sc.ROT_DAMP,
                 "slide_kp": sc.LIN_STIFF,
@@ -215,7 +221,10 @@ class PairGait:
         return math.copysign(self.p.step_length, vx)
 
     def _turning(self) -> bool:
-        return abs(self.cmd[1]) >= self.p.wz_deadband
+        wz = abs(self.cmd[1])
+        if self._step() != 0.0 and wz <= self.p.steer_wz_max:
+            return False  # steer while walking
+        return wz >= self.p.wz_deadband
 
     def _enter(self, phase: str) -> None:
         self.phase, self.t = phase, 0.0
