@@ -26,6 +26,7 @@ from __future__ import annotations
 
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass
+import math
 import threading
 import time
 from typing import Any
@@ -38,6 +39,7 @@ from dimos.control.contract.convert import (
     imu_to_values,
     joint_state_from_values,
     joint_state_to_values,
+    motor_command_from_values,
     motor_joints,
     pose_to_values,
     twist_from_values,
@@ -48,6 +50,7 @@ from dimos.control.contract.keys import SEPARATOR, Interface
 from dimos.control.contract.sequence import Freshness
 from dimos.control.task import JointStateSnapshot
 from dimos.hardware.manipulators.spec import ControlMode
+from dimos.hardware.whole_body.spec import WholeBodyConfig
 from dimos.utils.logging_config import setup_logger
 
 logger = setup_logger()
@@ -102,9 +105,8 @@ class ConnectionSource:
     longer commanded; its connection's deadman halts it. When its readings
     come back, it is held where it then is.
 
-    The coordinator only drives robots whose joints it can hold when no task
-    drives them, and that need no stiffness and damping gains, which it has
-    no source for.
+    PD joints require explicit gains from the coordinator configuration. Their
+    commands carry all five motor fields together, including while holding.
 
     Does no I/O: the coordinator feeds it messages and publishes what it
     builds.
@@ -120,7 +122,13 @@ class ConnectionSource:
             gravity), or takes stiffness and damping (``kp``, ``kd``).
     """
 
-    def __init__(self, description: ControlDescription, session_id: str = "") -> None:
+    def __init__(
+        self,
+        description: ControlDescription,
+        session_id: str = "",
+        *,
+        motor_gains: WholeBodyConfig | None = None,
+    ) -> None:
         unholdable = [
             r.name
             for r in description.resources
@@ -136,12 +144,25 @@ class ConnectionSource:
                 f"{description.source!r}: joint(s) {unholdable} cannot be held when no task "
                 "drives them; each needs to take a velocity, or take a position it reports"
             )
-        gains = motor_joints([description])
-        if gains:
-            raise ValueError(
-                f"{description.source!r}: joint(s) {gains} need stiffness and damping, "
-                "which the coordinator cannot send"
-            )
+        self._motor_joints = motor_joints([description])
+        self._motor_gains: dict[str, tuple[float, float]] = {}
+        if self._motor_joints:
+            if motor_gains is None or motor_gains.kp is None or motor_gains.kd is None:
+                raise ValueError(
+                    f"{description.source!r}: stiffness and damping must be configured"
+                )
+            if len(motor_gains.kp) != len(self._motor_joints) or len(motor_gains.kd) != len(
+                self._motor_joints
+            ):
+                raise ValueError(f"{description.source!r}: gains must match the PD joint order")
+            if any(not math.isfinite(v) or v < 0 for v in (*motor_gains.kp, *motor_gains.kd)):
+                raise ValueError(f"{description.source!r}: gains must be finite and nonnegative")
+            self._motor_gains = {
+                name: (kp, kd)
+                for name, kp, kd in zip(
+                    self._motor_joints, motor_gains.kp, motor_gains.kd, strict=True
+                )
+            }
         self._description = description
         self._session_id = session_id
         self._state_keys = frozenset(description.state_keys())
@@ -168,9 +189,13 @@ class ConnectionSource:
                 )
                 if state:
                     self._readers["joint_state"] = _read_joint_state
-                for interface, port in _JOINT_COMMAND_PORTS.items():
-                    if interface in command and port not in self._command_ports:
-                        self._command_ports.append(port)
+                if part in self._motor_gains:
+                    if "motor_command" not in self._command_ports:
+                        self._command_ports.append("motor_command")
+                else:
+                    for interface, port in _JOINT_COMMAND_PORTS.items():
+                        if interface in command and port not in self._command_ports:
+                            self._command_ports.append(port)
             elif resource.kind is ResourceKind.BASE:
                 if set(TWIST_INTERFACES) <= command:
                     self._base = part
@@ -361,6 +386,42 @@ class ConnectionSource:
         sendable = interface in _JOINT_COMMAND_PORTS
         values: Values = {}
         for joint in self._joints:
+            if joint.name in self._motor_gains:
+                kp, kd = self._motor_gains[joint.name]
+                target = self._hold(joint, latest)
+                if target is None:
+                    raise ValueError(f"{joint.name}: cannot command PD before position feedback")
+                velocity = effort = 0.0
+                if joint.name in winners:
+                    value = winners[joint.name]
+                    if interface == Interface.POSITION:
+                        target = value
+                        self._holds[joint.name] = target
+                    elif interface == Interface.VELOCITY:
+                        kp, velocity = 0.0, value
+                        self._holds.pop(joint.name, None)
+                    elif interface == Interface.EFFORT:
+                        kp, kd, effort = 0.0, 0.0, value
+                        self._holds.pop(joint.name, None)
+                    else:
+                        raise ValueError(f"{joint.name} cannot be told its {interface}")
+                values.update(
+                    zip(
+                        (
+                            joint.command_keys[i]
+                            for i in (
+                                Interface.POSITION,
+                                Interface.VELOCITY,
+                                Interface.EFFORT,
+                                Interface.KP,
+                                Interface.KD,
+                            )
+                        ),
+                        (target, velocity, effort, kp, kd),
+                        strict=True,
+                    )
+                )
+                continue
             if joint.name in winners:
                 if not sendable or interface not in joint.command_keys:
                     raise ValueError(f"{joint.name} cannot be told its {interface}")
@@ -398,9 +459,17 @@ class ConnectionSource:
         """
         messages: list[tuple[str, Any]] = []
         for interface, port in _JOINT_COMMAND_PORTS.items():
-            joints = [j.name for j in self._joints if f"{j.name}{SEPARATOR}{interface}" in values]
+            joints = [
+                j.name
+                for j in self._joints
+                if j.name not in self._motor_gains and f"{j.name}{SEPARATOR}{interface}" in values
+            ]
             if joints:
                 messages.append((port, joint_state_from_values(values, joints, ts)))
+        if self._motor_joints:
+            messages.append(
+                ("motor_command", motor_command_from_values(values, self._motor_joints, ts))
+            )
         if self._base is not None:
             messages.append(("base_command", twist_from_values(values, self._base)))
         return messages

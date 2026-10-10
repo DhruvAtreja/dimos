@@ -67,7 +67,7 @@ from dimos.hardware.drive_trains.spec import (
     TwistBaseAdapter,
 )
 from dimos.hardware.manipulators.spec import ManipulatorAdapter
-from dimos.hardware.whole_body.spec import WholeBodyAdapter
+from dimos.hardware.whole_body.spec import WholeBodyAdapter, WholeBodyConfig
 from dimos.msgs.geometry_msgs.Twist import Twist
 from dimos.msgs.sensor_msgs.JointState import JointState
 from dimos.msgs.std_msgs.Float32 import Float32
@@ -110,6 +110,8 @@ class ControlCoordinatorConfig(ModuleConfig):
     frame_pose_hz: float = 30.0
     log_ticks: bool = False
     hardware: list[HardwareComponent] = field(default_factory=lambda: [])
+    # PD gains in each described robot's motor order; no adapter is constructed.
+    motor_gains: dict[str, WholeBodyConfig] = field(default_factory=dict)
     tasks: list[TaskConfig] = field(default_factory=lambda: [])
 
 
@@ -393,7 +395,11 @@ class ControlCoordinator(Module):
                         raise ValueError(
                             f"two connection modules describe a robot called {description.source!r}"
                         )
-                    found[description.source] = ConnectionSource(description, described.session_id)
+                    found[description.source] = ConnectionSource(
+                        description,
+                        described.session_id,
+                        motor_gains=self.config.motor_gains.get(description.source),
+                    )
                     modules_by_robot[description.source] = module.remote_name
         # Each proxy received here opened its own RPC client. Connection
         # modules are called later by name, through this module's client.

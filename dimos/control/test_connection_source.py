@@ -23,10 +23,12 @@ import pytest
 
 from dimos.control._control_test_helpers import turning_joints
 from dimos.control.connection_source import ConnectionSource
+from dimos.control.contract.convert import MOTOR_INTERFACES
 from dimos.control.contract.description import ControlDescription, Limits, Resource, ResourceKind
 from dimos.control.contract.keys import Interface, Key, Unit
 from dimos.control.contract.presets import imu_resource, twist_base_description
 from dimos.hardware.manipulators.spec import ControlMode
+from dimos.hardware.whole_body.spec import WholeBodyConfig
 from dimos.msgs.geometry_msgs.Quaternion import Quaternion
 from dimos.msgs.sensor_msgs.Imu import Imu
 from dimos.msgs.sensor_msgs.JointState import JointState
@@ -303,3 +305,63 @@ def test_a_robot_it_cannot_hold_is_refused() -> None:
                 ),
             )
         )
+
+
+@pytest.fixture
+def pd_source():
+    source = ConnectionSource(
+        arm(command=MOTOR_INTERFACES),
+        motor_gains=WholeBodyConfig(kp=(80.0, 40.0), kd=(2.0, 1.0)),
+    )
+    source.on_message("joint_state", reading(0.3, -0.2))
+    return source
+
+
+def test_pd_commands_use_one_complete_motor_frame_and_hold_unclaimed_joints(pd_source):
+    values = pd_source.command({J1: 0.5}, ControlMode.SERVO_POSITION)
+    ((port, frame),) = pd_source.command_messages(values, ts=123.0)
+
+    assert pd_source.command_ports == ["motor_command"]
+    assert port == "motor_command"
+    assert list(frame.q) == [0.5, -0.2]
+    assert list(frame.dq) == [0.0, 0.0]
+    assert list(frame.tau) == [0.0, 0.0]
+    assert list(frame.kp) == [80.0, 40.0]
+    assert list(frame.kd) == [2.0, 1.0]
+    assert pd_source.command({}, None)[f"{J1}/position"] == 0.5
+
+
+@pytest.mark.parametrize(
+    ("mode", "dq", "tau", "kp", "kd"),
+    [(ControlMode.VELOCITY, 0.4, 0.0, 0.0, 2.0), (ControlMode.TORQUE, 0.0, 0.4, 0.0, 0.0)],
+)
+def test_pd_velocity_and_effort_disable_the_competing_position_servo(
+    pd_source, mode, dq, tau, kp, kd
+):
+    values = pd_source.command({J1: 0.4}, mode)
+    ((_, frame),) = pd_source.command_messages(values, ts=123.0)
+    assert (frame.dq[0], frame.tau[0], frame.kp[0], frame.kd[0]) == (dq, tau, kp, kd)
+    assert (frame.q[1], frame.kp[1], frame.kd[1]) == (-0.2, 40.0, 1.0)
+
+
+def test_pd_reset_drops_targets_but_keeps_explicit_gains(pd_source):
+    pd_source.command({J1: 0.7}, ControlMode.POSITION)
+    pd_source.drop_holds()
+    assert not pd_source.ready_for_control()
+    pd_source.on_message("joint_state", reading(-0.1, 0.2))
+    ((_, frame),) = pd_source.command_messages(pd_source.command({}, None), ts=123.0)
+    assert list(frame.q) == [-0.1, 0.2]
+    assert list(frame.kp) == [80.0, 40.0]
+
+
+@pytest.mark.parametrize(
+    "gains",
+    [
+        WholeBodyConfig(kp=(1.0,), kd=(1.0,)),
+        WholeBodyConfig(kp=(1.0, float("nan")), kd=(1.0, 1.0)),
+        WholeBodyConfig(kp=(1.0, 1.0), kd=(-1.0, 1.0)),
+    ],
+)
+def test_pd_gains_must_match_the_description_and_be_finite_nonnegative(gains):
+    with pytest.raises(ValueError, match="gains"):
+        ConnectionSource(arm(command=MOTOR_INTERFACES), motor_gains=gains)
