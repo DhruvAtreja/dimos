@@ -110,9 +110,23 @@ red cube, public robot FK/IK sets the grasp, and existing coordinator trajectory
 and gripper tasks move it. It reads no scene, seed or private object TF. The
 host verifier requires trusted score **1**; motion completion alone cannot pass.
 This checks control/transport capability, not general autonomous agent capability.
-The exported seed-0 fixture currently fails this positive check: the scripted
-client raises the cube but loses the grasp before the final measurement. Keep
-this acceptance failure visible; the passing hold baseline is not successful Lift.
+The scripted client is not yet a repeatable positive control on the seed-0
+export: identical-fixture live runs have scored both 0 and 1. Keep failures
+visible; the passing hold baseline is not successful Lift.
+
+A diagnostic comparison captures only the robot-generated commands and their
+applied simulation steps, then replays that exact sequence through the existing
+`ShmMujocoAdapter` and `_WholeBodySimHooks` in a single trusted container. It uses
+the same image, scene, home pose, physics timestep, camera settings and recorded
+simulation-step cutoff, with the original readiness/scorer formulas. A successful
+sequence scored 1 on both paths; a failed sequence scored 0 on both paths.
+Actuator targets and all eight joint positions matched exactly at every recorded
+step in both comparisons. The close command remained active at maximum actuator
+target through the failure; there was no transport-induced release or reset.
+For these sequences the missing acceptance condition is a repeatable successful
+public controller/trajectory, not a different grading formula. The successful
+robot-generated command trace is retained as diagnostic evidence, but is not
+a private testcase or ground-truth input shipped in the robot image.
 
 The default robot client uses normal ControlCoordinator trajectory APIs and
 camera ports for a deterministic hold baseline on the existing lift task.
