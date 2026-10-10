@@ -69,6 +69,10 @@ class GaitParams:
     twist_torque: float = 220.0  # pusher hinge torque at full yaw error (Nm)
     twist_timeout: float = 1.5
     twist_preload: float = 0.01  # pusher slide over-extension to load its feet (m)
+    # pusher hinges hold their stance angle at this fraction of hinge_kp while pushing; at 0
+    # (pure torque) a pusher planted behind the hub whose foot slips swings freely, up to
+    # horizontal or past vertical, when turning while walking
+    twist_hold: float = 1.0
     vx_deadband: float = 0.01
     wz_deadband: float = 0.03
     hinge_kp: float = 900.0
@@ -388,7 +392,9 @@ class PairGait:
             for i in GROUP_A:
                 hi, si = 2 * i, 2 * i + 1
                 left = self.g.slab_y[i] > 0
-                out.q[hi] = meas.joint_q[hi]  # hinge in torque mode, damped
-                out.kp[hi] = 0.0
+                if p.twist_hold > 0:  # push on top of the stance target, bounded deflection
+                    out.kp[hi] = p.twist_hold * p.hinge_kp
+                else:  # hinge in torque mode, damped
+                    out.q[hi], out.kp[hi] = meas.joint_q[hi], 0.0
                 out.tau[hi] = -push if left else push
                 out.q[si] += p.twist_preload

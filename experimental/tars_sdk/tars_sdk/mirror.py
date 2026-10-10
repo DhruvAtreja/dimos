@@ -94,7 +94,8 @@ def main() -> None:
     buf = np.ndarray((model.nq + 1,), dtype=np.float64, buffer=shm.buf)
     hub = model.body(prefix + "base_link").id
     with mujoco.viewer.launch_passive(model, data) as viewer:
-        viewer.cam.distance, viewer.cam.azimuth, viewer.cam.elevation = 3.0, 135.0, -20.0
+        # follow camera, steep enough to look over nearby walls in indoor scenes
+        viewer.cam.distance, viewer.cam.azimuth, viewer.cam.elevation = 2.8, 135.0, -40.0
         seq = -1.0
         while viewer.is_running():
             if buf[0] != seq:
