@@ -1071,75 +1071,68 @@ class PickAndPlaceModule(Module):
     def _look_around(self, target: ScannedObject, group: PlanningGroupID) -> dict[str, Any]:
         """Look at the target from more viewpoints around it, before grasping.
 
-        The first view is where scan_objects saw it from. Each next viewpoint
-        (see ``scan_view_distance``) is the reachable one farthest around the
-        ring from the views taken; the planner checks every move against the
-        scene. At each the target is detected again, and the scene registration
-        adds that view's points to the target's, which it keeps under the
-        target's id meanwhile. The arm then returns to the scan pose and looks
-        once more, so the scene the grasp checks use is seen from there, as
-        without the extra views.
+        See ``look_around.look``; every move is planned against the scene. At
+        each view the target is detected again, and the scene registration, which
+        keeps the target meanwhile, adds the view's points to it. The arm then
+        returns to the scan pose and looks once more, so the scene the grasp
+        checks use is seen from there.
 
-        Args:
-            target: The object to grasp, from the latest scan.
-            group: Planning group carrying the camera.
-
-        Returns ``views`` (viewpoints reached), ``unreachable`` (viewpoints the
-        planner found no path to) and ``points`` (the target's cloud size
-        before and after), or ``{"skipped": why}``.
+        Returns ``look``'s facts and ``points`` (the target's cloud size before
+        and after), or ``{"skipped": why}``.
         """
-        if self.config.camera_from_tip is None:
-            return {"skipped": "no camera_from_tip in the config"}
         state = self._manipulation.get_state().groups.get(group)
-        if state is None or state.end_effector_pose is None:
-            return {"skipped": "no tool tip pose"}
-        camera_from_tip = np.asarray(self.config.camera_from_tip, dtype=np.float64)
-        center = (target.position.x, target.position.y, target.position.z)
-        camera = pose_to_matrix(state.end_effector_pose) @ camera_from_tip
-        seen = [look_around.bearing_of(center, camera[:3, 3])]
-        bearings = look_around.ring(seen[0], self.config.scan_view_bearings)[1:]
-        facts: dict[str, Any] = {"views": 0, "unreachable": 0}
+        if self.config.camera_from_tip is None or state is None or not state.end_effector_pose:
+            return {"skipped": "no camera_from_tip in the config, or no tool tip pose"}
         if not self._scene.keep_object(target.object_id):
             return {"skipped": f"the scene registration has no object {target.object_id}"}
+        camera_from_tip = np.asarray(self.config.camera_from_tip, dtype=np.float64)
+
+        def move(tip: Any) -> str | None:
+            pose = matrix_to_pose(tip)
+            stamped = PoseStamped(
+                frame_id=self.config.planning_frame,
+                position=pose.position,
+                orientation=pose.orientation,
+            )
+            blocked = self._move(stamped, group)
+            if isinstance(blocked, PlanResult):
+                return look_around.UNREACHABLE
+            return None if blocked is None else _status(blocked)
+
+        def tip_now() -> Any:
+            return pose_to_matrix(self._manipulation.get_state().groups[group].end_effector_pose)
+
         before = self._scene.get_object_pointcloud_by_object_id(target.object_id)
-        while facts["views"] < self.config.scan_views and bearings:
-            bearing = look_around.farthest(bearings, seen)
-            bearings.remove(bearing)
-            tip = look_around.viewpoint(
-                center,
-                bearing,
+        facts = look_around.look(
+            (target.position.x, target.position.y, target.position.z),
+            tip_now(),
+            camera_from_tip,
+            self.config.scan_views,
+            (
                 self.config.scan_view_distance,
                 math.radians(self.config.scan_view_elevation),
-                camera_from_tip,
-            )
-            pose = matrix_to_pose(tip)
-            blocked = self._move(
-                PoseStamped(
-                    frame_id=self.config.planning_frame,
-                    position=pose.position,
-                    orientation=pose.orientation,
-                ),
-                group,
-            )
-            if isinstance(blocked, PlanResult):
-                facts["unreachable"] += 1
-                continue
-            if blocked is not None:
-                facts["stopped"] = _status(blocked)
-                break
-            seen.append(bearing)
-            facts["views"] += 1
-            self._detect_after(target.name, time.time())
+                self.config.scan_view_bearings,
+            ),
+            move,
+            lambda: self._detect_after(target.name, time.time()),
+        )
         if facts["views"]:
             returned = self._return_to_scan_pose(group)
+            if isinstance(returned, PlanResult):
+                # A view can put points close enough to the arm that the planner
+                # will not start from where it stands: back straight away from
+                # the target along the camera's view, the way it came, then retry.
+                back = look_around.back_away(
+                    tip_now(), camera_from_tip, self.config.scan_view_distance / 3.0
+                )
+                self._manipulation.move_linear(*back.tolist(), group, check_collision=False)
+                returned = self._return_to_scan_pose(group)
             if returned is not None:
                 facts["stopped"] = _status(returned)
             else:
                 self._detect_after(target.name, time.time())
         after = self._scene.get_object_pointcloud_by_object_id(target.object_id)
-        facts["points"] = [
-            0 if cloud is None else len(cloud.points_f32()) for cloud in (before, after)
-        ]
+        facts["points"] = [0 if c is None else len(c.points_f32()) for c in (before, after)]
         return facts
 
     def _detect_after(self, label: str, since: float) -> Detection3DArray | None:

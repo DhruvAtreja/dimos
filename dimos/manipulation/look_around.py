@@ -21,11 +21,15 @@ evenly spaced bearings. A frame's Z axis must point up.
 
 from __future__ import annotations
 
-from collections.abc import Sequence
+from collections.abc import Callable, Sequence
 import math
+from typing import Any
 
 import numpy as np
 from numpy.typing import NDArray
+
+# What a ``look`` move returns when the planner finds no path to a viewpoint.
+UNREACHABLE = "unreachable"
 
 
 def viewpoint(
@@ -65,6 +69,61 @@ def viewpoint(
     camera[:3, :3] = np.column_stack([right, np.cross(forward, right), forward])
     camera[:3, 3] = eye
     return camera @ np.linalg.inv(camera_from_tip)
+
+
+def look(
+    center: Sequence[float],
+    tip: NDArray[np.float64],
+    camera_from_tip: NDArray[np.float64],
+    views: int,
+    ring_of: tuple[float, float, int],
+    move: Callable[[NDArray[np.float64]], str | None],
+    detect: Callable[[], object],
+) -> dict[str, Any]:
+    """Look at an object from up to ``views`` more viewpoints around it.
+
+    The first view is where the camera is. Each next viewpoint is the one
+    farthest around the ring from the views taken that ``move`` reaches.
+
+    Args:
+        center: The object's centre, metres.
+        tip: The tool tip's pose now, 4x4.
+        camera_from_tip: The camera's optical frame in the tool tip's frame, 4x4.
+        views: How many more views to take.
+        ring_of: The ring's camera distance (metres), elevation (radians) and
+            number of evenly spaced bearings (see ``viewpoint``).
+        move: Takes the arm to a tool tip pose (4x4); returns None on arrival,
+            UNREACHABLE when there is no path, else why it stopped.
+        detect: Looks at the object from where the arm is.
+
+    Returns ``views`` taken and ``unreachable`` viewpoints, and ``stopped``
+    when a move stopped part way.
+    """
+    distance, elevation, count = ring_of
+    seen = [bearing_of(center, (tip @ camera_from_tip)[:3, 3])]
+    bearings = ring(seen[0], count)[1:]
+    facts: dict[str, Any] = {"views": 0, "unreachable": 0}
+    while facts["views"] < views and bearings:
+        bearing = farthest(bearings, seen)
+        bearings.remove(bearing)
+        why = move(viewpoint(center, bearing, distance, elevation, camera_from_tip))
+        if why == UNREACHABLE:
+            facts["unreachable"] += 1
+            continue
+        if why is not None:
+            facts["stopped"] = why
+            break
+        seen.append(bearing)
+        facts["views"] += 1
+        detect()
+    return facts
+
+
+def back_away(
+    tip: NDArray[np.float64], camera_from_tip: NDArray[np.float64], distance: float
+) -> NDArray[np.float64]:
+    """The straight move (metres) taking the camera ``distance`` back from what it looks at."""
+    return -(tip @ camera_from_tip)[:3, 2] * distance
 
 
 def bearing_of(center: Sequence[float], camera: Sequence[float]) -> float:

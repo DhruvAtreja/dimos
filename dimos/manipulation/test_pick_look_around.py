@@ -27,6 +27,7 @@ from dimos.manipulation.test_pick_and_place_unit import (  # noqa: F401
     CUP_AT,
     PLANNED,
     _detections,
+    _joints,
     module,
     settled_gripper,
 )
@@ -74,7 +75,9 @@ def test_pick_without_a_camera_offset_skips_looking_around(module: PickAndPlaceM
 
     result = module.pick_object("cup-1")
 
-    assert result.metadata["scan_views"] == {"skipped": "no camera_from_tip in the config"}
+    assert result.metadata["scan_views"] == {
+        "skipped": "no camera_from_tip in the config, or no tool tip pose"
+    }
 
 
 def test_pick_keeps_its_target_in_the_scene_registration_while_looking_around(
@@ -101,3 +104,26 @@ def test_pick_skips_looking_around_a_target_the_registration_lost(
     assert result.metadata["scan_views"] == {
         "skipped": "the scene registration has no object cup-1"
     }
+
+
+def test_look_around_backs_away_when_the_planner_will_not_start_from_a_view(
+    module: PickAndPlaceModule,
+) -> None:
+    module.config.scan_views = 1
+    module.config.camera_from_tip = CAMERA_FROM_TIP
+    module._scene.scan_scene.return_value = _detections(ts=time.time() + 60.0)
+    module._scan_joints = {"arm/tool": _joints(0.3)}
+    stuck = PlanResult(PlanStatus.FAILED, "Start configuration is in collision")
+    module._manipulation.plan_to_joints.side_effect = [stuck, PLANNED] + [PLANNED] * 10
+
+    result = module.pick_object("cup-1")
+
+    assert "stopped" not in result.metadata["scan_views"]
+    # The first move with collision checking off backs the camera away from the cup.
+    backing = next(
+        c
+        for c in module._manipulation.move_linear.call_args_list
+        if c.kwargs.get("check_collision") is False
+    )
+    delta = np.array(backing.args[:3])
+    assert np.linalg.norm(delta) == pytest.approx(0.35 / 3.0)
