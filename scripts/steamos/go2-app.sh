@@ -44,12 +44,10 @@ case "$mode" in
     [ -n "$serial" ] && key=$(awk -v s="$serial" '$1 == s && $2 != "(empty)" {print $2}' "$keys" 2>/dev/null | head -1)
     # the AP name is the alias plus a suffix, e.g. Go2_60968_83d2f1
     [ -z "$key" ] && [ -n "$ssid" ] && key=$(awk -v a="$ssid" '$2 != "(empty)" && (a == $3 || index(a, $3 "_") == 1) {print $2}' "$keys" 2>/dev/null | head -1)
-    if [ -z "$key" ]; then
-      kdialog --title "$APP" --sorry "Found a Go2 at $ip (serial ${serial:-unknown}, WiFi ${ssid:-unknown}) but there is no AES key for it on this device.\n\nAdd a line to ~/.config/dimos/go2-keys:  SERIAL  KEY  ALIAS"
-      exit 1
-    fi
-    say "Go2 ${serial:-$ssid} found at $ip. Starting..."
-    args="--record run unitree-go2-gamepad-cockpit --robot-ip $ip --unitree-aes-128-key $key"
+    # a dog that is not in the key file connects without encryption
+    if [ -z "$key" ]; then say "Go2 ${serial:-$ssid} found at $ip, no AES key on file: connecting unencrypted."
+    else say "Go2 ${serial:-$ssid} found at $ip. Starting..."; fi
+    args="--record run unitree-go2-gamepad-cockpit --robot-ip $ip${key:+ --unitree-aes-128-key $key}"
     ;;
 esac
 
