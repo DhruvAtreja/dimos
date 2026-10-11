@@ -1075,7 +1075,10 @@ class PickAndPlaceModule(Module):
         (see ``scan_view_distance``) is the reachable one farthest around the
         ring from the views taken; the planner checks every move against the
         scene. At each the target is detected again, and the scene registration
-        adds that view's points to the target's.
+        adds that view's points to the target's, which it keeps under the
+        target's id meanwhile. The arm then returns to the scan pose and looks
+        once more, so the scene the grasp checks use is seen from there, as
+        without the extra views.
 
         Args:
             target: The object to grasp, from the latest scan.
@@ -1096,6 +1099,8 @@ class PickAndPlaceModule(Module):
         seen = [look_around.bearing_of(center, camera[:3, 3])]
         bearings = look_around.ring(seen[0], self.config.scan_view_bearings)[1:]
         facts: dict[str, Any] = {"views": 0, "unreachable": 0}
+        if not self._scene.keep_object(target.object_id):
+            return {"skipped": f"the scene registration has no object {target.object_id}"}
         before = self._scene.get_object_pointcloud_by_object_id(target.object_id)
         while facts["views"] < self.config.scan_views and bearings:
             bearing = look_around.farthest(bearings, seen)
@@ -1125,6 +1130,12 @@ class PickAndPlaceModule(Module):
             seen.append(bearing)
             facts["views"] += 1
             self._detect_after(target.name, time.time())
+        if facts["views"]:
+            returned = self._return_to_scan_pose(group)
+            if returned is not None:
+                facts["stopped"] = _status(returned)
+            else:
+                self._detect_after(target.name, time.time())
         after = self._scene.get_object_pointcloud_by_object_id(target.object_id)
         facts["points"] = [
             0 if cloud is None else len(cloud.points_f32()) for cloud in (before, after)

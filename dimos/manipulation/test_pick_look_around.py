@@ -75,3 +75,29 @@ def test_pick_without_a_camera_offset_skips_looking_around(module: PickAndPlaceM
     result = module.pick_object("cup-1")
 
     assert result.metadata["scan_views"] == {"skipped": "no camera_from_tip in the config"}
+
+
+def test_pick_keeps_its_target_in_the_scene_registration_while_looking_around(
+    module: PickAndPlaceModule,
+) -> None:
+    module.config.scan_views = 1
+    module.config.camera_from_tip = CAMERA_FROM_TIP
+    module._scene.scan_scene.return_value = _detections(ts=time.time() + 60.0)
+
+    module.pick_object("cup-1")
+
+    module._scene.keep_object.assert_called_once_with("cup-1")
+
+
+def test_pick_skips_looking_around_a_target_the_registration_lost(
+    module: PickAndPlaceModule,
+) -> None:
+    module.config.scan_views = 2
+    module.config.camera_from_tip = CAMERA_FROM_TIP
+    module._scene.keep_object.return_value = False
+
+    result = module.pick_object("cup-1")
+
+    assert result.metadata["scan_views"] == {
+        "skipped": "the scene registration has no object cup-1"
+    }
