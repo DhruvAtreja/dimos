@@ -20,7 +20,7 @@ import time
 import pytest
 
 from dimos.evals.isolated_mujoco.runtime import ActionBoundary
-from dimos.protocol.mujoco_eval import Command, session_config
+from dimos.protocol.manipulator_io import Command, session_config
 
 
 @pytest.fixture
@@ -124,7 +124,7 @@ def test_zenoh_config_has_no_discovery_shm_or_admin_and_denies_other_keys():
     assert config["transport"]["shared_memory"]["enabled"] is False
     actions = config["access_control"]["rules"][0]
     assert actions["messages"] == ["put"]
-    assert actions["key_exprs"] == ["mujoco-eval/run/episode/command"]
+    assert actions["key_exprs"] == ["manipulator-io/run/episode/command"]
 
 
 def test_closed_episode_cannot_accept_more_commands(boundary):

@@ -12,7 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Normal CLI startup works after the robot image excludes private packages."""
+"""Generic evaluation CLI stays usable while private case definitions stay absent."""
 
 import os
 from pathlib import Path
@@ -21,14 +21,14 @@ import subprocess
 import sys
 
 
-def test_robot_cli_starts_without_private_eval_or_simulator_package(tmp_path):
+def test_robot_cli_starts_with_generic_eval_code_without_private_cases(tmp_path):
     project = Path(__file__).resolve().parents[3]
     shutil.copytree(
         project / "dimos",
         tmp_path / "dimos",
         ignore=shutil.ignore_patterns("__pycache__", "test_*.py", "conftest.py"),
     )
-    for relative in ("evals", "simulation", "experimental/scene_cooking"):
+    for relative in ("evals/suites", "experimental/scene_cooking"):
         shutil.rmtree(tmp_path / "dimos" / relative)
     dependency_paths = [p for p in sys.path if p and not Path(p).resolve().is_relative_to(project)]
     env = dict(
@@ -46,5 +46,6 @@ def test_robot_cli_starts_without_private_eval_or_simulator_package(tmp_path):
         timeout=30,
     )
     assert result.returncode == 0, result.stderr
-    assert "evals" not in result.stdout
+    assert "evals" in result.stdout
+    assert not (tmp_path / "dimos/evals/suites").exists()
     assert "run" in result.stdout

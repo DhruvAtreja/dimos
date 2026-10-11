@@ -12,7 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""ManipulatorAdapter for the isolated evaluation runtime; never attaches SHM."""
+"""Remote ManipulatorAdapter over bounded typed Zenoh; never attaches SHM."""
 
 from __future__ import annotations
 
@@ -24,10 +24,10 @@ import zenoh
 
 from dimos.hardware.manipulators.spec import ControlMode, ManipulatorInfo
 from dimos.hardware.spec import JointLimits
-from dimos.protocol.mujoco_eval import MAX_COMMAND_BYTES, Command, State, key, session_config
+from dimos.protocol.manipulator_io import MAX_COMMAND_BYTES, Command, State, key, session_config
 
 
-class MujocoEvalAdapter:
+class ZenohManipulatorAdapter:
     def __init__(
         self, dof: int, address: str, run: str, episode: str, timeout_s: float = 30.0, **_: Any
     ) -> None:
@@ -130,7 +130,7 @@ class MujocoEvalAdapter:
         return self.write_enable(False)
 
     def get_info(self) -> ManipulatorInfo:
-        return ManipulatorInfo(vendor="Simulation", model="Isolated MuJoCo", dof=self._dof)
+        return ManipulatorInfo(vendor="Remote", model="Zenoh Manipulator", dof=self._dof)
 
     def get_dof(self) -> int:
         return self._dof

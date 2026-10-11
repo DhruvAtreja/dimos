@@ -46,7 +46,7 @@ services:
     tmpfs:
       - /tmp:rw,nosuid,nodev,size=256m
     environment:
-      DIMOS_MUJOCO_EVAL_ENDPOINT: ${EVAL_ENDPOINT:?Set explicit loopback TCP endpoint}
-      DIMOS_MUJOCO_EVAL_RUN: ${EVAL_RUN:?Set public run ID}
-      DIMOS_MUJOCO_EVAL_EPISODE: ${EVAL_EPISODE:?Set public episode ID}
+      DIMOS_MANIPULATOR_ENDPOINT: ${EVAL_ENDPOINT:?Set explicit loopback TCP endpoint}
+      DIMOS_MANIPULATOR_RUN: ${EVAL_RUN:?Set public run ID}
+      DIMOS_MANIPULATOR_EPISODE: ${EVAL_EPISODE:?Set public episode ID}
       EVAL_PROBE_MODE: ${EVAL_PROBE_MODE:-normal}

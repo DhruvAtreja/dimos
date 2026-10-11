@@ -18,7 +18,7 @@ from pathlib import Path
 
 from dimos.control.coordinator import TaskConfig
 from dimos.core.coordination.blueprints import autoconnect
-from dimos.core.global_config import global_config
+from dimos.hardware.manipulators.zenoh.config import ManipulatorConnection
 from dimos.manipulation.manipulation_module import ManipulationModule
 from dimos.manipulation.manipulation_skills import ManipulationSkills
 from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
@@ -28,15 +28,17 @@ from dimos.robot.manipulators.common.blueprints import coordinator, trajectory_t
 from dimos.robot.manipulators.mujoco_robot_io import MujocoRobotIO
 from dimos.robot.manipulators.xarm.config import make_xarm7_sim_robot_config, make_xarm_hardware
 
+_connection = ManipulatorConnection()
+
 _hardware = make_xarm_hardware(
     "arm",
     7,
     gripper=True,
-    adapter_type="mujoco_eval",
-    address=global_config.mujoco_eval_endpoint,
+    adapter_type="zenoh_manipulator",
+    address=_connection.endpoint,
     adapter_kwargs={
-        "run": global_config.mujoco_eval_run,
-        "episode": global_config.mujoco_eval_episode,
+        "run": _connection.run,
+        "episode": _connection.episode,
     },
 )
 
@@ -66,9 +68,9 @@ xarm_eval = autoconnect(
     ),
     ManipulationSkills.blueprint(),
     MujocoRobotIO.blueprint(
-        endpoint=global_config.mujoco_eval_endpoint,
-        run=global_config.mujoco_eval_run,
-        episode=global_config.mujoco_eval_episode,
+        endpoint=_connection.endpoint,
+        run=_connection.run,
+        episode=_connection.episode,
     ),
     coordinator(
         hardware=[_hardware],

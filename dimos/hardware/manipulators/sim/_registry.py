@@ -13,6 +13,5 @@
 # limitations under the License.
 
 ADAPTER_FACTORIES = {
-    "mujoco_eval": "dimos.hardware.manipulators.sim.eval_adapter:MujocoEvalAdapter",
     "sim_mujoco": "dimos.hardware.manipulators.sim.adapter:ShmMujocoAdapter",
 }

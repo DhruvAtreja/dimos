@@ -17,9 +17,10 @@ RUN uv python install 3.12 && uv sync --frozen --no-install-project --group test
 RUN git clone https://github.com/xArm-Developer/xarm_ros2 /models/xarm_ros2 \
     && git -C /models/xarm_ros2 checkout 5bb832f72ca665f1236a9d8ed1c3a82f308db489
 COPY dimos /source/dimos
+# Generic eval/simulator source is public; case definitions and assets are not.
 # No scene data or Git history enters either final image. Private assets are mounted
 # only into the trusted container, by the host evaluator.
-RUN cp -a /source /robot && rm -rf /robot/dimos/evals /robot/dimos/simulation \
+RUN cp -a /source /robot && rm -rf /robot/dimos/evals/suites \
     /robot/dimos/experimental/scene_cooking \
     && find /robot -type f \( -name 'test_*.py' -o -name 'conftest.py' \) -delete \
     && find /robot -type d -name '__pycache__' -prune -exec rm -rf {} + \

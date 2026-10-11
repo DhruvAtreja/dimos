@@ -31,16 +31,16 @@ from dimos.control.tasks.trajectory_task.trajectory_task import (
     TrajectoryExecutionStatus,
     joint_trajectory_task,
 )
+from dimos.hardware.manipulators.zenoh.config import ManipulatorConnection
 from dimos.msgs.trajectory_msgs.JointTrajectory import JointTrajectory
 from dimos.msgs.trajectory_msgs.TrajectoryPoint import TrajectoryPoint
-from dimos.protocol.mujoco_eval import Command, key, session_config
+from dimos.protocol.manipulator_io import Command, key, session_config
 from dimos.robot.manipulators.mujoco_robot_io import MujocoRobotIO
 
 
 def main() -> None:
-    endpoint = os.environ["DIMOS_MUJOCO_EVAL_ENDPOINT"]
-    run = os.environ["DIMOS_MUJOCO_EVAL_RUN"]
-    episode = os.environ["DIMOS_MUJOCO_EVAL_EPISODE"]
+    connection = ManipulatorConnection()
+    endpoint, run, episode = connection.endpoint, connection.run, connection.episode
     mode = os.environ.get("EVAL_PROBE_MODE", "normal")
     with ExitStack() as cleanup:
         joints = [f"arm/joint{i}" for i in range(1, 8)] + ["arm/gripper"]
@@ -50,7 +50,7 @@ def main() -> None:
                     hardware_id="arm",
                     hardware_type=HardwareType.MANIPULATOR,
                     joints=joints,
-                    adapter_type="mujoco_eval",
+                    adapter_type="zenoh_manipulator",
                     address=endpoint,
                     adapter_kwargs={"run": run, "episode": episode},
                 )
@@ -95,9 +95,9 @@ def main() -> None:
             assert not Path("/private").exists()
             assert not Path("/results").exists()
             assert not Path("/var/run/docker.sock").exists()
-            assert not list(Path("/dev/shm").glob("dimos*"))
-            assert not Path("/app/dimos/evals").exists()
-            assert not Path("/app/dimos/simulation").exists()
+            assert not list(Path("/dev/shm").glob("dmjm_*"))
+            assert not Path("/app/dimos/evals/suites").exists()
+            assert Path("/app/dimos/evals/cli.py").exists()
             with socket.socket() as outbound:
                 outbound.settimeout(0.5)
                 assert outbound.connect_ex(("1.1.1.1", 443)) != 0

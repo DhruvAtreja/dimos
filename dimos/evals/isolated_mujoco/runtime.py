@@ -26,7 +26,6 @@ import threading
 import time
 from typing import Any, cast
 
-import numpy as np
 from pydantic import BaseModel, ConfigDict, Field
 import zenoh
 
@@ -38,11 +37,10 @@ from dimos.memory.store.sqlite import SqliteStore
 from dimos.msgs.geometry_msgs.Quaternion import Quaternion
 from dimos.msgs.geometry_msgs.Transform import Transform
 from dimos.msgs.geometry_msgs.Vector3 import Vector3
-from dimos.msgs.sensor_msgs.CameraInfo import CameraInfo
-from dimos.msgs.sensor_msgs.Image import Image, ImageFormat
+from dimos.msgs.sensor_msgs.Image import Image
 from dimos.msgs.sensor_msgs.JointState import JointState
 from dimos.msgs.tf2_msgs.TFMessage import TFMessage
-from dimos.protocol.mujoco_eval import (
+from dimos.protocol.manipulator_io import (
     MAX_COMMAND_BYTES,
     Command,
     Sensor,
@@ -50,8 +48,8 @@ from dimos.protocol.mujoco_eval import (
     key,
     session_config,
 )
-from dimos.simulation.engines.mujoco_engine import CameraConfig, MujocoEngine
-from dimos.simulation.engines.mujoco_sim_module import _RX180, _pose_matrix, _transform_from_matrix
+from dimos.simulation.engines.mujoco_engine import CameraConfig, CameraFrame, MujocoEngine
+from dimos.simulation.engines.mujoco_sim_module import MujocoSimulation
 
 
 class EpisodeConfig(BaseModel):
@@ -63,7 +61,9 @@ class EpisodeConfig(BaseModel):
     output: Path
     duration_s: float = Field(gt=0, le=1200)
     seed: int = 0
-    case: str = "robosuite_lift_cube"
+    case: str = Field(min_length=1)
+    tracked_body: str = Field(min_length=1)
+    rise_m: float = Field(gt=0)
     camera: str = "wrist_camera"
     home: list[float] = Field(min_length=7, max_length=7)
 
@@ -158,8 +158,6 @@ class ActionBoundary:
 
 class TrustedRuntime:
     def __init__(self, config: EpisodeConfig) -> None:
-        if config.case != "robosuite_lift_cube":
-            raise ValueError("This path supports the existing Robosuite lift case")
         self.config = config
         config.output.mkdir(parents=True, exist_ok=False)
         (config.output / "episode.json").write_text(config.model_dump_json(indent=2) + "\n")
@@ -177,7 +175,7 @@ class TrustedRuntime:
         self.recording = config.output / "memory.db"
         self.store = SqliteStore(path=str(self.recording))
         self._resources.callback(self.store.stop)
-        self.engine = MujocoEngine(
+        self.simulation = MujocoSimulation(
             config_path=config.scene,
             headless=True,
             cameras=[
@@ -187,6 +185,8 @@ class TrustedRuntime:
             ],
             reset_joint_positions=config.home,
         )
+        self.engine = self.simulation.engine
+        self._resources.callback(self.simulation.stop)
         if len(self.engine.joint_names) != 8:
             raise ValueError("Expected seven arm joints and one gripper")
         ranges = [self.engine.get_joint_range(i) for i in range(8)]
@@ -221,7 +221,6 @@ class TrustedRuntime:
             session_config(config.endpoint, trusted=True, run=config.run, episode=config.episode)
         )
         self._resources.callback(self.session.close)
-        self._resources.callback(self.engine.disconnect)
         self.subscriber = self.session.declare_subscriber(
             key(config.run, config.episode, "command"),
             lambda sample: self.boundary.receive(sample.payload.to_bytes()),
@@ -236,6 +235,9 @@ class TrustedRuntime:
         self._samples = 0
         self._error = ""
         self._holding = False
+        # Stop producers before transport/store cleanup; the early callback also
+        # protects startup validation failures. Simulation.stop is idempotent.
+        self._resources.callback(self.simulation.stop)
 
     def _before_step(self, engine: MujocoEngine) -> None:
         if self._samples == 0:
@@ -296,9 +298,9 @@ class TrustedRuntime:
             return
         with self._recording_lock:
             try:
-                pose = engine.get_body_pose("cube_main")
+                pose = engine.get_body_pose(self.config.tracked_body)
                 if pose is None:
-                    raise LookupError("Missing cube_main evidence")
+                    raise LookupError("Missing tracked-body evidence")
                 position, rotation = pose
                 if not all(math.isfinite(v) for v in (*position, *rotation)):
                     raise RuntimeError("Non-finite object evidence")
@@ -308,7 +310,7 @@ class TrustedRuntime:
                             translation=Vector3(*position),
                             rotation=Quaternion(*rotation),
                             frame_id="world",
-                            child_frame_id="cube_main",
+                            child_frame_id=self.config.tracked_body,
                             ts=now,
                         )
                     ),
@@ -363,46 +365,23 @@ class TrustedRuntime:
             key(self.config.run, self.config.episode, "sensor"), packet.model_dump_json()
         )
 
-    def publish_camera(self) -> None:
-        frame = self.engine.read_camera(self.config.camera)
-        if frame is None or frame.timestamp <= self._last_frame:
-            return
+    def _publish_camera(self, frame: CameraFrame) -> None:
         self._last_frame = frame.timestamp
-        optical = f"{self.config.camera}_color_optical_frame"
-        image = Image(data=frame.rgb, format=ImageFormat.RGB, frame_id=optical, ts=frame.timestamp)
-        self._publish_sensor("color_image", image)
-        self._publish_sensor(
-            "depth_image",
-            Image(data=frame.depth, format=ImageFormat.DEPTH, frame_id=optical, ts=frame.timestamp),
+        color, depth = MujocoSimulation.camera_images(frame, self.config.camera)
+        transforms = MujocoSimulation.camera_transforms(
+            frame, self.config.camera, "link7", frame.timestamp, require_relative=True
         )
-        fovy = self.engine.get_camera_fovy(self.config.camera)
-        if fovy is None or frame.base_pos is None or frame.base_mat is None:
-            raise RuntimeError("Missing robot-relative camera calibration")
-        focal = 240 / (2 * math.tan(math.radians(fovy) / 2))
+        self._publish_sensor("color_image", color)
+        self._publish_sensor("depth_image", depth)
         self._publish_sensor(
             "camera_info",
-            CameraInfo.from_intrinsics(
-                fx=focal,
-                fy=focal,
-                cx=160,
-                cy=120,
-                width=320,
-                height=240,
-                frame_id=optical,
-            ).with_ts(frame.timestamp),
-        )
-        inverse = np.linalg.inv(_pose_matrix(frame.base_pos, frame.base_mat))
-        camera = _pose_matrix(frame.cam_pos, frame.cam_mat.reshape(3, 3) @ _RX180.as_matrix())
-        self._publish_sensor(
-            "tf",
-            TFMessage(
-                _transform_from_matrix(
-                    inverse @ camera, frame_id="link7", child_frame_id=optical, ts=frame.timestamp
-                )
+            MujocoSimulation.camera_info(frame.fovy, 320, 240, color.frame_id).with_ts(
+                frame.timestamp
             ),
         )
+        self._publish_sensor("tf", TFMessage(*transforms))
         with self._recording_lock:
-            self.store.stream("color_image", Image).append(image, ts=frame.timestamp)
+            self.store.stream("color_image", Image).append(color, ts=frame.timestamp)
 
     def _result(self) -> dict[str, Any]:
         return {
@@ -418,11 +397,11 @@ class TrustedRuntime:
     def run(self) -> dict[str, Any]:
         result = self._result()
         try:
-            if not self.engine.connect():
-                raise RuntimeError("Engine failed to connect")
+            self.simulation.start(self.config.camera, 10.0, self._publish_camera)
             deadline = time.monotonic() + self.config.duration_s
             while time.monotonic() < deadline:
-                self.publish_camera()
+                if self.simulation.error:
+                    raise RuntimeError(self.simulation.error)
                 threading.Event().wait(0.01)
             if (
                 self._error
@@ -440,12 +419,12 @@ class TrustedRuntime:
         if not result["error"]:
             try:
                 with SqliteStore(path=str(self.recording), must_exist=True) as store:
-                    MujocoEnvironment(blueprint=[], tracked_bodies=("cube_main",)).wait_ready(
-                        store, deadline=time.monotonic() + 1.0
-                    )
-                    first_body_transform(store, "cube_main")
-                    last_body_transform(store, "cube_main")
-                result["score"] = lifted("cube_main", by_m=0.05)(
+                    MujocoEnvironment(
+                        blueprint=[], tracked_bodies=(self.config.tracked_body,)
+                    ).wait_ready(store, deadline=time.monotonic() + 1.0)
+                    first_body_transform(store, self.config.tracked_body)
+                    last_body_transform(store, self.config.tracked_body)
+                result["score"] = lifted(self.config.tracked_body, by_m=self.config.rise_m)(
                     Outcome(
                         trajectory=cast("Trajectory", None), artifacts={"recording": self.recording}
                     )

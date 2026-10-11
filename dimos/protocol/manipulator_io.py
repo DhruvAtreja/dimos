@@ -12,7 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Dedicated evaluation I/O: explicit TCP, bounded JSON, no RPC or discovery."""
+"""Manipulator I/O: explicit TCP, bounded JSON, no RPC or discovery."""
 
 from __future__ import annotations
 
@@ -25,7 +25,7 @@ import zenoh
 
 MAX_COMMAND_BYTES = 4096
 MAX_SENSOR_BYTES = 8 * 1024 * 1024
-PREFIX = "mujoco-eval"
+PREFIX = "manipulator-io"
 
 
 class Packet(BaseModel):

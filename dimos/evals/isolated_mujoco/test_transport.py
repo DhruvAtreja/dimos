@@ -22,9 +22,9 @@ import time
 import zenoh
 
 from dimos.evals.isolated_mujoco.runtime import ActionBoundary
-from dimos.hardware.manipulators.sim.eval_adapter import MujocoEvalAdapter
 from dimos.hardware.manipulators.spec import ManipulatorAdapter
-from dimos.protocol.mujoco_eval import Command, State, key, session_config
+from dimos.hardware.manipulators.zenoh.adapter import ZenohManipulatorAdapter
+from dimos.protocol.manipulator_io import Command, State, key, session_config
 
 
 def test_custom_client_is_limited_to_admitted_actuator_commands(tmp_path):
@@ -88,7 +88,7 @@ def test_adapter_receives_only_fresh_episode_state_and_implements_protocol(tmp_p
     with ExitStack() as cleanup:
         server = zenoh.open(session_config(endpoint, trusted=True, run="run", episode="episode"))
         cleanup.callback(server.close)
-        adapter = MujocoEvalAdapter(1, endpoint, "run", "episode", timeout_s=3)
+        adapter = ZenohManipulatorAdapter(1, endpoint, "run", "episode", timeout_s=3)
         cleanup.callback(adapter.disconnect)
         stop = threading.Event()
 

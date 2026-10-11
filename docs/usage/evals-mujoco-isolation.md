@@ -6,20 +6,29 @@ simulator, with its existing local SHM connection. It is **not** an isolation
 boundary. Use the dedicated compose file for agent-controlled evaluations.
 
 The robot image contains normal DimOS, Pi, a public xArm description, the
-`mujoco_eval` ManipulatorAdapter and `MujocoRobotIO`. It contains no evaluation
-suite, simulator engine, scene data, testcases, seeds or recording. The final
-image is built from filtered files in a fresh stage: private source is not
-hidden in lower image layers. The pinned public xArm description is prepared
+`zenoh_manipulator` ManipulatorAdapter and `MujocoRobotIO`. Generic evaluation
+and simulator source remains available; source visibility
+is not trusted execution authority. Private suite/case definitions, scene
+data, selected seeds and recordings are excluded. MuJoCo runtime dependencies
+remain in the trusted image. The robot image is built from filtered files in a
+fresh stage, so excluded cases/data are not hidden in lower image layers. The
+pinned public xArm description is prepared
 at build time; it needs no runtime download. `xarm-eval` composes the adapter
 with ControlCoordinator and existing manipulation skills. Its public robot
 base placement is 0.912 m, matching this export.
 
-The trusted image runs the existing MujocoEngine directly, without a DimOS
-coordinator/bus or exposed module RPC. Only it mounts the private scene,
+The existing `MujocoSimModule` and trusted runner share `MujocoSimulation`
+for engine lifecycle, camera polling, calibration and camera-relative TF. This
+core owns no DimOS bus, SHM bridge, reset/respawn endpoint or world-object TF
+publisher. The trusted runner adds admission and private recording/grading;
+the development module keeps its explicitly separate SHM/RPC integration. Only
+the trusted container mounts the private scene,
 manifest and results directory. Engine-produced object TF is appended directly
 to a new SQLite recording for this episode; it is never received from a bus.
-Existing MuJoCo readiness checks and `lifted("cube_main", by_m=0.05)` are reused
-without changing their formulas. Missing, non-finite, incomplete or stale
+Existing MuJoCo readiness and Lift scorer formulas are unchanged. The tracked
+body and rise threshold are selected by the trusted manifest, alongside the
+scene, testcase and seed; they are not embedded in robot-side source. Missing,
+non-finite, incomplete or stale
 evidence produces `score: null` and an infrastructure error. A pre-existing
 output directory is rejected rather than reusing evidence.
 
@@ -81,6 +90,8 @@ For each mode `normal`, `blocked`, `forgery`, `lift`, write a fresh private
   "duration_s": 30,
   "seed": 0,
   "case": "robosuite_lift_cube",
+  "tracked_body": "cube_main",
+  "rise_m": 0.05,
   "camera": "wrist_camera",
   "home": [0.0, -0.247, 0.0, 0.909, 0.0, 1.15644, 0.0]
 }
@@ -90,7 +101,11 @@ For each mode `normal`, `blocked`, `forgery`, `lift`, write a fresh private
 random scene sampling. The scene/test selection, home pose and duration remain
 trusted-side inputs. Set `EVAL_PRIVATE_DIR`, `EVAL_RESULT_DIR`, `EVAL_ENDPOINT`,
 `EVAL_RUN`, `EVAL_EPISODE` and `EVAL_PROBE_MODE` on the host. The public IDs and
-endpoint must match the private manifest. Result mounts must be writable by
+endpoint must match the private manifest. The blueprint reads local
+`ManipulatorConnection` settings from `DIMOS_MANIPULATOR_ENDPOINT`,
+`DIMOS_MANIPULATOR_RUN` and `DIMOS_MANIPULATOR_EPISODE`; these are not
+GlobalConfig/CLI fields. Compose maps the public host IDs to these settings.
+Result mounts must be writable by
 `EVAL_UID:EVAL_GID` (defaults 1000:1000).
 
 ```bash
@@ -110,7 +125,8 @@ plateaus extracted from the successful robot-generated `commands.jsonl` trace
 (SHA256 `1d6296aed3786407c28f3d7a7389046690aa3a4b77273e3b878b23d0e16c61b4`).
 Only public arm/gripper commands were retained. Existing coordinator trajectory
 and gripper tasks execute the original fixed move durations and recorded
-dwells (three seconds, or eight for the two original settling pauses); fresh public joint feedback gates each phase before advancement. The
+dwells (three seconds, or eight for the two original settling pauses); fresh
+public joint feedback gates each phase before advancement. The
 normal gripper task stays active until trusted sensor publication ends.
 It reads no scene, seed or object TF. The host verifier requires trusted score
 **1**; motion completion alone cannot pass. This is a control/transport test,

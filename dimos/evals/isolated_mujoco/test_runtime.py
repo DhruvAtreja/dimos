@@ -32,7 +32,7 @@ from dimos.evals.isolated_mujoco.runtime import EpisodeConfig, TrustedRuntime
 from dimos.memory.store.sqlite import SqliteStore
 from dimos.msgs.trajectory_msgs.JointTrajectory import JointTrajectory
 from dimos.msgs.trajectory_msgs.TrajectoryPoint import TrajectoryPoint
-from dimos.protocol.mujoco_eval import key, session_config
+from dimos.protocol.manipulator_io import key, session_config
 from dimos.robot.manipulators.mujoco_robot_io import MujocoRobotIO
 
 pytestmark = pytest.mark.mujoco
@@ -63,7 +63,15 @@ def synthetic_scene(path):
     )
 
 
-def test_trusted_engine_records_and_grades_without_agent_evidence(tmp_path):
+def test_trusted_engine_records_and_grades_without_agent_evidence(tmp_path, mocker):
+    mocker.patch(
+        "dimos.simulation.engines.mujoco_sim_module.ManipShmWriter",
+        side_effect=AssertionError("Trusted host must not create SHM"),
+    )
+    mocker.patch(
+        "dimos.simulation.engines.mujoco_sim_module.MujocoSimModule.start",
+        side_effect=AssertionError("Trusted host must not start module RPC/bus"),
+    )
     scene = tmp_path / "scene.xml"
     synthetic_scene(scene)
     with socket.socket() as sock:
@@ -71,6 +79,9 @@ def test_trusted_engine_records_and_grades_without_agent_evidence(tmp_path):
         endpoint = f"tcp/127.0.0.1:{sock.getsockname()[1]}"
     runtime = TrustedRuntime(
         EpisodeConfig(
+            case="synthetic_lift",
+            tracked_body="cube_main",
+            rise_m=0.05,
             run="run",
             episode="episode",
             endpoint=endpoint,
@@ -100,7 +111,7 @@ def test_trusted_engine_records_and_grades_without_agent_evidence(tmp_path):
                     hardware_id="arm",
                     hardware_type=HardwareType.MANIPULATOR,
                     joints=joints,
-                    adapter_type="mujoco_eval",
+                    adapter_type="zenoh_manipulator",
                     address=endpoint,
                     adapter_kwargs={"run": "run", "episode": "episode"},
                 )
@@ -147,6 +158,9 @@ def test_trusted_engine_records_and_grades_without_agent_evidence(tmp_path):
 
 def test_missing_scene_produces_unknown_infrastructure_result(tmp_path):
     config = EpisodeConfig(
+        case="synthetic_lift",
+        tracked_body="cube_main",
+        rise_m=0.05,
         run="run",
         episode="episode",
         endpoint="tcp/127.0.0.1:7449",
@@ -171,6 +185,9 @@ def test_hold_preserves_open_gripper_in_command_coordinates(tmp_path, mocker):
     with ExitStack() as cleanup:
         runtime = TrustedRuntime(
             EpisodeConfig(
+                case="synthetic_lift",
+                tracked_body="cube_main",
+                rise_m=0.05,
                 run="run",
                 episode="episode",
                 endpoint=endpoint,

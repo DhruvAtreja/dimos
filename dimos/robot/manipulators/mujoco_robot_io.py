@@ -27,7 +27,7 @@ from dimos.core.stream import Out
 from dimos.msgs.sensor_msgs.CameraInfo import CameraInfo
 from dimos.msgs.sensor_msgs.Image import Image
 from dimos.msgs.tf2_msgs.TFMessage import TFMessage
-from dimos.protocol.mujoco_eval import MAX_SENSOR_BYTES, Sensor, key, session_config
+from dimos.protocol.manipulator_io import MAX_SENSOR_BYTES, Sensor, key, session_config
 
 
 class MujocoRobotIOConfig(ModuleConfig):
