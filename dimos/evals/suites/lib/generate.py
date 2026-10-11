@@ -117,7 +117,13 @@ def main(argv: Sequence[str] | None = None) -> int:
         start_text, sep, stop_text = item.partition(":")
         if not sep:
             parser.error(f"window must be START:STOP, got {item!r}")
-        windows.append((float(start_text), float(stop_text)))
+        try:
+            start, stop = float(start_text), float(stop_text)
+        except ValueError:
+            parser.error(f"window bounds must be numbers, got {item!r}")
+        if stop <= start:
+            parser.error(f"window stop must be greater than start, got {item!r}")
+        windows.append((start, stop))
     rows = memory_rows(args.dataset, windows)
     write_rows(args.output, rows)
     print(f"wrote {len(rows)} rows to {args.output}")

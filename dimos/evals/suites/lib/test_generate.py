@@ -14,8 +14,10 @@
 
 from __future__ import annotations
 
+from pathlib import Path
 from types import SimpleNamespace
 
+import pytest
 from pytest_mock import MockerFixture
 
 from dimos.evals.suites.lib import generate
@@ -47,7 +49,7 @@ class _OdomStream:
         return iter(self._observations)
 
 
-def test_memory_rows_displacement_and_path(mocker: MockerFixture) -> None:
+def _patch_odom(mocker: MockerFixture) -> None:
     def obs(ts: float, x: float, y: float = 0.0) -> SimpleNamespace:
         return SimpleNamespace(ts=ts, data=SimpleNamespace(position=_Vec(x, y)))
 
@@ -56,9 +58,31 @@ def test_memory_rows_displacement_and_path(mocker: MockerFixture) -> None:
     store.streams.odom = stream
     mocker.patch("dimos.evals.suites.lib.generate.open_dataset", return_value=store)
 
+
+def test_memory_rows_displacement_and_path(mocker: MockerFixture) -> None:
+    _patch_odom(mocker)
     # range_time is half-open [start, stop); stop must clear the last sample.
     rows = generate.memory_rows("desk", [(0.0, 31.0)])
     assert [(row["id"], row["a"]) for row in rows] == [
         ("desk_disp_0_31", 5.0),
         ("desk_path_0_31", 7.0),
     ]
+
+
+@pytest.mark.parametrize("window", ["10:x", "10:5", "nope"])
+def test_main_rejects_bad_windows(window: str, tmp_path: Path, mocker: MockerFixture) -> None:
+    _patch_odom(mocker)
+    with pytest.raises(SystemExit):
+        generate.main(["desk", "-o", str(tmp_path / "rows.json"), "--window", window])
+
+
+def test_main_writes_deterministic_json(tmp_path: Path, mocker: MockerFixture) -> None:
+    _patch_odom(mocker)
+    first = tmp_path / "a.json"
+    second = tmp_path / "b.json"
+    argv = ["desk", "--window", "0:20", "--window", "0:31", "-o"]
+    assert generate.main([*argv, str(first)]) == 0
+    assert generate.main([*argv, str(second)]) == 0
+    assert first.read_bytes() == second.read_bytes()
+    assert b"desk_disp_0_20" in first.read_bytes()
+    assert b"desk_path_0_31" in first.read_bytes()
