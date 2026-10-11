@@ -38,9 +38,7 @@ class _OdomStream:
 
     def range_time(self, start: float, stop: float) -> _OdomStream:
         t0 = self._observations[0].ts
-        return _OdomStream(
-            [o for o in self._observations if t0 + start <= o.ts < t0 + stop]
-        )
+        return _OdomStream([o for o in self._observations if t0 + start <= o.ts < t0 + stop])
 
     def to_list(self) -> list[SimpleNamespace]:
         return list(self._observations)
