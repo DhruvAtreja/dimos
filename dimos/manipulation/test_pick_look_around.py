@@ -1,0 +1,77 @@
+# Copyright 2026 Dimensional Inc.
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
+"""pick_object looking at the cup from more viewpoints before grasping."""
+
+import time
+
+import numpy as np
+import pytest
+
+from dimos.manipulation.manipulation_spec import PlanResult, PlanStatus
+from dimos.manipulation.pick_and_place_module import PickAndPlaceModule
+
+# The pick-and-place unit tests' arm and cup, and their fixtures.
+from dimos.manipulation.test_pick_and_place_unit import (  # noqa: F401
+    CUP_AT,
+    PLANNED,
+    _detections,
+    module,
+    settled_gripper,
+)
+from dimos.utils.transform_utils import pose_to_matrix
+
+UNREACHABLE = PlanResult(PlanStatus.FAILED, "IK failed")
+
+# A camera 17 cm behind the tool tip, looking along its Z axis.
+CAMERA_FROM_TIP = (
+    (1.0, 0.0, 0.0, 0.0),
+    (0.0, 1.0, 0.0, 0.0),
+    (0.0, 0.0, 1.0, -0.17),
+    (0.0, 0.0, 0.0, 1.0),
+)
+
+
+def test_pick_looks_around_the_target_first_skipping_viewpoints_out_of_reach(
+    module: PickAndPlaceModule,
+) -> None:
+    module.config.scan_views = 2
+    module.config.camera_from_tip = CAMERA_FROM_TIP
+    # The first viewpoint tried (opposite the scan's) is out of reach.
+    module._manipulation.plan_to_poses.side_effect = [UNREACHABLE, PLANNED, PLANNED] + [
+        PLANNED
+    ] * 20
+    module._scene.scan_scene.return_value = _detections(ts=time.time() + 60.0)
+
+    result = module.pick_object("cup-1")
+
+    assert result.metadata["scan_views"] == {"views": 2, "unreachable": 1}
+    # The viewpoints, then the pre-grasp: each one's camera looks at the cup.
+    looks = [
+        call.args[0]["arm/tool"] for call in module._manipulation.plan_to_poses.call_args_list[:3]
+    ]
+    for pose in looks:
+        camera = pose_to_matrix(pose) @ np.asarray(CAMERA_FROM_TIP)
+        to_cup = np.array([CUP_AT.x, CUP_AT.y, CUP_AT.z]) - camera[:3, 3]
+        assert camera[:3, 2] == pytest.approx(to_cup / np.linalg.norm(to_cup))
+    # A detection at each of the two views reached, before grasping.
+    assert module._scene.scan_scene.call_count >= 2
+
+
+def test_pick_without_a_camera_offset_skips_looking_around(module: PickAndPlaceModule) -> None:
+    module.config.scan_views = 2
+
+    result = module.pick_object("cup-1")
+
+    assert result.metadata["scan_views"] == {"skipped": "no camera_from_tip in the config"}

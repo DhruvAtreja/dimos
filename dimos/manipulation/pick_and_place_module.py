@@ -31,6 +31,7 @@ from dimos.agents.capabilities import CAP_MOVEMENT
 from dimos.agents.skill_result import SkillResult
 from dimos.core.core import rpc
 from dimos.core.module import Module, ModuleConfig
+from dimos.manipulation import look_around
 from dimos.manipulation.grasp_verification import (
     GraspVerificationConfig,
     GripperSettle,
@@ -61,6 +62,7 @@ from dimos.msgs.sensor_msgs.JointState import JointState
 from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
 from dimos.msgs.vision_msgs.Detection3DArray import Detection3DArray
 from dimos.perception.experimental.object_scene_registration_spec import ObjectSceneRegistrationSpec
+from dimos.utils.transform_utils import matrix_to_pose, pose_to_matrix
 
 # The one box of mapped cells a pick asks the planner to ignore.
 VOXEL_MAP_EXCLUSION_ID = "pick-and-place/target"
@@ -156,6 +158,21 @@ class PickAndPlaceModuleConfig(ModuleConfig):
     grasp_depth_search: float = Field(default=0.0, ge=0.0)
     # Spacing (metres) of the depths tried.
     grasp_depth_step: float = Field(default=0.005, gt=0.0)
+    # Before the first grasp, look at the target from up to this many more
+    # viewpoints around it. The scene registration adds each view's points to
+    # the target's, so grasps are planned on more of its surface. Needs
+    # camera_from_tip. 0 grasps from the scan's single view.
+    scan_views: int = Field(default=0, ge=0)
+    # Viewpoints sit on a ring around the target: the camera this far (metres)
+    # from its centre, looking at it from this many degrees above the
+    # horizontal, at this many evenly spaced bearings. Each next view is the
+    # reachable one farthest around the ring from the views already taken.
+    scan_view_distance: float = Field(default=0.35, gt=0.0)
+    scan_view_elevation: float = Field(default=50.0, gt=0.0, lt=90.0)
+    scan_view_bearings: int = Field(default=8, ge=2)
+    # The wrist camera's optical frame (Z along its view) in the tool tip's
+    # frame, as a 4x4 row-major transform, metres. None: no camera on the arm.
+    camera_from_tip: tuple[tuple[float, float, float, float], ...] | None = None
 
 
 @dataclass(frozen=True)
@@ -278,6 +295,8 @@ class PickAndPlaceModule(Module):
         self._scan_joints: dict[PlanningGroupID, JointState] = {}
         # What the grasp contact check did over the current pick (see drop_touching).
         self._contact: dict[str, Any] = {}
+        # What looking around the target did before the current pick (see _look_around).
+        self._views: dict[str, Any] = {}
 
     @skill
     def scan_objects(self, prompts: list[str]) -> SkillResult:
@@ -391,6 +410,8 @@ class PickAndPlaceModule(Module):
             result.metadata.setdefault("contact_check_skipped", self._contact["skipped"])
         elif self._contact:
             result.metadata.setdefault("contact_rejected", dict(self._contact))
+        if self._views:
+            result.metadata.setdefault("scan_views", dict(self._views))
         return result
 
     def _pick(self, object_id: str, planning_group: PlanningGroupID | None) -> SkillResult:
@@ -402,6 +423,7 @@ class PickAndPlaceModule(Module):
             )
         self._clear_proposals()
         self._contact = {}
+        self._views = {}
         target = self._objects.get(object_id)
         if target is None:
             scanned = ", ".join(self._objects) or "none"
@@ -410,6 +432,8 @@ class PickAndPlaceModule(Module):
                 "Use scan_objects to refresh the list."
             )
         group = self._gripper_group(planning_group)
+        if self.config.scan_views > 0:
+            self._views = self._look_around(target, group)
         proposal = self._propose(target, group)
         if isinstance(proposal, SkillResult):
             return proposal
@@ -1043,6 +1067,63 @@ class PickAndPlaceModule(Module):
         if target.object_id in seen:
             return [seen[target.object_id]]
         return [obj for obj in seen.values() if obj.object_id not in self._objects]
+
+    def _look_around(self, target: ScannedObject, group: PlanningGroupID) -> dict[str, Any]:
+        """Look at the target from more viewpoints around it, before grasping.
+
+        The first view is where scan_objects saw it from. Each next viewpoint
+        (see ``scan_view_distance``) is the reachable one farthest around the
+        ring from the views taken; the planner checks every move against the
+        scene. At each the target is detected again, and the scene registration
+        adds that view's points to the target's.
+
+        Args:
+            target: The object to grasp, from the latest scan.
+            group: Planning group carrying the camera.
+
+        Returns ``views`` (viewpoints reached) and ``unreachable`` (viewpoints
+        the planner found no path to), or ``{"skipped": why}``.
+        """
+        if self.config.camera_from_tip is None:
+            return {"skipped": "no camera_from_tip in the config"}
+        state = self._manipulation.get_state().groups.get(group)
+        if state is None or state.end_effector_pose is None:
+            return {"skipped": "no tool tip pose"}
+        camera_from_tip = np.asarray(self.config.camera_from_tip, dtype=np.float64)
+        center = (target.position.x, target.position.y, target.position.z)
+        camera = pose_to_matrix(state.end_effector_pose) @ camera_from_tip
+        seen = [look_around.bearing_of(center, camera[:3, 3])]
+        bearings = look_around.ring(seen[0], self.config.scan_view_bearings)[1:]
+        facts = {"views": 0, "unreachable": 0}
+        while facts["views"] < self.config.scan_views and bearings:
+            bearing = look_around.farthest(bearings, seen)
+            bearings.remove(bearing)
+            tip = look_around.viewpoint(
+                center,
+                bearing,
+                self.config.scan_view_distance,
+                math.radians(self.config.scan_view_elevation),
+                camera_from_tip,
+            )
+            pose = matrix_to_pose(tip)
+            blocked = self._move(
+                PoseStamped(
+                    frame_id=self.config.planning_frame,
+                    position=pose.position,
+                    orientation=pose.orientation,
+                ),
+                group,
+            )
+            if isinstance(blocked, PlanResult):
+                facts["unreachable"] += 1
+                continue
+            if blocked is not None:
+                facts["stopped"] = _status(blocked)
+                break
+            seen.append(bearing)
+            facts["views"] += 1
+            self._detect_after(target.name, time.time())
+        return facts
 
     def _detect_after(self, label: str, since: float) -> Detection3DArray | None:
         """Detect a label in a camera frame taken after a given time.
