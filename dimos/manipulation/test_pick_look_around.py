@@ -56,7 +56,7 @@ def test_pick_looks_around_the_target_first_skipping_viewpoints_out_of_reach(
 
     result = module.pick_object("cup-1")
 
-    assert result.metadata["scan_views"] == {"views": 2, "unreachable": 1}
+    assert result.metadata["scan_views"] == {"views": 2, "unreachable": 1, "points": [2, 2]}
     # The viewpoints, then the pre-grasp: each one's camera looks at the cup.
     looks = [
         call.args[0]["arm/tool"] for call in module._manipulation.plan_to_poses.call_args_list[:3]
