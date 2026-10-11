@@ -448,7 +448,8 @@ class SimGo2World(Module):
                     frame_id=ODOM_FRAME_ID,
                     child_frame_id=SENSOR_FRAME_ID,
                     ts=stamp,
-                )
+                ),
+                Transform(frame_id="world", child_frame_id=ODOM_FRAME_ID, ts=stamp),
             )
         )
         base_position, base_rotation = sim.base_pose()
