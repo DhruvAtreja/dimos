@@ -35,6 +35,8 @@ import tempfile
 import time
 from typing import Any
 
+import sqlite_vec
+
 from dimos.cli.cloud import api_key
 from dimos.cloud import codecs, preview
 from dimos.cloud.cloud_request import CloudRequest, HttpCloudRequest
@@ -268,6 +270,7 @@ class MultipartBackend:
             if d.get("crop") and not full and _manifest(plain) is not None:
                 tick("trim", 0, 0)
                 _crop(plain, d["crop"]["start"], d["crop"]["end"])
+                tick("trim", 1, 1)  # a cancel during the cut stops here, before the move
             _move_into_place(plain, out)
         return out
 
@@ -430,9 +433,13 @@ def _move_into_place(src: Path, out: Path) -> None:
 
 
 def _crop(db: Path, start: float, end: float) -> None:
-    """Keeps [start, end] of every stream, by recorded timestamp. A stream with a single
-    message (recording metadata, a latched static transform) is kept whole."""
+    """Keeps [start, end] of every stream, by recorded timestamp, with the matching blob,
+    rtree and embedding rows. A stream with a single message (recording metadata, a
+    latched static transform) is kept whole."""
     with contextlib.closing(sqlite3.connect(db)) as conn:
+        conn.enable_load_extension(True)
+        sqlite_vec.load(conn)  # embedding tables are vec0 virtual tables
+        conn.enable_load_extension(False)
         tables = {r[0] for r in conn.execute("SELECT name FROM sqlite_master WHERE type='table'")}
         for (name,) in conn.execute("SELECT name FROM _streams").fetchall():
             if (
@@ -441,12 +448,15 @@ def _crop(db: Path, start: float, end: float) -> None:
             ):
                 continue
             outside = f'SELECT id FROM "{name}" WHERE ts < ? OR ts > ?'
-            for side in (f"{name}_blob", f"{name}_rtree"):
+            for side in (f"{name}_blob", f"{name}_rtree", f"{name}_vec"):
                 if side in tables:
-                    conn.execute(f'DELETE FROM "{side}" WHERE id IN ({outside})', (start, end))
+                    conn.execute(f'DELETE FROM "{side}" WHERE rowid IN ({outside})', (start, end))
             conn.execute(f'DELETE FROM "{name}" WHERE ts < ? OR ts > ?', (start, end))
         conn.commit()
-        conn.execute("VACUUM")
+        try:
+            conn.execute("VACUUM")
+        except sqlite3.OperationalError:
+            pass  # ponytail: no room to rebuild; the cut is complete, the file just keeps its size
 
 
 def _is_sidecar(path: Path) -> bool:

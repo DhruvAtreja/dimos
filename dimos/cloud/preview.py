@@ -150,7 +150,7 @@ def build(store: Store) -> dict[str, Any] | None:
     }
     return {
         "format": PREVIEW_FORMAT,
-        "t0": round(t0, 3),  # recorded timestamp of t=0: trim marks are saved as t0 + t
+        "t0": t0,  # recorded timestamp of t=0, unrounded: trim marks are saved as t0 + t
         "duration_s": round(t1 - t0, 3),
         "origin": origin.tolist(),
         "scale": PREVIEW_SCALE,

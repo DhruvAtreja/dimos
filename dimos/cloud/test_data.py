@@ -24,6 +24,7 @@ from typing import Any
 
 import numpy as np
 import pytest
+import sqlite_vec
 
 from dimos.cloud import data as cd
 from dimos.cloud.data import CloudData, DataApi, MultipartBackend
@@ -471,6 +472,13 @@ def test_pull_cuts_a_trimmed_recording_and_full_keeps_it_all(
         for i in range(20):
             odom.append(PoseStamped(position=[i, 0, 0], frame_id="world"), ts=1000.0 + i)
             images.append(Image.from_numpy(frame, frame_id="cam", ts=1000.0 + i), ts=1000.0 + i)
+    with contextlib.closing(sqlite3.connect(db)) as c:
+        c.enable_load_extension(True)
+        sqlite_vec.load(c)
+        c.execute('CREATE VIRTUAL TABLE "odom_vec" USING vec0(embedding float[2])')
+        for (rid,) in c.execute("SELECT id FROM odom").fetchall():
+            c.execute('INSERT INTO "odom_vec" (rowid, embedding) VALUES (?, ?)', (rid, "[1, 0]"))
+        c.commit()
     uid = cloud.upload(db)["upload_id"]
     t.uploads[uid]["crop"] = {"start": 1005.0, "end": 1009.0, "by": "admin@x.io"}
 
@@ -478,6 +486,9 @@ def test_pull_cuts_a_trimmed_recording_and_full_keeps_it_all(
     with contextlib.closing(sqlite3.connect(cut)) as c:
         assert c.execute("PRAGMA integrity_check").fetchone() == ("ok",)
         assert c.execute("SELECT count(*) FROM color_image_blob").fetchone() == (5,)
+        c.enable_load_extension(True)
+        sqlite_vec.load(c)
+        assert c.execute('SELECT count(*) FROM "odom_vec"').fetchone() == (5,)
     with SqliteStore(path=str(cut)) as store:
         assert [o.ts for o in store.streams["odom"]] == [1005.0 + i for i in range(5)]
         assert len(list(store.streams["color_image"])) == 5
