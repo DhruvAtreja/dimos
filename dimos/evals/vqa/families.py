@@ -29,6 +29,8 @@ from dimos.evals.vqa.contracts import (
     ObjectRangeEstimator,
     QuestionProposal,
 )
+from dimos.evals.vqa.primitives.bearing import BEARING_CHOICES, bearing_choice, estimate_camera_bearing
+from dimos.evals.vqa.primitives.color import COLOR_CHOICES, dominant_color_in_bbox
 
 if TYPE_CHECKING:
     from dimos.evals.vqa.pointcloud_frame import PointCloudFrame
@@ -43,6 +45,29 @@ PRESENCE_FAMILY = FamilySpec(
 HORIZONTAL_DIRECTION_FAMILY = FamilySpec(
     name="horizontal_direction",
     description="Use only for one clearly visible object instance.",
+)
+VERTICAL_DIRECTION_FAMILY = FamilySpec(
+    name="vertical_direction",
+    description=(
+        "Use only for one clearly visible object instance when its vertical position in the image "
+        "is clearly in the top, middle, or bottom third."
+    ),
+)
+PRESENCE_AND_FAMILY = FamilySpec(
+    name="presence_and",
+    description=(
+        "Ask whether two distinct object categories are both clearly visible in the same image."
+    ),
+    min_objects=2,
+    max_objects=2,
+    distinct_objects=True,
+)
+OBJECT_COLOR_FAMILY = FamilySpec(
+    name="object_color",
+    description=(
+        "Ask for the dominant color of one clearly visible object instance with a single, "
+        "unambiguous detection."
+    ),
 )
 OBJECT_COUNT_FAMILY = FamilySpec(
     name="object_count",
@@ -73,6 +98,15 @@ OBJECT_DISTANCE_FAMILY = FamilySpec(
     description="Estimate the range to one clearly visible object instance.",
     requires_pointcloud=True,
 )
+CAMERA_BEARING_FAMILY = FamilySpec(
+    name="camera_bearing",
+    description=(
+        "Ask whether one clearly visible object instance is to the left, ahead, or right of the "
+        "camera forward direction using calibrated range evidence."
+    ),
+    requires_pointcloud=True,
+    requires_masks=True,
+)
 CLOSEST_OBJECT_FAMILY = FamilySpec(
     name="closest_object",
     description=(
@@ -89,10 +123,14 @@ CLOSEST_OBJECT_FAMILY = FamilySpec(
 AVAILABLE_FAMILIES = (
     PRESENCE_FAMILY,
     HORIZONTAL_DIRECTION_FAMILY,
+    VERTICAL_DIRECTION_FAMILY,
+    PRESENCE_AND_FAMILY,
+    OBJECT_COLOR_FAMILY,
     OBJECT_COUNT_FAMILY,
     IMAGE_COVERAGE_FAMILY,
     LARGEST_VISIBLE_AREA_FAMILY,
     OBJECT_DISTANCE_FAMILY,
+    CAMERA_BEARING_FAMILY,
     CLOSEST_OBJECT_FAMILY,
 )
 
@@ -117,6 +155,12 @@ def answer_question(
         return _answer_presence(proposal, image, detector)
     if proposal.family == "horizontal_direction":
         return _answer_horizontal_direction(proposal, image, detector)
+    if proposal.family == "vertical_direction":
+        return _answer_vertical_direction(proposal, image, detector)
+    if proposal.family == "presence_and":
+        return _answer_presence_and(proposal, image, detector)
+    if proposal.family == "object_color":
+        return _answer_object_color(proposal, image, detector)
     if proposal.family == "object_count":
         return _answer_object_count(proposal, image, detector)
     if proposal.family == "image_coverage":
@@ -135,6 +179,12 @@ def answer_question(
                 "object distance requires image-aligned point-cloud evidence"
             )
         return _answer_object_distance(proposal, pointcloud_frame, range_estimator)
+    if proposal.family == "camera_bearing":
+        if pointcloud_frame is None or mask_estimator is None:
+            raise InsufficientEvidenceError(
+                "camera bearing requires image-aligned point-cloud and segmentation-mask evidence"
+            )
+        return _answer_camera_bearing(proposal, pointcloud_frame, mask_estimator)
     if proposal.family == "closest_object":
         if pointcloud_frame is None or range_estimator is None:
             raise InsufficientEvidenceError(
@@ -194,6 +244,120 @@ def _answer_horizontal_direction(
             "box": cast("JsonValue", list(map(float, box))),
             "center_x_px": center_x,
             "center_x_fraction": center_fraction,
+        },
+    )
+
+
+def _answer_vertical_direction(
+    proposal: QuestionProposal, image: Image, detector: VlModel
+) -> FamilyAnswer:
+    object_name = proposal.object_names[0]
+    detections = detector.query_detections(image, object_name)
+    if len(detections) != 1:
+        raise InsufficientEvidenceError(
+            f"vertical direction requires exactly one detected {object_name!r}, "
+            f"got {len(detections)}"
+        )
+
+    box = detections.detections[0].bbox
+    center_y = (box[1] + box[3]) / 2
+    center_fraction = center_y / image.height
+    if center_fraction < 1 / 3:
+        answer = "top"
+    elif center_fraction < 2 / 3:
+        answer = "middle"
+    else:
+        answer = "bottom"
+    return FamilyAnswer(
+        question=f"Which vertical region contains the visible {object_name}?",
+        choices=("top", "middle", "bottom"),
+        answer=answer,
+        evidence={
+            "primitive": "object_detector",
+            "object_name": object_name,
+            "detection_count": 1,
+            "box": cast("JsonValue", list(map(float, box))),
+            "center_y_px": center_y,
+            "center_y_fraction": center_fraction,
+        },
+    )
+
+
+def _answer_presence_and(
+    proposal: QuestionProposal, image: Image, detector: VlModel
+) -> FamilyAnswer:
+    first_name, second_name = proposal.object_names
+    first = detector.query_detections(image, first_name)
+    second = detector.query_detections(image, second_name)
+    if not first.detections or not second.detections:
+        missing = []
+        if not first.detections:
+            missing.append(first_name)
+        if not second.detections:
+            missing.append(second_name)
+        raise InsufficientEvidenceError(
+            f"presence_and requires detections for both objects; missing {missing!r}"
+        )
+    return FamilyAnswer(
+        question=f"Does the image contain both {first_name} and {second_name}?",
+        choices=("yes", "no"),
+        answer="yes",
+        evidence={
+            "primitive": "object_detector",
+            "objects": cast(
+                "JsonValue",
+                [
+                    {
+                        "object_name": first_name,
+                        "detection_count": len(first),
+                        "boxes": [list(map(float, d.bbox)) for d in first.detections],
+                    },
+                    {
+                        "object_name": second_name,
+                        "detection_count": len(second),
+                        "boxes": [list(map(float, d.bbox)) for d in second.detections],
+                    },
+                ],
+            ),
+        },
+    )
+
+
+def _answer_object_color(proposal: QuestionProposal, image: Image, detector: VlModel) -> FamilyAnswer:
+    object_name = proposal.object_names[0]
+    detections = detector.query_detections(image, object_name)
+    if len(detections) != 1:
+        raise InsufficientEvidenceError(
+            f"object color requires exactly one detected {object_name!r}, got {len(detections)}"
+        )
+    box = detections.detections[0].bbox
+    evidence = dominant_color_in_bbox(image, object_name, box)
+    return FamilyAnswer(
+        question=f"What is the dominant color of the visible {object_name}?",
+        choices=COLOR_CHOICES,
+        answer=evidence.dominant_bucket,
+        evidence={
+            "primitive": "object_color_histogram",
+            **evidence.model_dump(mode="json"),
+        },
+    )
+
+
+def _answer_camera_bearing(
+    proposal: QuestionProposal,
+    pointcloud_frame: PointCloudFrame,
+    mask_estimator: ObjectMaskEstimator,
+) -> FamilyAnswer:
+    object_name = proposal.object_names[0]
+    evidence = estimate_camera_bearing(pointcloud_frame, mask_estimator, object_name)
+    answer = bearing_choice(evidence)
+    return FamilyAnswer(
+        question=f"Relative to the camera, in which direction is the visible {object_name}?",
+        choices=BEARING_CHOICES,
+        answer=answer,
+        evidence={
+            "primitive": "edge_tam_lidar_bearing",
+            **evidence.model_dump(mode="json"),
         },
     )
 

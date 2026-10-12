@@ -635,6 +635,94 @@ def test_horizontal_direction_rejects_ambiguous_instances() -> None:
 
 
 @pytest.mark.parametrize(
+    ("box", "expected"),
+    (
+        ((0.0, 0.0, 20.0, 10.0), "top"),
+        ((0.0, 15.0, 20.0, 25.0), "middle"),
+        ((0.0, 25.0, 20.0, 35.0), "middle"),
+        ((0.0, 45.0, 20.0, 55.0), "bottom"),
+        ((0.0, 50.0, 20.0, 60.0), "bottom"),
+    ),
+)
+def test_vertical_direction_uses_detection_center(box: Bbox, expected: str) -> None:
+    image = Image.from_numpy(np.zeros((60, 90, 3), dtype=np.uint8))
+    proposal = QuestionProposal(family="vertical_direction", object_names=("robot",))
+
+    answer = answer_question(proposal, image, _BoxesDetector((box,)))
+
+    assert answer.answer == expected
+    assert answer.choices == ("top", "middle", "bottom")
+    assert answer.evidence["detection_count"] == 1
+
+
+def test_vertical_direction_rejects_ambiguous_instances() -> None:
+    image = Image.from_numpy(np.zeros((60, 90, 3), dtype=np.uint8))
+    proposal = QuestionProposal(family="vertical_direction", object_names=("chair",))
+    detector = _BoxesDetector(
+        (
+            (0.0, 0.0, 20.0, 10.0),
+            (0.0, 45.0, 20.0, 55.0),
+        )
+    )
+
+    with pytest.raises(ValueError, match="exactly one"):
+        answer_question(proposal, image, detector)
+
+
+def test_presence_and_requires_both_objects() -> None:
+    image = Image.from_numpy(np.zeros((4, 4, 3), dtype=np.uint8))
+    proposal = QuestionProposal(family="presence_and", object_names=("chair", "table"))
+
+    answer = answer_question(proposal, image, _Detector(present=True))
+
+    assert answer.answer == "yes"
+    assert answer.question == "Does the image contain both chair and table?"
+
+
+def test_presence_and_rejects_partial_detections() -> None:
+    image = Image.from_numpy(np.zeros((4, 4, 3), dtype=np.uint8))
+    proposal = QuestionProposal(family="presence_and", object_names=("chair", "table"))
+
+    class _SingleCategoryDetector(_TestVlModel):
+        def query_detections(
+            self, image: Image, query: str, **kwargs: object
+        ) -> ImageDetections2D[Detection2DBBox]:
+            if query == "chair":
+                return _Detector(present=True).query_detections(image, query, **kwargs)
+            return ImageDetections2D(image, [])
+
+    with pytest.raises(InsufficientEvidenceError, match="missing"):
+        answer_question(proposal, image, _SingleCategoryDetector())
+
+
+def test_object_color_maps_dominant_blue() -> None:
+    from dimos.msgs.sensor_msgs.Image import ImageFormat
+
+    image = Image.from_numpy(
+        np.full((40, 40, 3), (0, 0, 255), dtype=np.uint8),
+        format=ImageFormat.RGB,
+    )
+    proposal = QuestionProposal(family="object_color", object_names=("chair",))
+
+    answer = answer_question(
+        proposal,
+        image,
+        _BoxesDetector(((0.0, 0.0, 40.0, 40.0),)),
+    )
+
+    assert answer.answer == "blue"
+    assert answer.evidence["dominant_bucket"] == "blue"
+
+
+def test_camera_bearing_requires_pointcloud_and_mask() -> None:
+    image = Image.from_numpy(np.zeros((4, 4, 3), dtype=np.uint8))
+    proposal = QuestionProposal(family="camera_bearing", object_names=("chair",))
+
+    with pytest.raises(InsufficientEvidenceError, match="segmentation-mask"):
+        answer_question(proposal, image, _Detector(present=True), object())
+
+
+@pytest.mark.parametrize(
     ("count", "expected"),
     ((1, "one"), (2, "two"), (3, "three"), (4, "four or more"), (5, "four or more")),
 )
@@ -1132,9 +1220,23 @@ def test_frame_without_pointcloud_does_not_expose_distance_family(tmp_path: Path
         _RangeEstimator(1.5),
     )
 
-    assert author.family_names == ("presence", "horizontal_direction", "object_count")
+    assert author.family_names == (
+        "presence",
+        "horizontal_direction",
+        "vertical_direction",
+        "presence_and",
+        "object_color",
+        "object_count",
+    )
     run = json.loads((output / "audit" / "run.json").read_text())
-    assert run["families"] == ["presence", "horizontal_direction", "object_count"]
+    assert run["families"] == [
+        "presence",
+        "horizontal_direction",
+        "vertical_direction",
+        "presence_and",
+        "object_color",
+        "object_count",
+    ]
 
 
 def test_frame_without_pointcloud_exposes_mask_families_when_masks_are_available(
@@ -1155,6 +1257,9 @@ def test_frame_without_pointcloud_exposes_mask_families_when_masks_are_available
     assert author.family_names == (
         "presence",
         "horizontal_direction",
+        "vertical_direction",
+        "presence_and",
+        "object_color",
         "object_count",
         "image_coverage",
         "largest_visible_area",
