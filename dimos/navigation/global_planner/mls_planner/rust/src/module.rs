@@ -65,23 +65,32 @@ struct SeedRegion {
 const PREEMPT_REPLACED: &str = "replaced";
 const PREEMPT_CANCELED: &str = "canceled";
 
+/// Why a goal that ran out its blocked timeout was aborted.
+const NO_SAFE_PATH: &str = "no safe path";
+const NO_POSE: &str = "no robot pose";
+
 /// How often the latest goal status repeats between transitions.
 const STATUS_HEARTBEAT: Duration = Duration::from_secs(1);
 
-/// A goal with no safe path, and when it first had none.
+/// A goal that cannot be planned, when that began, and why.
 #[derive(Clone, Copy)]
 struct Blocked {
     goal: Goal,
     since: Instant,
+    reason: &'static str,
 }
 
 impl Blocked {
     /// The block this goal is in, carried over when it was blocked already.
-    fn of(goal: Goal, earlier: Option<Blocked>, now: Instant) -> Self {
+    fn of(goal: Goal, reason: &'static str, earlier: Option<Blocked>, now: Instant) -> Self {
         let since = earlier
             .filter(|earlier| earlier.goal == goal)
             .map_or(now, |earlier| earlier.since);
-        Self { goal, since }
+        Self {
+            goal,
+            since,
+            reason,
+        }
     }
 
     /// Time left before the goal is aborted. Zero once it has run out.
@@ -624,6 +633,7 @@ impl Worker {
         );
         let mut seed_progress = SeedProgress::default();
         let mut blocked: Option<Blocked> = None;
+        let mut followed: Option<GoalId> = None;
         let blocked_timeout = Duration::from_secs_f32(self.config.blocked_timeout_s);
         loop {
             let seeding = seed_progress.in_flight();
@@ -668,7 +678,7 @@ impl Worker {
                     publish_path(&self.path, &empty_path(&self.config.world_frame, now())).await;
                 }
                 if replan_due(goal_changed, live_update) {
-                    self.maybe_replan(&mut planner, &mut last_path_at, &mut blocked)
+                    self.maybe_replan(&mut planner, &mut last_path_at, &mut blocked, &mut followed)
                         .await;
                 }
                 self.abort_if_timed_out(&mut blocked, blocked_timeout).await;
@@ -858,7 +868,7 @@ impl Worker {
         Some((t.x as f32, t.y as f32, t.z as f32))
     }
 
-    /// Abort a goal that has gone without a safe path for the whole timeout.
+    /// Abort a goal that could not be planned for the whole timeout.
     async fn abort_if_timed_out(&self, blocked: &mut Option<Blocked>, timeout: Duration) {
         let Some(timed_out) = blocked.filter(|b| b.remaining(timeout, Instant::now()).is_zero())
         else {
@@ -870,7 +880,7 @@ impl Worker {
                 .report(Report::new(
                     timed_out.goal.id,
                     GoalStatus::ABORTED,
-                    "no safe path",
+                    timed_out.reason,
                 ))
                 .await;
         }
@@ -882,15 +892,17 @@ impl Worker {
         planner: &mut Planner,
         last_path_at: &mut Option<Instant>,
         blocked: &mut Option<Blocked>,
+        followed: &mut Option<GoalId>,
     ) {
-        let Some(start) = self.base_position() else {
-            return;
-        };
-        let start = (start.0, start.1, start.2 - self.config.start_z_offset_m);
         let Some(goal) = *self.active_goal.lock().expect("goal mutex") else {
             *blocked = None;
             return;
         };
+        let Some(start) = self.base_position() else {
+            *blocked = Some(Blocked::of(goal, NO_POSE, *blocked, Instant::now()));
+            return;
+        };
+        let start = (start.0, start.1, start.2 - self.config.start_z_offset_m);
 
         let plan_start = Instant::now();
         let outcome =
@@ -899,16 +911,23 @@ impl Worker {
         let report =
             Report::new(goal.id, status, reason).with_remaining(distance(start, goal.position));
         *blocked = match outcome {
-            Replan::Planned(Plan::Blocked) => Some(Blocked::of(goal, *blocked, Instant::now())),
+            Replan::Planned(Plan::Blocked) => {
+                Some(Blocked::of(goal, NO_SAFE_PATH, *blocked, Instant::now()))
+            }
             _ => None,
         };
         let waypoints = match outcome {
             Replan::Reached => {
+                if stop_on_arrival(*followed, goal.id) {
+                    publish_path(&self.path, &empty_path(&self.config.world_frame, now())).await;
+                    *followed = None;
+                }
                 self.clear_goal(goal);
                 self.status.report(report).await;
                 return;
             }
             Replan::Planned(Plan::Blocked) => {
+                *followed = None;
                 publish_path(&self.path, &empty_path(&self.config.world_frame, now())).await;
                 self.status.report(report).await;
                 return;
@@ -930,6 +949,7 @@ impl Worker {
             "path planned"
         );
         publish_path(&self.path, &path_msg).await;
+        *followed = Some(goal.id);
         self.status.report(report).await;
     }
 
@@ -987,6 +1007,12 @@ fn distance(a: Xyz, b: Xyz) -> f32 {
 /// goal is a cancel, and the follower is still on the last path.
 fn stop_due(goal_changed: bool, goal: Option<Goal>) -> bool {
     goal_changed && goal.is_none()
+}
+
+/// Whether an arrival stops the follower. A goal reached before it got a path
+/// leaves the follower on the path of the goal before it.
+fn stop_on_arrival(followed: Option<GoalId>, goal: GoalId) -> bool {
+    !followed.is_some_and(|followed| followed.same_stamp(&goal))
 }
 
 /// Whether a worker pass replans. Seed regions never trigger one, so a pass
@@ -1514,6 +1540,14 @@ mod tests {
         assert!(!stop_due(false, None));
     }
 
+    #[test]
+    fn an_arrival_stops_the_follower_unless_it_is_on_that_goals_path() {
+        assert!(!stop_on_arrival(Some(goal_id(2)), goal_id(2)));
+        // Reached before it got a path, so the follower is still on the last goal's.
+        assert!(stop_on_arrival(Some(goal_id(1)), goal_id(2)));
+        assert!(stop_on_arrival(None, goal_id(2)));
+    }
+
     /// The id of the goal that arrived in this order, stamped at that second.
     fn goal_id(arrival: u64) -> GoalId {
         GoalId {
@@ -1590,9 +1624,14 @@ mod tests {
         };
         let start = Instant::now();
         let later = start + Duration::from_secs(1);
-        let first = Blocked::of(goal(1), None, start);
-        assert_eq!(Blocked::of(goal(1), Some(first), later).since, start);
-        assert_eq!(Blocked::of(goal(2), Some(first), later).since, later);
+        let first = Blocked::of(goal(1), NO_POSE, None, start);
+        let still = Blocked::of(goal(1), NO_SAFE_PATH, Some(first), later);
+        assert_eq!(still.since, start);
+        assert_eq!(still.reason, NO_SAFE_PATH);
+        assert_eq!(
+            Blocked::of(goal(2), NO_SAFE_PATH, Some(first), later).since,
+            later
+        );
     }
 
     #[test]
@@ -1604,6 +1643,7 @@ mod tests {
                 position: (1.0, 0.0, 0.0),
             },
             since: start,
+            reason: NO_SAFE_PATH,
         };
         let timeout = Duration::from_secs(2);
         assert_eq!(

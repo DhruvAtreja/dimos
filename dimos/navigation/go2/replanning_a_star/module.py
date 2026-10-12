@@ -187,7 +187,7 @@ class ReplanningAStarPlanner(Module, ReplanningAStarPlannerSpec):
             if goal is not None:
                 self._report(goal, GoalStatus.PREEMPTED, PREEMPT_CANCELED)
             self._planner.cancel_goal()
-        return True
+        return goal is not None
 
     @rpc
     def set_replanning_enabled(self, enabled: bool) -> None:

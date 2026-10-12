@@ -318,6 +318,7 @@ class GlobalPlanner(Resource):
 
         if current_odom is None:
             logger.warning("Cannot handle goal request: missing odometry.")
+            self.cancel_goal()
             return
 
         safe_goal = self._find_safe_goal(current_goal.position)

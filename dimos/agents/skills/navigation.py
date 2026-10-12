@@ -34,6 +34,7 @@ from dimos.navigation.spec import PREEMPT_REPLACED, NavigationInterfaceSpec, hol
 from dimos.perception.experimental.object_tracking_spec import ObjectTrackingSpec
 from dimos.perception.experimental.spatial_memory_spec import SpatialMemorySpec
 from dimos.types.robot_location import RobotLocation
+from dimos.types.timestamped import Timestamped
 from dimos.utils.logging_config import setup_logger
 
 logger = setup_logger()
@@ -198,17 +199,17 @@ class NavigationSkillContainer(Module):
         logger.info(f"Found {query} at {bbox}")
 
         # The tracker's goals are stamped after this, and older ones are ignored.
-        started = int(time.time())
+        started = Timestamped(time.time()).ros_timestamp()
         statuses: queue.Queue[GoalStatus] = queue.Queue()
 
         def on_status(msg: GoalStatus) -> None:
-            if msg.goal_id.stamp.sec >= started:
+            if [msg.goal_id.stamp.sec, msg.goal_id.stamp.nsec] >= started:
                 statuses.put(msg)
 
         unsubscribe = self.nav_status.subscribe(on_status)
-        # Start tracking - BBoxNavigationModule automatically generates goals
-        self._object_tracking.track(bbox)  # type: ignore[arg-type]
         try:
+            # Start tracking - BBoxNavigationModule automatically generates goals
+            self._object_tracking.track(bbox)  # type: ignore[arg-type]
             return self._wait_for_tracked_goal(query, statuses)
         finally:
             unsubscribe()
