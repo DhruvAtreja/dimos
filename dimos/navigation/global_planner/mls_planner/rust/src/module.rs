@@ -936,13 +936,17 @@ impl Worker {
     /// Clear the active goal unless a newer one replaced it meanwhile. True
     /// when it was cleared.
     fn clear_goal(&self, goal: Goal) -> bool {
-        let mut guard = self.active_goal.lock().expect("goal mutex");
-        let held = *guard == Some(goal);
-        if held {
-            *guard = None;
-        }
-        held
+        clear_if_held(&self.active_goal, goal)
     }
+}
+
+fn clear_if_held(slot: &Mutex<Option<Goal>>, goal: Goal) -> bool {
+    let mut guard = slot.lock().expect("goal mutex");
+    let held = *guard == Some(goal);
+    if held {
+        *guard = None;
+    }
+    held
 }
 
 /// What a replan pass decided for the active goal.
@@ -1271,31 +1275,7 @@ fn read_f32_le(buf: &[u8], off: usize) -> f32 {
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    fn test_config() -> Config {
-        Config {
-            world_frame: "odom".into(),
-            base_frame: "base_link".into(),
-            voxel_size: 0.1,
-            robot_height: 0.5,
-            start_z_offset_m: 0.0,
-            max_overhead_m: 2.0,
-            surface_closing_radius: 0.3,
-            node_spacing_m: 1.0,
-            wall_clearance_m: 0.0,
-            wall_buffer_m: 0.3,
-            wall_buffer_weight: 1.0,
-            step_threshold_m: 0.25,
-            step_penalty_weight: 0.0,
-            goal_tolerance: 0.3,
-            goal_z_tolerance: 0.5,
-            blocked_timeout_s: 2.0,
-            viz_publish_hz: 2.0,
-            viz_region_m: 4.0,
-            viz_sweep_regions: 0,
-            worker_threads: 1,
-        }
-    }
+    use crate::mls_planner::test_config;
 
     #[test]
     fn a_goal_directly_above_the_start_is_not_reached() {
@@ -1572,13 +1552,34 @@ mod tests {
         let waypoints = || vec![(0.0, 0.0, 0.0)];
         let full = Replan::Planned(Plan::Full(waypoints()));
         let truncated = Replan::Planned(Plan::Truncated(waypoints()));
-        assert_eq!(Replan::Reached.status().0, GoalStatus::SUCCEEDED);
-        assert_eq!(full.status().0, GoalStatus::ACTIVE);
-        assert_eq!(truncated.status().0, GoalStatus::ACTIVE);
-        assert_ne!(full.status().1, truncated.status().1);
         let blocked = Replan::Planned(Plan::Blocked);
-        assert_eq!(blocked.status().0, GoalStatus::ACTIVE);
-        assert_ne!(blocked.status().1, full.status().1);
+        assert_eq!(Replan::Reached.status(), (GoalStatus::SUCCEEDED, "reached"));
+        assert_eq!(full.status(), (GoalStatus::ACTIVE, "following the path"));
+        assert_eq!(
+            truncated.status(),
+            (
+                GoalStatus::ACTIVE,
+                "path blocked ahead, following it while safe"
+            )
+        );
+        assert_eq!(
+            blocked.status(),
+            (GoalStatus::ACTIVE, "no safe path, retrying")
+        );
+    }
+
+    #[test]
+    fn a_goal_is_cleared_only_while_it_is_still_the_one_held() {
+        let goal = |arrival| Goal {
+            id: goal_id(arrival),
+            position: (1.0, 0.0, 0.0),
+        };
+        // The second goal replaced the first while the first was blocked.
+        let slot = Mutex::new(Some(goal(2)));
+        assert!(!clear_if_held(&slot, goal(1)));
+        assert_eq!(*slot.lock().unwrap(), Some(goal(2)));
+        assert!(clear_if_held(&slot, goal(2)));
+        assert_eq!(*slot.lock().unwrap(), None);
     }
 
     #[test]

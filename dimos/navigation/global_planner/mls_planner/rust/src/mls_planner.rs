@@ -727,4 +727,30 @@ impl ChangeBounds {
 }
 
 #[cfg(test)]
+pub(crate) fn test_config() -> Config {
+    Config {
+        world_frame: String::new(),
+        base_frame: String::new(),
+        voxel_size: 0.1,
+        robot_height: 0.5,
+        start_z_offset_m: 0.0,
+        max_overhead_m: 2.0,
+        surface_closing_radius: 0.3,
+        node_spacing_m: 1.0,
+        wall_clearance_m: 0.0,
+        wall_buffer_m: 0.3,
+        wall_buffer_weight: 1.0,
+        step_threshold_m: 0.25,
+        step_penalty_weight: 0.0,
+        goal_tolerance: 0.3,
+        goal_z_tolerance: 0.5,
+        blocked_timeout_s: 2.0,
+        viz_publish_hz: 2.0,
+        viz_region_m: 4.0,
+        viz_sweep_regions: 0,
+        worker_threads: 4,
+    }
+}
+
+#[cfg(test)]
 mod region_tests;

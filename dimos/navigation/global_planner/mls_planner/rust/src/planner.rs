@@ -896,28 +896,7 @@ mod tests {
         start: (f32, f32, f32),
         goal: (f32, f32, f32),
     ) -> Option<Vec<(f32, f32, f32)>> {
-        let config = Config {
-            world_frame: "world".into(),
-            base_frame: "base_link".into(),
-            voxel_size: VOXEL,
-            robot_height: Z_TOL,
-            start_z_offset_m: 0.0,
-            max_overhead_m: 2.0,
-            surface_closing_radius: 0.0,
-            node_spacing_m: 1.0,
-            wall_clearance_m: 0.2,
-            wall_buffer_m: 0.5,
-            wall_buffer_weight: 4.0,
-            step_threshold_m: 0.25,
-            step_penalty_weight: 4.0,
-            goal_tolerance: 0.3,
-            goal_z_tolerance: 0.5,
-            blocked_timeout_s: 2.0,
-            viz_publish_hz: 2.0,
-            viz_region_m: 4.0,
-            viz_sweep_regions: 0,
-            worker_threads: 4,
-        };
+        let config = truncate_config();
         plan(plg, start, goal, &config).map(|(wp, _)| wp)
     }
 
@@ -930,26 +909,14 @@ mod tests {
 
     fn truncate_config() -> Config {
         Config {
-            world_frame: "world".into(),
-            base_frame: "base_link".into(),
             voxel_size: VOXEL,
             robot_height: Z_TOL,
-            start_z_offset_m: 0.0,
-            max_overhead_m: 2.0,
             surface_closing_radius: 0.0,
-            node_spacing_m: 1.0,
             wall_clearance_m: 0.2,
             wall_buffer_m: 0.5,
             wall_buffer_weight: 4.0,
-            step_threshold_m: 0.25,
             step_penalty_weight: 4.0,
-            goal_tolerance: 0.3,
-            goal_z_tolerance: 0.5,
-            blocked_timeout_s: 2.0,
-            viz_publish_hz: 2.0,
-            viz_region_m: 4.0,
-            viz_sweep_regions: 0,
-            worker_threads: 4,
+            ..crate::mls_planner::test_config()
         }
     }
 
