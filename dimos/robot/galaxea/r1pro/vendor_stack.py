@@ -36,12 +36,15 @@ VENDOR_SESSIONS: tuple[str, ...] = ("hdas", "mobiman")
 
 
 def running_tmux_sessions() -> set[str]:
-    result = subprocess.run(
-        ["tmux", "list-sessions", "-F", "#{session_name}"],
-        capture_output=True,
-        text=True,
-        check=False,
-    )
+    try:
+        result = subprocess.run(
+            ["tmux", "list-sessions", "-F", "#{session_name}"],
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+    except FileNotFoundError:  # no tmux, so no vendor sessions
+        return set()
     return set(result.stdout.split()) if result.returncode == 0 else set()
 
 
@@ -49,7 +52,7 @@ def boot_command(startup_script: str, profile: str, running: set[str]) -> list[s
     """The vendor boot command, or None when already up or not installed."""
     if set(VENDOR_SESSIONS) <= running:
         return None
-    script = Path(startup_script).expanduser()
+    script = Path(startup_script).expanduser().resolve()
     if not script.exists():
         logger.warning("R1 vendor stack not running and %s does not exist", script)
         return None
