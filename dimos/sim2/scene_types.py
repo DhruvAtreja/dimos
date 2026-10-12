@@ -27,6 +27,7 @@ from pydantic import (
     FiniteFloat,
     PlainSerializer,
     PositiveFloat,
+    model_validator,
 )
 
 from dimos.msgs.geometry_msgs.Pose import Pose
@@ -95,6 +96,37 @@ class SceneRegion(SceneRecord):
     size: Vec3
 
 
+class Annotation(BaseModel):
+    """A labeled point, path or area in the scene, for tools and tests (nav goals, a mapping walk, a "kitchen" zone).
+
+    point: `position` (and an optional `yaw`). path: `points`, a polyline. area: `points`, a polygon on the floor at
+    their z, extruded up by `height`. `tags` and `props` are free-form; sim2 doesn't interpret them.
+    """
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    id: str
+    kind: Literal["point", "path", "area"]
+    label: str = ""
+    frame: str = "world"
+    tags: tuple[str, ...] = ()
+    position: Vec3 | None = None
+    yaw: FiniteFloat | None = None
+    points: tuple[Vec3, ...] = ()
+    height: PositiveFloat | None = None
+    props: dict[str, Any] = Field(default_factory=dict)
+
+    @model_validator(mode="after")
+    def _shape(self) -> Annotation:
+        if self.kind == "point" and self.position is None:
+            raise ValueError(f"annotation {self.id!r}: a point needs a position")
+        if self.kind == "path" and len(self.points) < 2:
+            raise ValueError(f"annotation {self.id!r}: a path needs at least 2 points")
+        if self.kind == "area" and len(self.points) < 3:
+            raise ValueError(f"annotation {self.id!r}: an area needs at least 3 points")
+        return self
+
+
 class MoverSpec(BaseModel):
     """A scripted obstacle: a mocap body looping along waypoints (see dimos/sim2/movers.py)."""
 
@@ -122,6 +154,8 @@ class SceneDescription(SceneRecord):
     hidden_geom_groups: tuple[int, ...] = ()
     # scripted obstacles, moved every physics step
     movers: tuple[MoverSpec, ...] = ()
+    # labeled points, paths and areas (e.g. a nav test: a path tagged nav:mapping, points tagged nav:goal)
+    annotations: tuple[Annotation, ...] = ()
     provenance: dict[str, Any] = Field(default_factory=dict)
     # data other tools keep with the scene (an editor's project, saved views, a nav test), keyed by tool; sim2 ignores it
     extensions: dict[str, Any] = Field(default_factory=dict)
