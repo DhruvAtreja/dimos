@@ -22,7 +22,7 @@ INSTALLER_VERSION="0.3.0"
 
 # ─── package lists (edit these when dependencies change) ──────────────────────
 UBUNTU_PACKAGES="ca-certificates curl git build-essential portaudio19-dev git-lfs libturbojpeg pre-commit libgl1 libegl1 libglib2.0-0 ffmpeg libsndfile1 pkg-config"
-STEAMOS_PACKAGES="gcc glibc linux-api-headers portaudio pkgconf make"
+STEAMOS_PACKAGES="gcc glibc linux-api-headers portaudio pkgconf make git-lfs"
 MACOS_PACKAGES="gnu-sed gcc portaudio git-lfs libjpeg-turbo pre-commit ffmpeg libsndfile pkg-config"
 
 INSTALL_MODE="${DIMOS_INSTALL_MODE:-}"
@@ -525,11 +525,11 @@ verify_nix_develop() {
 }
 
 # SteamOS strips development headers, even from packages it reports as installed.
-# Reinstall them with the compiler; restore the read-only setting on success or failure.
+# Reinstall them with the compiler (and git-lfs, which SteamOS lacks); restore the read-only setting on success or failure.
 install_steamos_deps() (
     local -a privilege=(/usr/bin/env) packages=()
     if [[ $(id -u) != 0 ]]; then privilege=(sudo); fi
-    if has_cmd cc && has_cmd g++ && has_cmd make && has_cmd pkg-config && \
+    if has_cmd cc && has_cmd g++ && has_cmd make && has_cmd pkg-config && has_cmd git-lfs && \
             [[ -f /usr/include/stdio.h && -f /usr/include/linux/types.h && -f /usr/include/portaudio.h ]] && \
             printf '#include <vector>\nint main() { return std::vector<int>{1}.at(0) - 1; }\n' | \
                 g++ -x c++ -c -o /dev/null - >/dev/null 2>&1; then
