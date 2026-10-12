@@ -136,3 +136,10 @@ Python wheels need no native compiler. C++ source preparation remains separate
 and retains its existing explicit toolchain and offline source-cache contract.
 The unchanged parser package is platform-independent; actual macOS checks remain
 CI acceptance, not something proven by Linux configuration tests.
+
+## Generic source-package builds
+
+The [source-package walkthrough](../../docs/development/message-source-packages.md)
+shows explicit local inputs, ordinary setuptools PEP 517/660 builds, offline
+wheel/sdist installation, dependency-owned types and explicit upstream source
+preparation. These mechanisms have no built-in catalog or repository-path convention.

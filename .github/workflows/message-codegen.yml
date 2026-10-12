@@ -37,8 +37,16 @@ jobs:
           test ! -d /opt/ros
           uv venv .venv --python 3.12 --seed
           uv run --no-project --with requests python scripts/prepare_message_parser.py
-          uv pip install --python .venv/bin/python "./dimos/message_codegen[native]" numpy pytest pytest-cov pytest-asyncio pytest-env mypy==1.19.0
+          uv pip install --python .venv/bin/python "./dimos/message_codegen[native]" requests types-setuptools types-requests numpy pytest pytest-cov pytest-asyncio pytest-env mypy==1.19.0
           .venv/bin/python -c "import importlib.util; assert importlib.util.find_spec('rclpy') is None"
+      - name: Prepare the offline source-package dependency wheelhouse
+        run: |
+          .venv/bin/python -m pip download --only-binary=:all: --dest build/source-package-wheels setuptools wheel "rosbags==0.11.0" "empy==4.2" "lark==1.2.2" "numpy>=1.26.4" "tomli>=2"
+      - name: Verify generic offline source, wheel, sdist and editable builds
+        env:
+          DIMOS_MESSAGE_INSTALL_REQUIRED: '1'
+          DIMOS_MESSAGE_WHEELHOUSE: ${{ github.workspace }}/build/source-package-wheels
+        run: .venv/bin/python -m pytest --noconftest -o addopts='' -q dimos/message_codegen/test_source_package.py dimos/message_codegen/test_source_inputs.py
       - name: Generate, build, test, and demonstrate all three languages
         run: bash scripts/test_message_codegen.sh
       - name: Upload standalone generator coverage
