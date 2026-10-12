@@ -30,7 +30,7 @@ from dimos.control.sonic.sonic_pipeline import (
     WRISTS_OFFSET,
     SonicPipeline,
 )
-from dimos.control.sonic.sonic_safety import SonicSafetyError
+from dimos.robot.unitree.g1.control_safety import G1ControlError
 
 
 @pytest.fixture
@@ -431,12 +431,12 @@ def test_cpu_only_runtime_fails_before_loading_models(mocker):
 def test_nonfinite_decoder_output_raises_a_control_fault(velocity_pipeline):
     velocity_pipeline._decoder.run.return_value = [np.full((1, NUM_JOINTS), np.nan)]
 
-    with pytest.raises(SonicSafetyError, match="non-finite decoder output"):
+    with pytest.raises(G1ControlError, match="non-finite decoder output"):
         _step(velocity_pipeline)
 
 
 def test_invalid_robot_orientation_does_not_reuse_previous_targets(velocity_pipeline):
-    with pytest.raises(SonicSafetyError, match="invalid robot policy input"):
+    with pytest.raises(G1ControlError, match="invalid robot policy input"):
         velocity_pipeline.step(
             DEFAULT_ANGLES_DDS, np.zeros(29), np.zeros(4), np.zeros(3), np.zeros(3)
         )
@@ -462,7 +462,7 @@ def test_failed_or_stuck_planner_raises_a_control_fault(
         return_value=10.0 + elapsed,
     )
 
-    with pytest.raises(SonicSafetyError, match=message):
+    with pytest.raises(G1ControlError, match=message):
         _step(velocity_pipeline)
 
 
@@ -502,7 +502,7 @@ def test_reset_cannot_extend_a_stuck_planners_deadline(velocity_pipeline, planne
     clock.return_value = 10.8
     velocity_pipeline.reset()
     clock.return_value = 11.01
-    with pytest.raises(SonicSafetyError, match="planner inference timeout"):
+    with pytest.raises(G1ControlError, match="planner inference timeout"):
         _step(velocity_pipeline)
     assert planner_requests.call_count == 1
 

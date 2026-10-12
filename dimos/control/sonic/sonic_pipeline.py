@@ -45,17 +45,16 @@ from dimos.control.sonic.sonic_onnx_runtime import (
     create_sonic_session,
     prepare_sonic_onnx_runtime,
 )
-from dimos.control.sonic.sonic_safety import (
-    PLANNER_TIMEOUT_SECONDS,
-    SonicSafetyError,
-)
 from dimos.control.sonic.streamed_motion import (
     StreamedMotion,
     StreamedMotionMerger,
 )
+from dimos.robot.unitree.g1.control_safety import G1ControlError
 from dimos.utils.logging_config import setup_logger
 
 logger = setup_logger()
+
+PLANNER_TIMEOUT_SECONDS = 1.0
 
 # Motor constants (policy_parameters.hpp)
 
@@ -1142,13 +1141,13 @@ class SonicPipeline:
         if self._planner_started_at is not None and (
             time.perf_counter() - self._planner_started_at >= PLANNER_TIMEOUT_SECONDS
         ):
-            raise SonicSafetyError("planner inference timeout")
+            raise G1ControlError("planner inference timeout")
         if not self._planner_future.done():
             return
         try:
             self._apply_planner_result(self._planner_future.result())
         except Exception as exc:
-            raise SonicSafetyError("planner inference failed") from exc
+            raise G1ControlError("planner inference failed") from exc
         if self._planner_started_at is not None:
             self._planner_durations_ms.append(
                 (time.perf_counter() - self._planner_started_at) * 1000.0
@@ -1160,9 +1159,9 @@ class SonicPipeline:
         qpos_30hz = result[0].squeeze()
         num_frames = int(result[1].item())
         if num_frames < 2:
-            raise SonicSafetyError("planner returned fewer than two frames")
+            raise G1ControlError("planner returned fewer than two frames")
         if self._nan_check("planner_qpos", qpos_30hz[:num_frames]):
-            raise SonicSafetyError("non-finite planner output")
+            raise G1ControlError("non-finite planner output")
         new_traj = self._resample_to_50hz(qpos_30hz, num_frames)
 
         if (
@@ -1270,7 +1269,7 @@ class SonicPipeline:
                 self._nan_reported += 1
             bad = True
         if bad:
-            raise SonicSafetyError("invalid robot policy input")
+            raise G1ControlError("invalid robot policy input")
         self._cur_quat = np.asarray(base_quat_wxyz, dtype=np.float64)
         self._cur_q_dds = np.asarray(q_dds, dtype=np.float32)
 
@@ -1370,13 +1369,13 @@ class SonicPipeline:
         obs[964:994] = self._his_gravity[order].ravel()
 
         if self._nan_check("token", token) or self._nan_check("decoder_obs", obs):
-            raise SonicSafetyError("non-finite decoder observation")
+            raise G1ControlError("non-finite decoder observation")
         decoder_started = time.perf_counter()
         out = self._decoder.run(None, {self._decoder_input: obs.reshape(1, -1)})
         self._decoder_durations_ms.append((time.perf_counter() - decoder_started) * 1000.0)
         actions = out[0].squeeze()[:NUM_JOINTS].astype(np.float32)
         if self._nan_check("actions", actions):
-            raise SonicSafetyError("non-finite decoder output")
+            raise G1ControlError("non-finite decoder output")
         self._last_action = actions.copy()
 
         # All 29 decoder actions applied directly - no post-decoder override
