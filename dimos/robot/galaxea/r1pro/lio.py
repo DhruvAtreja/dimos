@@ -16,6 +16,8 @@
 
 from __future__ import annotations
 
+from functools import cache
+
 from reactivex.disposable import Disposable
 
 from dimos.core.core import rpc
@@ -31,9 +33,13 @@ from dimos.protocol.tf.static_tf_publisher import (
 )
 from dimos.robot.galaxea.r1pro.config import R1PRO_MODEL
 
-_lidar_joint = R1PRO_MODEL.load().get_joint("lidar_chassis_left_joint")
-assert _lidar_joint is not None
-LIDAR_MOUNT_XYZ = _lidar_joint.origin_xyz
+
+@cache
+def lidar_mount_xyz() -> tuple[float, float, float]:
+    """The chassis lidar's mount from the URDF, loaded on first use so importing a blueprint needs no robot assets."""
+    joint = R1PRO_MODEL.load().get_joint("lidar_chassis_left_joint")
+    assert joint is not None
+    return joint.origin_xyz
 
 
 class R1ProLioConfig(StaticTfPublisherConfig):
@@ -46,11 +52,12 @@ class R1ProLioConfig(StaticTfPublisherConfig):
 
 def mount_transforms(config: R1ProLioConfig) -> list[Transform]:
     """Rooted at Point-LIO's frame, plus the URDF's chassis-lidar edge."""
+    mount_xyz = lidar_mount_xyz()
     frames: list[FrameSpec] = [
         (config.base_frame, None, (0.0, 0.0, 0.0), (0.0, 0.0, 0.0)),
         # Same spot as the URDF's lidar frame; only the parent differs.
-        (config.lidar_frame, config.base_frame, LIDAR_MOUNT_XYZ, (0.0, 0.0, 0.0)),
-        (config.chassis_lidar_frame, config.base_frame, LIDAR_MOUNT_XYZ, (0.0, 0.0, 0.0)),
+        (config.lidar_frame, config.base_frame, mount_xyz, (0.0, 0.0, 0.0)),
+        (config.chassis_lidar_frame, config.base_frame, mount_xyz, (0.0, 0.0, 0.0)),
     ]
     edges = {t.child_frame_id: t for t in frames_to_edge_transforms(frames)}
     return [-edges[config.lidar_frame], edges[config.chassis_lidar_frame]]
