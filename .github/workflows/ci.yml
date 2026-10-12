@@ -184,9 +184,6 @@ jobs:
           name: dimensionalos
           authToken: ${{ secrets.CACHIX_AUTH_TOKEN }}
       - name: Build native modules
-        env:
-          # A cold build at 4 peaks at 9.0 GB of 16 (Linux), 5.3 of 7 (macOS): run 37671850364.
-          BUILD_WORKERS: "4"
         run: python3 bin/native-modules --build
       - name: Lint native modules
         run: python3 bin/native-modules --lint
@@ -258,9 +255,6 @@ jobs:
           name: dimensionalos
           authToken: ${{ secrets.CACHIX_AUTH_TOKEN }}
       - name: Build native modules
-        env:
-          # A cold build at 4 peaks at 9.0 GB of 16 (Linux), 5.3 of 7 (macOS): run 37671850364.
-          BUILD_WORKERS: "4"
         run: python3 bin/native-modules --build
       - name: Verify Cachix holds the built paths
         env:
