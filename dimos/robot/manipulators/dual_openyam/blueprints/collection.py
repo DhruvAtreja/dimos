@@ -34,6 +34,7 @@ from dimos.robot.manipulators.dual_openyam.config import (
     dual_openyam_model_config,
 )
 from dimos.robot.manipulators.dual_openyam.joints import DUAL_OPENYAM_ARM_JOINTS
+from dimos.teleop.webxr.controller_types import Buttons
 
 DUAL_OPENYAM_SIDES = ("left", "right")
 
@@ -82,6 +83,7 @@ DUAL_OPENYAM_COLLECTION_STREAMS = [
     "right_cartesian_command",
     "left_gripper_command",
     "right_gripper_command",
+    "teleop_buttons",
 ]
 
 
@@ -90,8 +92,10 @@ class DualOpenYamCollectionRecorder(CollectionRecorder):
 
     Wrist images are what a grasping policy looks at; the controller poses and
     gripper commands are the actions the operator asked for, so a dataset can
-    use them instead of the measured state. DataPrep selects streams by name,
-    so the extra streams cost nothing until a config asks for them.
+    use them instead of the measured state; the button word says when the grips
+    were held, which is when a controller pose was actually driving an arm.
+    DataPrep selects streams by name, so the extra streams cost nothing until a
+    config asks for them.
     """
 
     left_wrist_color_image: In[Image]
@@ -100,6 +104,7 @@ class DualOpenYamCollectionRecorder(CollectionRecorder):
     right_cartesian_command: In[PoseStamped]
     left_gripper_command: In[Float32]
     right_gripper_command: In[Float32]
+    teleop_buttons: In[Buttons]
 
 
 def dual_openyam_wrist_camera(side: str) -> Blueprint:
