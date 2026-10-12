@@ -18,7 +18,7 @@ from uuid import uuid4
 import pytest
 
 from dimos.sim2.control.interface import descriptor
-from dimos.sim2.ipc.channel import _CREATOR_PID_OFFSET, RobotChannel
+from dimos.sim2.ipc.channel import _CREATOR_PID_OFFSET, _OWNER_PID_OFFSET, RobotChannel
 from dimos.sim2.spec import ControlInterface
 
 
@@ -34,7 +34,9 @@ def _dead_pid() -> int:
 def test_create_replaces_a_channel_whose_creator_died():
     spec = descriptor(f"orphan-{uuid4().hex[:8]}/robot", ControlInterface.WHOLE_BODY, 3)
     leaked = RobotChannel.create(spec)
-    struct.pack_into("<Q", leaked._shm.buf, _CREATOR_PID_OFFSET, _dead_pid())
+    dead = _dead_pid()
+    struct.pack_into("<Q", leaked._shm.buf, _CREATOR_PID_OFFSET, dead)
+    struct.pack_into("<Q", leaked._shm.buf, _OWNER_PID_OFFSET, dead)
     leaked._shm.close()  # a crashed run: the segment outlives its owner, never unlinked
     channel = RobotChannel.create(spec)
     try:

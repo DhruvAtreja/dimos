@@ -42,6 +42,7 @@ _LIFECYCLE_OFFSET = 20
 _ACTION_SEQUENCE_OFFSET = 24
 _OBSERVATION_SEQUENCE_OFFSET = 32
 _CREATOR_PID_OFFSET = 48
+_OWNER_PID_OFFSET = 56
 _EPISODE_OFFSET = 40
 
 LifecycleState = Literal["starting", "ready", "faulted", "closed"]
@@ -116,7 +117,7 @@ class RobotChannel:
             0,
             0,
             _resource_tracker_pid(),
-            0,
+            os.getpid(),
         )
         return channel
 
@@ -335,18 +336,29 @@ class RobotChannel:
         self.close()
 
 
+def _alive(pid: int) -> bool:
+    if pid <= 0:
+        return False
+    try:
+        os.kill(pid, 0)
+    except ProcessLookupError:
+        return False
+    except PermissionError:
+        return True
+    return True
+
+
 def _unlink_if_orphaned(name: str) -> None:
-    """Remove a channel left behind by a crashed run, identified by its dead creator."""
+    """Remove a channel left behind by a crashed run: neither its owner nor the owner's resource tracker is alive."""
     stale = SharedMemory(name=name, create=False)
     try:
         if bytes(stale.buf[:8]) != CHANNEL_MAGIC:
             return
-        (creator,) = struct.unpack_from("<Q", stale.buf, _CREATOR_PID_OFFSET)
-        try:
-            os.kill(creator, 0)
-            return  # its creator is alive: a real collision, let create() raise
-        except ProcessLookupError:
-            pass
+        (tracker,) = struct.unpack_from("<Q", stale.buf, _CREATOR_PID_OFFSET)
+        (owner,) = struct.unpack_from("<Q", stale.buf, _OWNER_PID_OFFSET)
+        # an owner pid (newer channels) is decisive; older channels only carry the tracker's
+        if _alive(owner) if owner else _alive(tracker):
+            return  # a live channel: a real collision, let create() raise
         stale.unlink()
     finally:
         stale.close()
