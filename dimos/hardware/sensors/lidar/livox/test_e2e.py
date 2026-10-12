@@ -26,6 +26,7 @@ import math
 import os
 from pathlib import Path
 import signal
+import socket
 import struct
 import subprocess
 import time
@@ -128,6 +129,17 @@ def _require_binary(name: str) -> Path:
             f"{binary} missing; run: cargo build --release -p dimos-livox -p dimos-virtual-mid360"
         )
     return binary
+
+
+def _free_udp_ports(count: int) -> list[int]:
+    """Distinct UDP ports nothing on loopback holds right now."""
+    sockets = [socket.socket(socket.AF_INET, socket.SOCK_DGRAM) for _ in range(count)]
+    for sock in sockets:
+        sock.bind(("127.0.0.1", 0))
+    ports = [sock.getsockname()[1] for sock in sockets]
+    for sock in sockets:
+        sock.close()
+    return ports
 
 
 @pytest.fixture
@@ -258,6 +270,8 @@ def test_live_loopback_handshake_and_stream(spawn: Spawn, synth_pcap: Path) -> N
     driver_binary = _require_binary("mid360_native")
     virtual_binary = _require_binary("virtual_mid360")
 
+    # Off the Livox defaults: a leftover driver or virtual on the host answers there and starves this run.
+    cmd, push, point, imu, host_cmd, host_push, host_point, host_imu = _free_udp_ports(8)
     virtual_config = VirtualMid360Config(
         pcap=str(synth_pcap),
         rate=0.5,
@@ -265,6 +279,13 @@ def test_live_loopback_handshake_and_stream(spawn: Spawn, synth_pcap: Path) -> N
         lidar_ip="127.0.0.1",
         host_ip="127.0.0.1",
         mcast_data=SDK_MULTICAST_GROUP,
+        cmd_data_port=cmd,
+        push_msg_port=push,
+        point_data_port=point,
+        imu_data_port=imu,
+        host_push_msg_port=host_push,
+        host_point_data_port=host_point,
+        host_imu_data_port=host_imu,
     )
     virtual_blob = {
         "topics": {},
@@ -276,6 +297,14 @@ def test_live_loopback_handshake_and_stream(spawn: Spawn, synth_pcap: Path) -> N
         lidar_ip="127.0.0.1",
         multicast_ip=None,
         point_format="full",
+        cmd_data_port=cmd,
+        push_msg_port=push,
+        point_data_port=point,
+        imu_data_port=imu,
+        host_cmd_data_port=host_cmd,
+        host_push_msg_port=host_push,
+        host_point_data_port=host_point,
+        host_imu_data_port=host_imu,
     )
     driver_blob = {
         "topics": {
