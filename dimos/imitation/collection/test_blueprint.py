@@ -18,8 +18,6 @@ import pytest
 
 from dimos.core.coordination.blueprints import Blueprint
 from dimos.imitation.collection.blueprint import (
-    DUAL_OPENYAM_COLLECTION_STREAMS,
-    DualOpenYamCollectionRecorder,
     learning_collect_webxr_dual_openyam,
     learning_collect_webxr_piper,
     learning_collect_webxr_xarm7,
@@ -30,6 +28,10 @@ from dimos.imitation.collection.episode_monitor import (
 )
 from dimos.imitation.collection.recorder import CollectionRecorder
 from dimos.msgs.sensor_msgs.JointState import JointState
+from dimos.robot.manipulators.dual_openyam.blueprints.collection import (
+    DUAL_OPENYAM_COLLECTION_STREAMS,
+    DualOpenYamCollectionRecorder,
+)
 from dimos.robot.unitree.g1.blueprints.basic.unitree_g1_teleop import unitree_g1_teleop
 from dimos.teleop.webxr.extensions import ArmTeleopModule
 

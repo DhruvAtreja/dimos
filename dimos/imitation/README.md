@@ -61,7 +61,10 @@ prints one line per transition:
 
 A new timestamped file per run (nothing is overwritten). It records three
 streams: `color_image`, `coordinator_joint_state`, and `status` (the episode
-start/save/discard markers).
+start/save/discard markers). The dual OpenYAM blueprint adds both wrist cameras
+(`left_wrist_color_image`, `right_wrist_color_image`) and the operator's
+commands (`left_cartesian_command`, `right_cartesian_command`,
+`left_gripper_command`, `right_gripper_command`); it runs on hardware only.
 
 The exact path is printed when the recorder starts — note it for the next step.
 
