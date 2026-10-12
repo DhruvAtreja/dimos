@@ -17,9 +17,10 @@ sightings) as the perception stack. It is `main` from 8 October plus:
 ## Setup
 
 1. Check out this branch. `data/.lfs/sim2.tar.gz` comes through git LFS as usual.
-2. The SceneReplica scenes are not on LFS. Get `scenereplica.tar.gz` (20 MB) from Mustafa's
-   Google Drive link and unpack it into `data/`:
+2. The SceneReplica scenes are not on LFS; they are on Dimensional cloud (20 MB). Pull them
+   and unpack into `data/` (run `dimos login` first if asked):
 
+       dimos data pull d29df7d1c587 --dest scenereplica.tar.gz
        tar -xzf scenereplica.tar.gz -C data/      # creates data/scenereplica/
 
 3. Environment. The trials we report ran in the Docker image from
