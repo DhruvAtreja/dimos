@@ -7,9 +7,6 @@
 - **Perception:** `LocalizeSceneRegistrationModule`, the localize memory (SigLIP frame
   retrieval, OWLv2 boxes, EdgeTAM masks), in place of scene registration (Moondream +
   EdgeTAM). Policy `{"min_views": 1}`, because the arm holds still while it scans.
-- **Unchanged:** the xArm 7 and gripper in MuJoCo, the wrist RGB-D camera, the motion
-  planner, pick and place with heuristic grasps, and the self filter and voxel map the
-  planner uses for obstacles.
 
 ## Setup
 
@@ -17,7 +14,7 @@
     uv sync --python 3.12 --extra manipulation --extra cuda --extra misc
     cargo build --release -p dimos-voxel-ray-tracing --bin voxel_ray_tracing
 
-    # SceneReplica scenes (20 MB, not on LFS)
+    # SceneReplica scenes 
     dimos data pull d29df7d1c587 --dest scenereplica.tar.gz
     tar -xzf scenereplica.tar.gz -C data/
 
