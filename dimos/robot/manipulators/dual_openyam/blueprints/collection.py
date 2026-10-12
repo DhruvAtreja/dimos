@@ -12,17 +12,60 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""What a dual OpenYAM collection records: the rig's cameras and the recorder."""
+"""What a dual OpenYAM collection runs and records: teleop tuning, cameras, recorder."""
 
-from dimos.core.coordination.blueprints import Blueprint
+from typing import Any
+
+from dimos.control.coordinator import TaskConfig
+from dimos.core.coordination.blueprints import Blueprint, autoconnect
 from dimos.core.stream import In
 from dimos.hardware.sensors.camera.realsense.camera import RealSenseCamera
 from dimos.imitation.collection.recorder import CollectionRecorder
 from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
 from dimos.msgs.sensor_msgs.Image import Image
 from dimos.msgs.std_msgs.Float32 import Float32
+from dimos.robot.manipulators.common.blueprints import teleop_ik_task
+from dimos.robot.manipulators.dual_openyam.blueprints.teleop import (
+    DUAL_OPENYAM_WEBXR_TASK_NAME,
+    build_dual_openyam_webxr,
+)
+from dimos.robot.manipulators.dual_openyam.config import (
+    dual_openyam_hardware,
+    dual_openyam_model_config,
+)
+from dimos.robot.manipulators.dual_openyam.joints import DUAL_OPENYAM_ARM_JOINTS
 
 DUAL_OPENYAM_SIDES = ("left", "right")
+
+# Teleop tuning for collection: the teleop-webxr-a1z task on main (default Pink
+# solver and costs, 5 Hz command filter), with the shared 2 rad/s joint limit.
+# The stock teleop-webxr-dual-openyam task runs a stiffer, unfiltered tuning.
+DUAL_OPENYAM_COLLECTION_TELEOP_PARAMS: dict[str, Any] = {"max_joint_velocity_rad_s": 2.0}
+
+_collection_hardware = dual_openyam_hardware()
+_collection_model = dual_openyam_model_config()
+
+
+def dual_openyam_collection_teleop_task() -> TaskConfig:
+    """Both arms under one grip deadman, tuned like the A1Z WebXR task."""
+    return teleop_ik_task(
+        _collection_hardware,
+        robot_model=_collection_model,
+        name=DUAL_OPENYAM_WEBXR_TASK_NAME,
+        joint_names=DUAL_OPENYAM_ARM_JOINTS,
+        priority=20,
+        bindings=[
+            {"hand": "left", "target_frame": "left_grasp_frame"},
+            {"hand": "right", "target_frame": "right_grasp_frame"},
+        ],
+        params=dict(DUAL_OPENYAM_COLLECTION_TELEOP_PARAMS),
+    )
+
+
+# The stock dual OpenYAM WebXR graph with the collection teleop tuning.
+teleop_webxr_dual_openyam_collection = autoconnect(
+    build_dual_openyam_webxr(teleop_task=dual_openyam_collection_teleop_task())
+)
 
 # The benchmark rig's wrist D405s. Override with --left-wrist-camera.serial-number
 # and --right-wrist-camera.serial-number; the overhead camera takes

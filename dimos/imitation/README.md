@@ -37,11 +37,16 @@ recorder, all wired together.
 
 | Button | Action |
 | --- | --- |
-| **A** (right) / **X** (left) | **Hold to engage** — the arm tracks the controller only while held |
+| **Grip** (middle finger) | **Hold to engage** — the arm tracks the controller only while held. A two-arm task (dual OpenYAM) needs both grips; releasing either stops both arms |
+| **Trigger** (index finger) | **Gripper** — analog close while that hand is engaged |
 | **B** | **Toggle record** — press to start an episode, press again to save it |
 | **Y** | **Discard** the in-progress episode |
 
-So a take is: hold **A** to move the arm into place → press **B** to start →
+The headset's forward axis is the robot's +x, fixed where the headset faced when the
+WebXR session started: stand behind the arms facing the workspace and recentre the
+headset before engaging.
+
+So a take is: hold the **grip** to move the arm into place → press **B** to start →
 perform the task → press **B** to save (or **Y** to throw it away). The terminal
 prints one line per transition:
 

@@ -12,14 +12,68 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+from typing import cast
+
 import pytest
 
+from dimos.control.coordinator import TaskConfig
+from dimos.control.teleop_coordinator import TeleopControlCoordinator
+from dimos.core.coordination.blueprints import Blueprint
+from dimos.robot.manipulators.a1z.blueprints.teleop import coordinator_teleop_a1z
+from dimos.robot.manipulators.dual_openyam.blueprints.basic import DualOpenYamCoordinator
 from dimos.robot.manipulators.dual_openyam.blueprints.collection import (
     DUAL_OPENYAM_COLLECTION_STREAMS,
     DUAL_OPENYAM_WRIST_CAMERA_SERIALS,
     DualOpenYamCollectionRecorder,
+    dual_openyam_collection_teleop_task,
     dual_openyam_wrist_camera,
+    teleop_webxr_dual_openyam_collection,
 )
+from dimos.robot.manipulators.dual_openyam.blueprints.teleop import teleop_webxr_dual_openyam
+from dimos.robot.manipulators.dual_openyam.joints import DUAL_OPENYAM_ARM_JOINTS
+
+
+def _tasks(blueprint: Blueprint) -> list[TaskConfig]:
+    coordinator = next(
+        atom for atom in blueprint.blueprints if issubclass(atom.module, TeleopControlCoordinator)
+    )
+    return cast("list[TaskConfig]", coordinator.kwargs["tasks"])
+
+
+def _teleop_task(blueprint: Blueprint) -> TaskConfig:
+    return next(task for task in _tasks(blueprint) if task.type == "teleop_ik")
+
+
+def test_collection_teleop_is_tuned_like_a1z() -> None:
+    ours = dual_openyam_collection_teleop_task()
+    a1z = _teleop_task(coordinator_teleop_a1z)
+    robot_specific = {"robot_model", "bindings"}
+
+    assert ours.priority == a1z.priority
+    assert {k: v for k, v in ours.params.items() if k not in robot_specific} == {
+        k: v for k, v in a1z.params.items() if k not in robot_specific
+    }
+    assert list(ours.joint_names) == list(DUAL_OPENYAM_ARM_JOINTS)
+    assert [b["hand"] for b in ours.params["bindings"]] == ["left", "right"]
+
+
+def test_collection_graph_only_swaps_the_teleop_task() -> None:
+    stock = teleop_webxr_dual_openyam
+    ours = teleop_webxr_dual_openyam_collection
+
+    assert ours.remapping_map == stock.remapping_map
+    assert [atom.module for atom in ours.blueprints] == [atom.module for atom in stock.blueprints]
+    stock_task, our_task = _teleop_task(stock), _teleop_task(ours)
+    assert our_task.name == stock_task.name
+    assert our_task.joint_names == stock_task.joint_names
+    assert our_task.params["bindings"] == stock_task.params["bindings"]
+    assert our_task.params != stock_task.params
+    for a, b in zip(ours.blueprints, stock.blueprints, strict=True):
+        if a.module is not DualOpenYamCoordinator:
+            assert a.kwargs == b.kwargs
+    assert [t for t in _tasks(ours) if t.type != "teleop_ik"] == [
+        t for t in _tasks(stock) if t.type != "teleop_ik"
+    ]
 
 
 @pytest.mark.parametrize("side", ["left", "right"])

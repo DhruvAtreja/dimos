@@ -79,15 +79,17 @@ _dual_openyam_webxr_task = teleop_ik_task(
 
 
 def build_dual_openyam_webxr(
-    *, visualization: ManipulationVisualizationConfig = ViserVisualizationConfig()
+    *,
+    visualization: ManipulationVisualizationConfig = ViserVisualizationConfig(),
+    teleop_task: TaskConfig = _dual_openyam_webxr_task,
 ) -> Blueprint:
-    """Compose dual-arm teleop with deployment-specific visualization."""
+    """Compose dual-arm teleop with deployment-specific visualization and tuning."""
     return autoconnect(
         ArmTeleopModule.blueprint(),
         DualOpenYamCoordinator.blueprint(
             instance_name="ControlCoordinator",
             tasks=[
-                _dual_openyam_webxr_task,
+                teleop_task,
                 TaskConfig(
                     name="left_arm_gripper",
                     type="gripper",

@@ -126,6 +126,7 @@ all_blueprints = {
     "teleop-webxr-a1z": "dimos.teleop.webxr.blueprints:teleop_webxr_a1z",
     "teleop-webxr-dual": "dimos.teleop.webxr.blueprints:teleop_webxr_dual",
     "teleop-webxr-dual-openyam": "dimos.robot.manipulators.dual_openyam.blueprints.teleop:teleop_webxr_dual_openyam",
+    "teleop-webxr-dual-openyam-collection": "dimos.robot.manipulators.dual_openyam.blueprints.collection:teleop_webxr_dual_openyam_collection",
     "teleop-webxr-go2": "dimos.robot.unitree.go2.blueprints.teleop_webxr:teleop_webxr_go2",
     "teleop-webxr-hand-xarm7": "dimos.teleop.webxr.blueprints:teleop_webxr_hand_xarm7",
     "teleop-webxr-openarm": "dimos.robot.manipulators.openarm.blueprints.teleop:teleop_webxr_openarm",
