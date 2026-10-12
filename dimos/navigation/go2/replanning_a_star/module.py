@@ -13,10 +13,12 @@
 # limitations under the License.
 
 import os
+import threading
 from typing import Any
 
 from dimos_lcm.actionlib_msgs import GoalStatus
 from dimos_lcm.std_msgs import Bool, String
+from reactivex import interval
 from reactivex.disposable import Disposable
 
 from dimos.core.core import rpc
@@ -34,6 +36,9 @@ from dimos.navigation.spec import goal_id, goal_status
 from dimos.utils.logging_config import setup_logger
 
 logger = setup_logger()
+
+# How often the latest goal status repeats between transitions.
+_STATUS_HEARTBEAT_S = 1.0
 
 
 class ReplanningAStarPlannerConfig(ModuleConfig):
@@ -77,6 +82,7 @@ class ReplanningAStarPlanner(Module, ReplanningAStarPlannerSpec):
         self._planner = GlobalPlanner(effective_global_config)
         self._goal: PoseStamped | None = None
         self._status: GoalStatus | None = None
+        self._status_lock = threading.Lock()
 
     @rpc
     def start(self) -> None:
@@ -111,6 +117,9 @@ class ReplanningAStarPlanner(Module, ReplanningAStarPlannerSpec):
 
         self.register_disposable(self._planner.goal_reached.subscribe(self.goal_reached.publish))
         self.register_disposable(self._planner.goal_reached.subscribe(self._on_goal_reached))
+        self.register_disposable(
+            interval(_STATUS_HEARTBEAT_S).subscribe(lambda _: self._repeat_status())
+        )
 
         if "DEBUG_NAVIGATION" in os.environ:
             self.register_disposable(
@@ -131,8 +140,14 @@ class ReplanningAStarPlanner(Module, ReplanningAStarPlannerSpec):
             self.cancel_goal()
 
     def _report(self, goal: PoseStamped, status: int, text: str) -> None:
-        self._status = goal_status(goal, status, text)
-        self.nav_status.publish(self._status)
+        with self._status_lock:
+            self._status = goal_status(goal, status, text)
+            self.nav_status.publish(self._status)
+
+    def _repeat_status(self) -> None:
+        with self._status_lock:
+            if self._status is not None:
+                self.nav_status.publish(self._status)
 
     def _on_goal(self, goal: PoseStamped) -> None:
         held, self._goal = self._goal, goal
