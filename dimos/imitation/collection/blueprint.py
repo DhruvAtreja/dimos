@@ -92,7 +92,9 @@ def _dual_openyam_cameras_if_real() -> tuple[Blueprint, ...]:
     if global_config.simulation:
         return ()
     return (
-        RealSenseCamera.blueprint(enable_pointcloud=False),
+        # The overhead D405 has no 848x480 at 15 fps mode (the RealSense
+        # defaults): it streams 640x480 at 30 fps, as the wrist cameras do.
+        RealSenseCamera.blueprint(width=640, height=480, fps=30, enable_pointcloud=False),
         dual_openyam_wrist_camera("left"),
         dual_openyam_wrist_camera("right"),
     )
