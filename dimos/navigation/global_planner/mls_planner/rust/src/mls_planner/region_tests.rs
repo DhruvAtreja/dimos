@@ -15,6 +15,7 @@
 use super::*;
 use crate::region_viz::{cell_of, RegionViz};
 use std::collections::{BTreeMap, BTreeSet};
+use validator::Validate;
 
 type SeedRegions = Vec<(RegionBounds, Vec<(f32, f32, f32)>)>;
 
@@ -86,6 +87,16 @@ fn test_config() -> Config {
         viz_sweep_regions: 0,
         worker_threads: 4,
     }
+}
+
+#[test]
+fn a_negative_blocked_timeout_is_rejected() {
+    let config = Config {
+        blocked_timeout_s: -1.0,
+        ..test_config()
+    };
+    assert!(config.validate().is_err());
+    assert!(test_config().validate().is_ok());
 }
 
 #[test]

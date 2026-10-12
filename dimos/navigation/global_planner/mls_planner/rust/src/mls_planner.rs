@@ -80,6 +80,7 @@ pub struct Config {
     #[validate(range(exclusive_min = 0.0))]
     pub goal_z_tolerance: f32,
     /// Seconds a goal may go without a safe path before it is aborted.
+    #[validate(range(min = 0.0))]
     pub blocked_timeout_s: f32,
     /// Rate cap for the surface_map / nodes / node_edges viz artifacts. 0
     /// disables them entirely. The path output is unthrottled.
