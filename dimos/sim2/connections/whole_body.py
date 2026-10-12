@@ -41,7 +41,7 @@ from dimos.utils.logging_config import setup_logger
 logger = setup_logger()
 
 
-class WholeBodyConnectionConfig(ModuleConfig):
+class SimMotorConnectionConfig(ModuleConfig):
     definition: RobotConfig
     address: str
     robot_id: str
@@ -49,8 +49,10 @@ class WholeBodyConnectionConfig(ModuleConfig):
     command_source: Literal["coordinator", "stream"] = "coordinator"
 
 
-class WholeBodyConnection(Module):
-    config: WholeBodyConnectionConfig
+class SimMotorConnection(Module):
+    """Emulated motor IO and feedback, independent of the robot's policy."""
+
+    config: SimMotorConnectionConfig
     motor_command: In[MotorCommandArray]
     motor_states: Out[JointState]
     imu: Out[Imu]

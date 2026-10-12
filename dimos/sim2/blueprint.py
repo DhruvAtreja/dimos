@@ -22,8 +22,8 @@ from pathlib import Path
 from dimos.control.components import HardwareComponent, HardwareType
 from dimos.core.coordination.blueprints import Blueprint, autoconnect
 from dimos.hardware.whole_body.spec import WholeBodyConfig
-from dimos.sim2.connections.manipulator import ManipulatorConnection
-from dimos.sim2.connections.whole_body import WholeBodyConnection
+from dimos.sim2.connections.manipulator import SimManipulatorConnection
+from dimos.sim2.connections.whole_body import SimMotorConnection
 from dimos.sim2.module import SimulationModule
 from dimos.sim2.sensors.camera.module import SimCameraModule, SimRGBDCameraModule
 from dimos.sim2.sensors.lidar.module import LidarModule
@@ -76,7 +76,7 @@ def simulation(
         )
         if config.control == ControlInterface.WHOLE_BODY:
             imu = next(s for s in config.sensors if isinstance(s, Imu))
-            connection = WholeBodyConnection.blueprint(
+            connection = SimMotorConnection.blueprint(
                 instance_name=f"{robot_id}_connection",
                 definition=config,
                 address=f"{sim_id}/{robot_id}",
@@ -85,7 +85,7 @@ def simulation(
             )
             ports = ("motor_command", "motor_states", "imu", "odom")
         else:
-            connection = ManipulatorConnection.blueprint(
+            connection = SimManipulatorConnection.blueprint(
                 instance_name=f"{robot_id}_connection",
                 definition=config,
                 address=f"{sim_id}/{robot_id}",

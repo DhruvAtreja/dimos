@@ -33,15 +33,17 @@ from dimos.utils.logging_config import setup_logger
 logger = setup_logger()
 
 
-class ManipulatorConnectionConfig(ModuleConfig):
+class SimManipulatorConnectionConfig(ModuleConfig):
     definition: RobotConfig
     address: str
     command_source: Literal["coordinator", "stream"] = "coordinator"
     rate_hz: float = 50.0
 
 
-class ManipulatorConnection(Module):
-    config: ManipulatorConnectionConfig
+class SimManipulatorConnection(Module):
+    """Emulated manipulator position commands and measured joint state."""
+
+    config: SimManipulatorConnectionConfig
     joint_command: In[JointState]
     joint_states: Out[JointState]
 
