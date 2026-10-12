@@ -24,7 +24,7 @@ Navigation / manipulation
 ControlCoordinator: GR00T policy or joint trajectory task
         | typed MotorCommandArray or JointState
         v
-WholeBodyConnection or ManipulatorConnection: ConnectionModule
+SimMotorConnection or SimManipulatorConnection: ConnectionModule
         | internal shared-memory device
         v
 SimulationModule: one MuJoCo world

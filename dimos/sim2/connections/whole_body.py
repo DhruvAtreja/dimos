@@ -38,7 +38,7 @@ from dimos.sim2.sensors.spec import Imu as ImuSensor
 from dimos.sim2.spec import RobotConfig
 
 
-class WholeBodyConnectionConfig(ModuleConfig):
+class SimMotorConnectionConfig(ModuleConfig):
     definition: RobotConfig
     address: str
     robot_id: str
@@ -46,8 +46,10 @@ class WholeBodyConnectionConfig(ModuleConfig):
     deadman_timeout_s: float = 0.2
 
 
-class WholeBodyConnection(ConnectionModule):
-    config: WholeBodyConnectionConfig
+class SimMotorConnection(ConnectionModule):
+    """Emulated motor IO and feedback, independent of the robot's policy."""
+
+    config: SimMotorConnectionConfig
     motor_command: In[MotorCommandArray]
     joint_state: Out[JointState]
     imu: Out[Imu]

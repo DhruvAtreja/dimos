@@ -27,8 +27,8 @@ from dimos.core.module import Module
 from dimos.hardware.whole_body.spec import MotorCommand
 from dimos.robot.manipulators.xarm.sim2 import XARM7
 from dimos.robot.unitree.g1.sim2 import G1_GROOT, G1_GROOT_MID360
-from dimos.sim2.connections.manipulator import ManipulatorConnection
-from dimos.sim2.connections.whole_body import WholeBodyConnection
+from dimos.sim2.connections.manipulator import SimManipulatorConnection
+from dimos.sim2.connections.whole_body import SimMotorConnection
 from dimos.sim2.control.adapters import ManipulatorAdapter, WholeBodyAdapter
 from dimos.sim2.module import SimulationModule
 from dimos.sim2.runtime import SimulationRuntime
@@ -157,7 +157,7 @@ def connection(mocker):
 
 def test_pd_connection_reports_one_sample_and_halts_with_damping(runtime, connection):
     world = runtime(G1_GROOT, "g1", "logistics.xml", (0, 0, 0.793))
-    module = connection(world, "g1", WholeBodyConnection)
+    module = connection(world, "g1", SimMotorConnection)
     readings = module.read_state()
     assert set(readings) == set(module.describe().state_keys())
     assert readings["g1/imu/qw"] == pytest.approx(1)
@@ -170,7 +170,7 @@ def test_pd_connection_reports_one_sample_and_halts_with_damping(runtime, connec
 
 def test_arm_connection_moves_holds_and_reports_reset_without_old_targets(runtime, connection):
     world = runtime(XARM7, "arm", "workbench.xml", (0, 0, 0.12))
-    module = connection(world, "arm", ManipulatorConnection)
+    module = connection(world, "arm", SimManipulatorConnection)
     readings = module.read_state()
     assert set(readings) == set(module.describe().state_keys())
     assert readings["arm/gripper/position"] == pytest.approx(850)

@@ -28,7 +28,7 @@ from dimos.sim2.control.adapters import ManipulatorAdapter
 from dimos.sim2.spec import RobotConfig
 
 
-class ManipulatorConnectionConfig(ModuleConfig):
+class SimManipulatorConnectionConfig(ModuleConfig):
     definition: RobotConfig
     address: str
     robot_id: str
@@ -36,8 +36,10 @@ class ManipulatorConnectionConfig(ModuleConfig):
     deadman_timeout_s: float = 0.2
 
 
-class ManipulatorConnection(ConnectionModule):
-    config: ManipulatorConnectionConfig
+class SimManipulatorConnection(ConnectionModule):
+    """Emulated manipulator position commands and measured joint state."""
+
+    config: SimManipulatorConnectionConfig
     position_command: In[JointState]
     joint_state: Out[JointState]
 

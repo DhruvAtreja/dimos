@@ -22,8 +22,8 @@ from dimos.core.coordination.blueprint_config.parser import BlueprintConfigParse
 from dimos.robot.manipulators.xarm.sim2 import XARM7
 from dimos.robot.unitree.g1.sim2 import G1_GROOT, G1_GROOT_MID360
 from dimos.sim2.blueprint import simulation
-from dimos.sim2.connections.manipulator import ManipulatorConnectionConfig
-from dimos.sim2.connections.whole_body import WholeBodyConnectionConfig
+from dimos.sim2.connections.manipulator import SimManipulatorConnectionConfig
+from dimos.sim2.connections.whole_body import SimMotorConnectionConfig
 from dimos.sim2.module import SimulationModuleConfig
 from dimos.sim2.scene import scene_path
 from dimos.sim2.sensors.camera.module import CameraModuleConfig
@@ -90,9 +90,9 @@ class HorizontalRays:
 @pytest.mark.parametrize(
     "robot,connection_config",
     [
-        (G1_GROOT, WholeBodyConnectionConfig),
-        (G1_GROOT_MID360, WholeBodyConnectionConfig),
-        (XARM7, ManipulatorConnectionConfig),
+        (G1_GROOT, SimMotorConnectionConfig),
+        (G1_GROOT_MID360, SimMotorConnectionConfig),
+        (XARM7, SimManipulatorConnectionConfig),
     ],
 )
 def test_physics_and_connection_reconstruct_the_same_robot(tmp_path, robot, connection_config):
