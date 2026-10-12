@@ -17,6 +17,75 @@
 Use ``model_validate_json`` to validate incoming payloads. These models check
 message structure; the RPC backend owns routing, method binding and matching
 response IDs to pending requests. Batch handling is outside these models.
+
+Calculator data flow (proposed JSON-RPC transport; data examples only, no calls run):
+
+1. Python call → arguments
+   self.calc.compute1(2, 3)
+   args = (2, 3), kwargs = {}
+
+2. Arguments → JsonRpcRequest → UTF-8 JSON request body
+   Zenoh key: dimos/jsonrpc/python-args/Calculator/compute1
+   {
+       "jsonrpc": "2.0",
+       "id": "client1:1",
+       "method": "Calculator/compute1",
+       "params": {"args": [2, 3], "kwargs": {}}
+   }
+
+3. Zenoh routes by key → the server validates the request → extracts arguments
+   JsonRpcRequest.params → JsonRpcParams(args=[2, 3], kwargs={})
+   method matches Calculator/compute1 in the key
+   compute1 receives a=2, b=3 → returns the Python integer 5
+
+4. Return value → JsonRpcSuccessResponse → UTF-8 JSON response body
+   Reply within the same Zenoh query, without a separate response topic:
+   {"jsonrpc": "2.0", "id": "client1:1", "result": 5}
+
+5. The client validates the response → matches the ID → completes the waiting call
+   JsonRpcSuccessResponse(id="client1:1", result=5, jsonrpc="2.0")
+   pending["client1:1"] → callback(5) → wakes call_sync()
+   self.calc.compute1(2, 3) returns the Python integer 5
+   pending is the proposed backend's request map, not state maintained by these models.
+
+Another successful call, preserving floating-point values:
+   self.calc.compute2(1.5, 2.5)
+   Zenoh key: dimos/jsonrpc/python-args/Calculator/compute2
+   Request: {"jsonrpc": "2.0", "id": "client1:2", "method": "Calculator/compute2",
+             "params": {"args": [1.5, 2.5], "kwargs": {}}}
+   Server arguments: a=1.5, b=2.5 → returns 4.0
+   Response: {"jsonrpc": "2.0", "id": "client1:2", "result": 4.0}
+   Client result: 4.0
+
+Error path (assume compute1 rejects negative values; illustrative error data only):
+   self.calc.compute1(-2, 3)
+   Zenoh key: dimos/jsonrpc/python-args/Calculator/compute1
+   Request: {"jsonrpc": "2.0", "id": "client1:3", "method": "Calculator/compute1",
+             "params": {"args": [-2, 3], "kwargs": {}}}
+   Server exception: ValueError("a must be non-negative")
+   JsonRpcErrorResponse payload:
+   {
+       "jsonrpc": "2.0",
+       "id": "client1:3",
+       "error": {
+           "code": -32000,
+           "message": "a must be non-negative",
+           "data": {
+               "type_name": "ValueError",
+               "type_module": "builtins",
+               "args": ["a must be non-negative"],
+               "traceback": "<remote traceback>"
+           }
+       }
+   }
+   Client validation → backend reconstructs ValueError → call_sync() raises it.
+
+A call without a response (once stop supports the JSON transport):
+   self.calc.stop()
+   Zenoh key: dimos/jsonrpc/python-args/Calculator/stop
+   JsonRpcNotification: {"jsonrpc": "2.0", "method": "Calculator/stop",
+                         "params": {"args": [], "kwargs": {}}}
+   Request has no ID → the server executes stop() → no response payload.
 """
 
 import math
