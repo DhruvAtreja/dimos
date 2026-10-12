@@ -22,7 +22,7 @@ use std::ops::Bound::{Excluded, Unbounded};
 
 use ahash::{AHashMap, AHashSet, AHasher};
 
-use crate::mls_planner::ColumnWindow;
+use crate::columns::ColumnWindow;
 use crate::voxel::VoxelKey;
 
 pub type Cell = (i32, i32);

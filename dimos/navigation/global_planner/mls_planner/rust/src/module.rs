@@ -17,7 +17,8 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
-use crate::mls_planner::{ColumnWindow, Config, Planner, RegionBounds};
+use crate::columns::ColumnWindow;
+use crate::mls_planner::{Config, Planner, RegionBounds, DEBUG_LOG_PERIOD};
 use crate::region_viz::{pack_cell, Cell, RegionContent, RegionViz};
 use crate::voxel::{surface_point_xyz, VoxelKey};
 use dimos_module::time::now;
@@ -571,7 +572,7 @@ impl Worker {
         }
         let Ok(permit) = self.viz.try_reserve() else {
             debug_throttled!(
-                Duration::from_secs(5),
+                DEBUG_LOG_PERIOD,
                 "viz tick skipped, the publisher is behind"
             );
             return;
@@ -612,7 +613,7 @@ impl Worker {
                 let process_start = Instant::now();
                 self.apply_region(planner, &points, &region, viz, Planner::update_region);
                 debug_throttled!(
-                    Duration::from_secs(5),
+                    DEBUG_LOG_PERIOD,
                     process_ms = process_start.elapsed().as_secs_f64() * 1e3,
                     wait_ms = process_start.duration_since(received).as_secs_f64() * 1e3,
                     points = points.len(),
@@ -703,7 +704,7 @@ impl Worker {
         let stamp = now();
         let path_msg = build_path_from_waypoints(&waypoints, &self.config.world_frame, stamp);
         debug_throttled!(
-            Duration::from_secs(5),
+            DEBUG_LOG_PERIOD,
             waypoints = waypoints.len(),
             plan_ms,
             since_last_ms,

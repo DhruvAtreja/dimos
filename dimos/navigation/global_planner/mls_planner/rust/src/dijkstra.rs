@@ -296,17 +296,17 @@ pub fn dijkstra_clusters(
         })
         .collect();
     let mut changed: Vec<CellId> = Vec::new();
-    for (cluster, l) in clusters.iter().zip(labels) {
+    for (cluster, labels) in clusters.iter().zip(labels) {
         for (i, &id) in cluster.iter().enumerate() {
             let slot = id as usize;
             if state.dist[slot].is_finite()
-                && (!l.dist[i].is_finite() || l.source[i] != state.source[slot])
+                && (!labels.dist[i].is_finite() || labels.source[i] != state.source[slot])
             {
                 changed.push(id);
             }
-            state.dist[slot] = l.dist[i];
-            state.pred[slot] = l.pred[i];
-            state.source[slot] = l.source[i];
+            state.dist[slot] = labels.dist[i];
+            state.pred[slot] = labels.pred[i];
+            state.source[slot] = labels.source[i];
         }
     }
     changed
@@ -321,11 +321,11 @@ fn dijkstra_cluster(
     weight: Weight,
     frontier: Frontier,
 ) -> ClusterLabels {
-    let me = index.cluster(cluster[0]);
-    let k = cluster.len();
-    let mut dist = vec![f32::INFINITY; k];
-    let mut pred = vec![NO_CELL; k];
-    let mut source = vec![0u32; k];
+    let cluster_id = index.cluster(cluster[0]);
+    let len = cluster.len();
+    let mut dist = vec![f32::INFINITY; len];
+    let mut pred = vec![NO_CELL; len];
+    let mut source = vec![0u32; len];
     let mut heap: BinaryHeap<Scored<u128>> = BinaryHeap::new();
     for &s in sources {
         let i = index.local(s);
@@ -334,7 +334,7 @@ fn dijkstra_cluster(
         heap.push(Scored(0.0, heap_key(cells.coord(s), s)));
     }
 
-    // Outside neighbors with the source each one seeds, sorted by cell.
+    // Sorted by cell, for the lookup when one pops.
     let mut outside: Vec<CellId> = Vec::new();
     for &w in cluster {
         for edge in cells.neighbors(w) {
@@ -361,7 +361,7 @@ fn dijkstra_cluster(
 
     while let Some(Scored(d, key)) = heap.pop() {
         let u = heap_id(key);
-        let (du, su) = if index.cluster(u) == me {
+        let (du, su) = if index.cluster(u) == cluster_id {
             let i = index.local(u);
             (dist[i], source[i])
         } else {
@@ -375,7 +375,7 @@ fn dijkstra_cluster(
         }
         for edge in cells.neighbors(u) {
             let v = edge.dest;
-            if index.cluster(v) != me {
+            if index.cluster(v) != cluster_id {
                 continue;
             }
             let vi = index.local(v);

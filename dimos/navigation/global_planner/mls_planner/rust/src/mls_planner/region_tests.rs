@@ -1286,9 +1286,8 @@ fn a_voxel_that_goes_under_filled_surface_raises_the_wall_across_the_gap() {
     assert!(wall_distance(&p) > 0.0);
     let before = surface_set(&p);
 
-    // The post top goes. Its column still holds the ground voxel and closing
-    // keeps its cell, so no surface changes and no column empties, but the
-    // scan now ends on a column with nothing to step onto: a drop.
+    // The post top goes with no surface change and no emptied column, but
+    // the scan now ends with nothing to step onto: a drop.
     let world = decks_with_a_post(false);
     let spot = RegionBounds {
         origin_x: 0.65,

@@ -20,7 +20,10 @@ use ahash::{AHashMap, AHashSet};
 use rayon::prelude::*;
 
 pub use crate::columns::ColumnIz;
+use crate::columns::ColumnWindow;
 use crate::voxel::VoxelKey;
+
+const WORD_BITS: usize = u64::BITS as usize;
 
 /// A cell is standable if it has at least the robot's height of clear space
 /// above it.
@@ -95,8 +98,8 @@ fn standable_in_column(
 pub struct ColumnMask {
     x0: i32,
     y0: i32,
-    w: usize,
-    h: usize,
+    width: usize,
+    height: usize,
     words_per_row: usize,
     bits: Vec<u64>,
     /// Inclusive row range holding set bits, so scans skip the rest.
@@ -105,17 +108,17 @@ pub struct ColumnMask {
 
 impl ColumnMask {
     /// An empty mask over the box widened by `margin` on every side.
-    pub fn new((x0, x1, y0, y1): (i32, i32, i32, i32), margin: i32) -> Self {
-        let w = (x1 - x0 + 1 + 2 * margin).max(0) as usize;
-        let h = (y1 - y0 + 1 + 2 * margin).max(0) as usize;
-        let words_per_row = w.div_ceil(64);
+    pub fn new((x0, x1, y0, y1): ColumnWindow, margin: i32) -> Self {
+        let width = (x1 - x0 + 1 + 2 * margin).max(0) as usize;
+        let height = (y1 - y0 + 1 + 2 * margin).max(0) as usize;
+        let words_per_row = width.div_ceil(WORD_BITS);
         Self {
             x0: x0 - margin,
             y0: y0 - margin,
-            w,
-            h,
+            width,
+            height,
             words_per_row,
-            bits: vec![0; words_per_row * h],
+            bits: vec![0; words_per_row * height],
             rows_set: None,
         }
     }
@@ -123,14 +126,14 @@ impl ColumnMask {
     fn local(&self, (ix, iy): (i32, i32)) -> Option<(usize, usize)> {
         let x = ix - self.x0;
         let y = iy - self.y0;
-        (x >= 0 && y >= 0 && (x as usize) < self.w && (y as usize) < self.h)
+        (x >= 0 && y >= 0 && (x as usize) < self.width && (y as usize) < self.height)
             .then_some((x as usize, y as usize))
     }
 
     /// Mark a column. Columns outside the box are ignored.
     pub fn set(&mut self, col: (i32, i32)) {
         if let Some((x, y)) = self.local(col) {
-            self.bits[y * self.words_per_row + x / 64] |= 1 << (x % 64);
+            self.bits[y * self.words_per_row + x / WORD_BITS] |= 1 << (x % WORD_BITS);
             self.rows_set = Some(match self.rows_set {
                 None => (y, y),
                 Some((lo, hi)) => (lo.min(y), hi.max(y)),
@@ -139,8 +142,9 @@ impl ColumnMask {
     }
 
     pub fn contains(&self, col: (i32, i32)) -> bool {
-        self.local(col)
-            .is_some_and(|(x, y)| self.bits[y * self.words_per_row + x / 64] >> (x % 64) & 1 == 1)
+        self.local(col).is_some_and(|(x, y)| {
+            self.bits[y * self.words_per_row + x / WORD_BITS] >> (x % WORD_BITS) & 1 == 1
+        })
     }
 
     /// Every column within `r` of a set column, clipped to the box.
@@ -150,48 +154,50 @@ impl ColumnMask {
         let Some((lo, hi)) = self.rows_set else {
             return out;
         };
-        let wpr = self.words_per_row;
-        let mut row = vec![0u64; wpr];
+        let words_per_row = self.words_per_row;
+        let mut row = vec![0u64; words_per_row];
         for y in lo..=hi {
-            let src = &self.bits[y * wpr..(y + 1) * wpr];
+            let src = &self.bits[y * words_per_row..(y + 1) * words_per_row];
             row.copy_from_slice(src);
             for _ in 0..r {
-                shift_or(&mut row, self.w);
+                shift_or(&mut row, self.width);
             }
-            out.bits[y * wpr..(y + 1) * wpr].copy_from_slice(&row);
+            out.bits[y * words_per_row..(y + 1) * words_per_row].copy_from_slice(&row);
         }
-        let (lo2, hi2) = (lo.saturating_sub(r), (hi + r).min(self.h.saturating_sub(1)));
+        let last_row = self.height.saturating_sub(1);
+        let (grown_lo, grown_hi) = (lo.saturating_sub(r), (hi + r).min(last_row));
         let widened = out.bits.clone();
-        for y in lo2..=hi2 {
-            let dst = &mut out.bits[y * wpr..(y + 1) * wpr];
-            for sy in y.saturating_sub(r)..=(y + r).min(self.h.saturating_sub(1)) {
+        for y in grown_lo..=grown_hi {
+            let dst = &mut out.bits[y * words_per_row..(y + 1) * words_per_row];
+            for sy in y.saturating_sub(r)..=(y + r).min(last_row) {
                 if sy == y {
                     continue;
                 }
-                for (d, &w) in dst.iter_mut().zip(&widened[sy * wpr..(sy + 1) * wpr]) {
-                    *d |= w;
+                let src = &widened[sy * words_per_row..(sy + 1) * words_per_row];
+                for (d, &word) in dst.iter_mut().zip(src) {
+                    *d |= word;
                 }
             }
         }
-        out.rows_set = (self.h > 0).then_some((lo2, hi2));
+        out.rows_set = (self.height > 0).then_some((grown_lo, grown_hi));
         out
     }
 
     /// Inclusive bbox of the set columns, None when empty.
-    pub fn bounds(&self) -> Option<(i32, i32, i32, i32)> {
+    pub fn bounds(&self) -> Option<ColumnWindow> {
         let (lo, hi) = self.rows_set?;
-        let mut bb: Option<(i32, i32, i32, i32)> = None;
+        let mut bb: Option<ColumnWindow> = None;
         for y in lo..=hi {
             let row = &self.bits[y * self.words_per_row..(y + 1) * self.words_per_row];
-            let Some(first) = row.iter().position(|&w| w != 0) else {
+            let Some(first) = row.iter().position(|&word| word != 0) else {
                 continue;
             };
             let last = row
                 .iter()
-                .rposition(|&w| w != 0)
+                .rposition(|&word| word != 0)
                 .expect("a set word exists");
-            let xmin = first * 64 + row[first].trailing_zeros() as usize;
-            let xmax = last * 64 + 63 - row[last].leading_zeros() as usize;
+            let xmin = first * WORD_BITS + row[first].trailing_zeros() as usize;
+            let xmax = last * WORD_BITS + WORD_BITS - 1 - row[last].leading_zeros() as usize;
             let (ix0, ix1, iy) = (
                 self.x0 + xmin as i32,
                 self.x0 + xmax as i32,
@@ -207,8 +213,7 @@ impl ColumnMask {
         bb
     }
 
-    /// Row indices that may hold set columns, for splitting a scan across
-    /// threads.
+    /// Row indices that may hold set columns.
     pub fn rows(&self) -> std::ops::Range<usize> {
         match self.rows_set {
             Some((lo, hi)) => lo..hi + 1,
@@ -223,7 +228,7 @@ impl ColumnMask {
             .iter()
             .enumerate()
             .flat_map(move |(wi, &word)| {
-                SetBits(word).map(move |bit| (self.x0 + (wi * 64 + bit) as i32, iy))
+                SetBits(word).map(move |bit| (self.x0 + (wi * WORD_BITS + bit) as i32, iy))
             })
     }
 }
@@ -235,16 +240,16 @@ fn shift_or(row: &mut [u64], width: usize) {
     let mut carry_left = 0u64;
     let mut out = vec![0u64; n];
     for i in 0..n {
-        let w = row[i];
-        out[i] = w | (w << 1) | carry_left | (w >> 1);
-        carry_left = w >> 63;
+        let word = row[i];
+        out[i] = word | (word << 1) | carry_left | (word >> 1);
+        carry_left = word >> (WORD_BITS - 1);
     }
     for i in 0..n {
         let next_low = if i + 1 < n { row[i + 1] & 1 } else { 0 };
-        out[i] |= next_low << 63;
+        out[i] |= next_low << (WORD_BITS - 1);
     }
-    if !width.is_multiple_of(64) {
-        out[n - 1] &= (1u64 << (width % 64)) - 1;
+    if !width.is_multiple_of(WORD_BITS) {
+        out[n - 1] &= (1u64 << (width % WORD_BITS)) - 1;
     }
     row.copy_from_slice(&out);
 }
@@ -435,7 +440,6 @@ fn close_at_z(
     }
 
     // Closing never removes a cell, so the originals pass straight through.
-    // A filled cell must be standable and have nearby occupied evidence.
     let mut out: Vec<VoxelKey> = xys.iter().map(|&(ix, iy)| (ix, iy, iz)).collect();
     for (px, py) in grid.set_cells() {
         if original.get(px, py) {
@@ -456,7 +460,7 @@ fn close_at_z(
     out
 }
 
-/// Dense bit grid over a cluster box, one word per 64 columns. Everything
+/// Dense bit grid over a cluster box, one word per WORD_BITS columns. Everything
 /// outside the grid is empty.
 #[derive(Clone)]
 struct BitGrid {
@@ -467,7 +471,7 @@ struct BitGrid {
 
 impl BitGrid {
     fn new(width: usize, height: usize) -> Self {
-        let words = width.div_ceil(64);
+        let words = width.div_ceil(WORD_BITS);
         Self {
             width,
             words,
@@ -476,11 +480,11 @@ impl BitGrid {
     }
 
     fn set(&mut self, x: usize, y: usize) {
-        self.bits[y * self.words + x / 64] |= 1u64 << (x % 64);
+        self.bits[y * self.words + x / WORD_BITS] |= 1u64 << (x % WORD_BITS);
     }
 
     fn get(&self, x: usize, y: usize) -> bool {
-        self.bits[y * self.words + x / 64] & (1u64 << (x % 64)) != 0
+        self.bits[y * self.words + x / WORD_BITS] & (1u64 << (x % WORD_BITS)) != 0
     }
 
     /// Grow the set by one cell in the four directions, an L1 dilation step.
@@ -495,18 +499,28 @@ impl BitGrid {
 
     fn step(&mut self, scratch: &mut BitGrid, combine: impl Fn(u64, u64) -> u64) {
         let (words, height) = (self.words, self.bits.len() / self.words);
-        let tail_mask = if self.width.is_multiple_of(64) {
+        let tail_mask = if self.width.is_multiple_of(WORD_BITS) {
             u64::MAX
         } else {
-            (1u64 << (self.width % 64)) - 1
+            (1u64 << (self.width % WORD_BITS)) - 1
         };
         for y in 0..height {
             let row = &self.bits[y * words..(y + 1) * words];
             let up = (y > 0).then(|| &self.bits[(y - 1) * words..y * words]);
             let down = (y + 1 < height).then(|| &self.bits[(y + 1) * words..(y + 2) * words]);
             for i in 0..words {
-                let left = (row[i] << 1) | if i > 0 { row[i - 1] >> 63 } else { 0 };
-                let right = (row[i] >> 1) | if i + 1 < words { row[i + 1] << 63 } else { 0 };
+                let left = (row[i] << 1)
+                    | if i > 0 {
+                        row[i - 1] >> (WORD_BITS - 1)
+                    } else {
+                        0
+                    };
+                let right = (row[i] >> 1)
+                    | if i + 1 < words {
+                        row[i + 1] << (WORD_BITS - 1)
+                    } else {
+                        0
+                    };
                 let mut v = combine(combine(row[i], left), right);
                 v = combine(v, up.map_or(0, |r| r[i]));
                 v = combine(v, down.map_or(0, |r| r[i]));
@@ -523,7 +537,7 @@ impl BitGrid {
         let words = self.words;
         self.bits.iter().enumerate().flat_map(move |(k, &word)| {
             let (y, i) = (k / words, k % words);
-            SetBits(word).map(move |bit| (i * 64 + bit, y))
+            SetBits(word).map(move |bit| (i * WORD_BITS + bit, y))
         })
     }
 }

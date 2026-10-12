@@ -385,8 +385,6 @@ pub fn build_node_edges_region(
         state,
         Weight::Penalized,
     );
-    let index_window = window.index;
-    let window = &window.cells;
     out.ensure_capacity(cells.slot_capacity());
 
     // A gone node's edges go whatever their corridors say. Descending order
@@ -397,7 +395,7 @@ pub fn build_node_edges_region(
             work.extend(list.into_iter().map(|i| (i, true)));
         }
     }
-    for &c in window.iter().chain(removed) {
+    for &c in window.cells.iter().chain(removed) {
         work.extend(out.through[c as usize].iter().map(|&i| (i, false)));
     }
     for &r in removed {
@@ -419,7 +417,9 @@ pub fn build_node_edges_region(
             })
             .collect()
     };
-    let mut broken: Vec<NodeId> = Vec::new();
+    // A gone id that is live again was reused by a new node, which needs the
+    // same rescan to get its edges outside the window back.
+    let mut broken: Vec<NodeId> = gone.to_vec();
     for ((i, doomed), cost) in work.into_iter().zip(costs) {
         let e = &out.edges[i as usize];
         let a = e.a;
@@ -444,16 +444,16 @@ pub fn build_node_edges_region(
     let mut beyond: AHashSet<CellId> = reattached
         .iter()
         .copied()
-        .filter(|&c| !index_window.in_window(c))
+        .filter(|&c| !window.index.in_window(c))
         .collect();
     broken.sort_unstable();
     broken.dedup();
     for a in broken {
         if index.has(a) {
-            flood_region(cells, state, index_window, a, &mut beyond);
+            flood_region(cells, state, window.index, a, &mut beyond);
         }
     }
-    let scan: Vec<CellId> = window.iter().copied().chain(beyond).collect();
+    let scan: Vec<CellId> = window.cells.iter().copied().chain(beyond).collect();
     let mut crossings: Vec<NodeEdge> = boundary_edge_map(cells, state, &scan)
         .into_values()
         .filter(|e| index.has(e.a) && index.has(e.b))
@@ -492,7 +492,7 @@ fn best_boundary_edges(cells: &SurfaceCells, state: &DijkstraState, out: &mut Ve
 fn flood_region(
     cells: &SurfaceCells,
     state: &DijkstraState,
-    window: &ClusterIndex,
+    cluster_index: &ClusterIndex,
     node: NodeId,
     out: &mut AHashSet<CellId>,
 ) {
@@ -501,7 +501,7 @@ fn flood_region(
     let mut stack: Vec<CellId> = vec![node];
     seen.insert(node);
     while let Some(u) = stack.pop() {
-        if !window.in_window(u) {
+        if !cluster_index.in_window(u) {
             out.insert(u);
         }
         for e in cells.neighbors(u) {
@@ -925,6 +925,32 @@ mod tests {
         assert_eq!(pg.node_edges.len(), 1);
         assert!(pg.node_edges.between(a, b).is_some());
         assert!(!pg.node_edges.adj.contains_key(&gone));
+    }
+
+    #[test]
+    fn gone_node_whose_id_is_reused_keeps_its_edge_outside_the_window() {
+        let floor: Vec<VoxelKey> = (0..30)
+            .flat_map(|x| (0..11).map(move |y| (x, y, 0)))
+            .collect();
+        let mut pg = setup(&floor, &[(2, 5, 0), (27, 5, 0)]);
+        let (a, b) = (
+            pg.cells.id((2, 5, 0)).unwrap(),
+            pg.cells.id((27, 5, 0)).unwrap(),
+        );
+        // The first node died and a new node took its cell slot in the same
+        // repair, so the id is gone and live at once.
+        let window: Vec<CellId> = floor
+            .iter()
+            .filter(|c| (c.0 - 2).abs() + (c.1 - 5).abs() <= 4)
+            .filter_map(|&c| pg.cells.id(c))
+            .collect();
+
+        repair_region(&mut pg, &window, &[], &[a]);
+
+        assert!(
+            pg.node_edges.between(a, b).is_some(),
+            "the nodes still touch outside the window, so they keep an edge"
+        );
     }
 
     #[test]

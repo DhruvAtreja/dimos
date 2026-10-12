@@ -22,6 +22,9 @@ use smallvec::SmallVec;
 
 use crate::voxel::VoxelKey;
 
+/// Inclusive column window, as x0, x1, y0, y1.
+pub type ColumnWindow = (i32, i32, i32, i32);
+
 const TILE_BITS: i32 = 5;
 /// Columns per tile edge.
 pub const TILE_EDGE: i32 = 1 << TILE_BITS;
@@ -46,10 +49,10 @@ fn slot_of((ix, iy): (i32, i32)) -> usize {
 
 #[inline]
 fn column_of(tile: Tile, slot: usize) -> (i32, i32) {
-    let s = slot as i32;
+    let slot = slot as i32;
     (
-        (tile.0 << TILE_BITS) | (s & TILE_MASK),
-        (tile.1 << TILE_BITS) | (s >> TILE_BITS),
+        (tile.0 << TILE_BITS) | (slot & TILE_MASK),
+        (tile.1 << TILE_BITS) | (slot >> TILE_BITS),
     )
 }
 
@@ -123,7 +126,7 @@ impl ColumnIz {
     }
 
     /// The tiles covering an inclusive column box, present or not.
-    pub fn tiles_covering((x0, x1, y0, y1): (i32, i32, i32, i32)) -> Vec<Tile> {
+    pub fn tiles_covering((x0, x1, y0, y1): ColumnWindow) -> Vec<Tile> {
         let (tx0, tx1) = (x0 >> TILE_BITS, x1 >> TILE_BITS);
         let (ty0, ty1) = (y0 >> TILE_BITS, y1 >> TILE_BITS);
         let mut tiles = Vec::with_capacity(((tx1 - tx0 + 1) * (ty1 - ty0 + 1)).max(0) as usize);
@@ -140,7 +143,7 @@ impl ColumnIz {
     pub fn tile_columns_in(
         &self,
         tile: Tile,
-        (x0, x1, y0, y1): (i32, i32, i32, i32),
+        (x0, x1, y0, y1): ColumnWindow,
     ) -> impl Iterator<Item = ((i32, i32), &[i32])> + '_ {
         let columns = self.tiles.get(&tile).map(Vec::as_slice);
         let (ox, oy) = (tile.0 << TILE_BITS, tile.1 << TILE_BITS);

@@ -255,8 +255,6 @@ pub fn rebuild_edges_around(
     voxel_size: f32,
     step_threshold_cells: i32,
 ) {
-    // Edges read only the lookup and cell ids, so they build in parallel and
-    // land serially.
     let rebuilt: Vec<(CellId, Vec<Edge>)> = affected
         .par_iter()
         .map(|&id| {

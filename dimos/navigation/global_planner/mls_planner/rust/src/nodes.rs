@@ -26,8 +26,7 @@ use crate::dijkstra::{
     chain_source, dijkstra, dijkstra_clusters, window_clusters, ClusterIndex, DijkstraState,
     Frontier, Weight,
 };
-use crate::edges::NodeId;
-use crate::edges::RepairWindow;
+use crate::edges::{NodeId, RepairWindow};
 use crate::surfaces::{is_standable, ColumnIz};
 use crate::voxel::{surface_point_xyz, VoxelKey};
 
@@ -215,9 +214,8 @@ pub fn relocate_dead_nodes(
     index.prepare(params);
     let step = params.step_cells;
     let crowd_m = RELOCATION_CROWDING_FRAC * params.node_spacing_m;
-    // Dead nodes leave the index first, so none of them counts as a neighbor
-    // while the others look for a cell. The dead cell's slot may already
-    // belong to a new cell. The old id is what the edges still reference.
+    // Dead nodes leave the index before any relocates. The old id is what
+    // the edges still reference.
     for &(ni, coord) in dead_nodes {
         let old = nodes[ni].cell_id;
         gone.push(old);
@@ -386,9 +384,6 @@ pub fn place_nodes_region(
         Weight::Base,
         Frontier::Any,
     );
-    let clusters = window.clusters;
-    let cluster_index = window.index;
-    let window = window.cells;
 
     index.prepare(params);
     let node_floor = params.wall_clearance_m;
@@ -401,7 +396,7 @@ pub fn place_nodes_region(
         .filter(|(_, n)| n.cell_id == NO_CELL)
         .map(|(i, _)| i)
         .collect();
-    for &w in window {
+    for &w in window.cells {
         if let Some(i) = index.node_at(w) {
             if wall_state.dist[w as usize] < node_floor {
                 doomed.push(i);
@@ -431,9 +426,9 @@ pub fn place_nodes_region(
         cells,
         &wall_state.dist,
         params.voxel_size,
-        clusters,
+        window.clusters,
         Some(Beyond {
-            window: cluster_index,
+            cluster_index: window.index,
             owner: voronoi,
         }),
         index,
@@ -447,7 +442,7 @@ pub fn place_nodes_region(
         params.wall_buffer_m,
         params.wall_buffer_weight,
         params.step_penalty_weight,
-        window,
+        window.cells,
         scratch,
     );
     dropped
@@ -572,8 +567,6 @@ fn apply_wall_safe_penalty_region(
     for &id in &affected {
         scratch.seen[id as usize] = false;
     }
-    // Costs read only distances and neighbors, so they compute in parallel
-    // and land serially.
     let scaled: Vec<(CellId, Vec<f32>)> = affected
         .par_iter()
         .map(|&id| {
@@ -710,7 +703,7 @@ pub(crate) fn penalty_of(d: f32, clearance_m: f32, buffer_m: f32, weight: f32) -
 /// node each of them was last owned by.
 #[derive(Clone, Copy)]
 pub struct Beyond<'a> {
-    pub window: &'a ClusterIndex,
+    pub cluster_index: &'a ClusterIndex,
     pub owner: &'a DijkstraState,
 }
 
@@ -719,7 +712,7 @@ impl Beyond<'_> {
     /// a cached chain that stays outside the window, so this repair cannot
     /// cut it.
     fn has_node(&self, cells: &SurfaceCells, id: CellId, index: &NodeIndex) -> bool {
-        chain_source(cells, self.owner, self.window, id, &|c| index.has(c)).is_some()
+        chain_source(cells, self.owner, self.cluster_index, id, &|c| index.has(c)).is_some()
     }
 }
 

@@ -23,7 +23,7 @@ use rayon::prelude::*;
 use validator::ValidationError;
 
 use crate::adjacency::{build_surface_cells, build_surface_lookup, rebuild_edges_around, CellId};
-use crate::columns::TILE_EDGE;
+use crate::columns::{ColumnWindow, TILE_EDGE};
 use crate::dijkstra::window_clusters;
 use crate::edges::{
     build_node_edges, build_node_edges_region, edges_to_segments, PlannerGraph, RepairWindow,
@@ -156,8 +156,8 @@ impl Config {
     }
 }
 
-/// Inclusive column window, as x0, x1, y0, y1.
-pub type ColumnWindow = (i32, i32, i32, i32);
+/// How often the throttled debug lines log.
+pub(crate) const DEBUG_LOG_PERIOD: Duration = Duration::from_secs(5);
 
 /// Cells a repair window reaches past the band it must keep exact.
 const WINDOW_SLACK_CELLS: i32 = 2;
@@ -197,7 +197,7 @@ impl RegionBounds {
     }
 
     /// Inclusive voxel-column bounding box of the cylinder in the xy plane.
-    fn column_bbox(&self, voxel_size: f32) -> (i32, i32, i32, i32) {
+    fn column_bbox(&self, voxel_size: f32) -> ColumnWindow {
         let inv = 1.0 / voxel_size;
         let x0 = ((self.origin_x - self.radius) * inv).floor() as i32;
         let x1 = ((self.origin_x + self.radius) * inv).floor() as i32;
@@ -273,7 +273,7 @@ impl Planner {
 
     /// update_region for a region of a seeded map. It repairs out to the full
     /// wall buffer, so the costs around a seeded wall are exact across region
-    /// borders. Seed regions only run when no live cloud waits.
+    /// borders.
     pub fn update_seed_region(
         &mut self,
         points: &[(f32, f32, f32)],
@@ -324,7 +324,7 @@ impl Planner {
             let stage = Instant::now();
             self.rebuild_region_graph(added, removed, &edits, window_steps, config);
             debug_throttled!(
-                Duration::from_secs(5),
+                DEBUG_LOG_PERIOD,
                 diff_ms,
                 extract_ms,
                 replace_ms,
@@ -821,8 +821,8 @@ struct ColumnEdit {
 struct ColumnBuckets {
     x0: i32,
     y0: i32,
-    w: usize,
-    h: usize,
+    width: usize,
+    height: usize,
     bands: Vec<Band>,
 }
 
@@ -837,13 +837,13 @@ struct Band {
 const BAND_ROWS: usize = TILE_EDGE as usize;
 
 impl ColumnBuckets {
-    fn new(keys: &[VoxelKey], (x0, x1, y0, y1): (i32, i32, i32, i32)) -> Self {
-        let w = (x1 - x0 + 1).max(0) as usize;
-        let h = (y1 - y0 + 1).max(0) as usize;
-        let n_bands = h.div_ceil(BAND_ROWS);
+    fn new(keys: &[VoxelKey], (x0, x1, y0, y1): ColumnWindow) -> Self {
+        let width = (x1 - x0 + 1).max(0) as usize;
+        let height = (y1 - y0 + 1).max(0) as usize;
+        let n_bands = height.div_ceil(BAND_ROWS);
         let band_of = |&(_, iy, _): &VoxelKey| {
             let y = iy - y0;
-            debug_assert!(y >= 0 && (y as usize) < h);
+            debug_assert!(y >= 0 && (y as usize) < height);
             y as usize / BAND_ROWS
         };
         let grouped: Vec<Vec<VoxelKey>> = keys
@@ -868,15 +868,15 @@ impl ColumnBuckets {
             .into_par_iter()
             .enumerate()
             .map(|(bi, band_keys)| {
-                let rows = BAND_ROWS.min(h - bi * BAND_ROWS);
-                Band::new(&band_keys, x0, y0 + (bi * BAND_ROWS) as i32, w, rows)
+                let rows = BAND_ROWS.min(height - bi * BAND_ROWS);
+                Band::new(&band_keys, x0, y0 + (bi * BAND_ROWS) as i32, width, rows)
             })
             .collect();
         Self {
             x0,
             y0,
-            w,
-            h,
+            width,
+            height,
             bands,
         }
     }
@@ -884,18 +884,18 @@ impl ColumnBuckets {
     /// The sorted z values a column received, empty outside the bbox.
     fn column(&self, (ix, iy): (i32, i32)) -> &[i32] {
         let (x, y) = (ix - self.x0, iy - self.y0);
-        if x < 0 || y < 0 || x as usize >= self.w || y as usize >= self.h {
+        if x < 0 || y < 0 || x as usize >= self.width || y as usize >= self.height {
             return &[];
         }
         let (x, y) = (x as usize, y as usize);
-        self.bands[y / BAND_ROWS].column(x, y % BAND_ROWS, self.w)
+        self.bands[y / BAND_ROWS].column(x, y % BAND_ROWS, self.width)
     }
 }
 
 impl Band {
-    fn new(keys: &[VoxelKey], x0: i32, y0: i32, w: usize, rows: usize) -> Self {
-        let n = w * rows;
-        let index = |&(ix, iy, _): &VoxelKey| (iy - y0) as usize * w + (ix - x0) as usize;
+    fn new(keys: &[VoxelKey], x0: i32, y0: i32, width: usize, rows: usize) -> Self {
+        let n = width * rows;
+        let index = |&(ix, iy, _): &VoxelKey| (iy - y0) as usize * width + (ix - x0) as usize;
         let mut starts = vec![0usize; n + 1];
         for k in keys {
             starts[index(k) + 1] += 1;
@@ -931,9 +931,9 @@ impl Band {
         }
     }
 
-    fn column(&self, x: usize, row: usize, w: usize) -> &[i32] {
+    fn column(&self, x: usize, row: usize, width: usize) -> &[i32] {
         debug_assert!(row < self.rows);
-        let i = row * w + x;
+        let i = row * width + x;
         &self.zs[self.starts[i]..self.starts[i] + self.lens[i]]
     }
 }
