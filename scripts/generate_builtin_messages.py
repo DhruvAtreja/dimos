@@ -12,22 +12,20 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Regenerate checked-in built-in source; --check rejects drift without writing it."""
+"""Regenerate build artifacts; --check rejects drift without rewriting them."""
 
 import argparse
 from pathlib import Path
 import shutil
-import subprocess
 import sys
 import tempfile
 
-try:
+if sys.version_info >= (3, 11):
     import tomllib
-except ModuleNotFoundError:  # Python 3.10
+else:
     import tomli as tomllib
 
-from dimos.message_codegen.distribution import write_distribution
-from dimos.message_codegen.generate import generate
+from dimos.message_codegen.builtin import generate_builtin
 
 
 def main() -> None:
@@ -39,73 +37,12 @@ def main() -> None:
         "project"
     ]
     version = project["version"]
-    target = root / "packages/dimos-generated/src"
+    target = root / "packages/dimos-generated/build/message-source/python"
     with tempfile.TemporaryDirectory(prefix="dimos-source-") as temporary:
         output = Path(temporary)
-        names = generate([], output, shared=True, version=version)
-        write_distribution(output, "dimos_generated", names, version=version)
+        generate_builtin(output, version)
         source = output / "python"
         packages = [source / "dimos_generated", source / "dimos_generated_schemas"]
-        # Formatting is a maintainer codegen prerequisite, never an install/import step.
-        # Maintainer-only license for our registry alias, not upstream declarations.
-        alias = source / "dimos_generated/_types.py"
-        header = "\n".join(Path(__file__).read_text().splitlines()[:13]) + "\n\n"
-        alias.write_text(header + alias.read_text())
-        python_files = [
-            str(path)
-            for package in packages
-            for path in package.rglob("*")
-            if path.suffix in {".py", ".pyi"}
-        ]
-        subprocess.run(
-            [
-                sys.executable,
-                "-m",
-                "ruff",
-                "check",
-                "--fix",
-                "--config",
-                str(root / "pyproject.toml"),
-                *python_files,
-            ],
-            check=True,
-        )
-        subprocess.run(
-            [
-                sys.executable,
-                "-m",
-                "ruff",
-                "format",
-                "--config",
-                str(root / "pyproject.toml"),
-                *python_files,
-            ],
-            check=True,
-        )
-        rust_root = source / "dimos_generated_schemas/package/rust/src"
-        license_text = (
-            "\n".join(
-                (root / "dimos/message_codegen/templates/message_build.rs")
-                .read_text()
-                .splitlines()[:13]
-            )
-            + "\n\n"
-        )
-        library = rust_root / "lib.rs"
-        library.write_text(license_text + library.read_text())
-        subprocess.run(
-            [
-                "rustup",
-                "run",
-                "1.92.0",
-                "rustfmt",
-                "--edition",
-                "2024",
-                str(library),
-                str(rust_root.parent / "build.rs"),
-            ],
-            check=True,
-        )
         expected = {
             str(path.relative_to(source)): path.read_bytes()
             for package in packages

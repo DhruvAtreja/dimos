@@ -41,10 +41,14 @@ jobs:
           test ! -d /opt/ros
           uv venv .venv --python 3.12 --seed
           uv run --no-project --with requests python scripts/prepare_message_parser.py
-          uv pip install --python .venv/bin/python "./dimos/message_codegen[native]" ./packages/dimos-generated ruff==0.14.3 numpy pytest pytest-cov pytest-asyncio pytest-env mypy==1.19.0
+          uv pip install --python .venv/bin/python "./dimos/message_codegen[native]" ruff==0.14.3 requests numpy pytest pytest-cov pytest-asyncio pytest-env mypy==1.19.0
           .venv/bin/python -c "import importlib.util; assert importlib.util.find_spec('rclpy') is None"
+      - name: Install the built-in source package without nested build isolation
+        run: uv pip install --python .venv/bin/python --no-build-isolation --no-deps ./packages/dimos-generated
       - name: Verify built-in generated resources
-        run: .venv/bin/python -m scripts.generate_builtin_messages --check
+        run: |
+          .venv/bin/python -m scripts.generate_builtin_messages
+          .venv/bin/python -m scripts.generate_builtin_messages --check
       - name: Verify compiler-free package installation
         run: bash scripts/test_builtin_message_source.sh
       - name: Test built-in messages and native semantics

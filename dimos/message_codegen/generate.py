@@ -43,6 +43,7 @@ def generate(
     dependencies: tuple[Dependency, ...] = (),
     shared: bool = False,
     languages: tuple[str, ...] = ("python", "cpp", "rust"),
+    bundled: bool = True,
 ) -> tuple[str, ...]:
     if not re.fullmatch(r"[a-z][a-z0-9_]*", module) or keyword.iskeyword(module):
         raise ValueError(f"Invalid Python package module name: {module}")
@@ -51,7 +52,7 @@ def generate(
     if not languages or set(languages) - {"python", "cpp", "rust"}:
         raise ValueError("Select python, cpp and/or rust")
     definitions = Definitions(
-        roots + [dep.root / "schemas" for dep in dependencies], installed=installed
+        roots + [dep.root / "schemas" for dep in dependencies], installed=installed, bundled=bundled
     )
     messages = definitions.resolve(names)
     owners = resolve_owners(messages, definitions, dependencies)

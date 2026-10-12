@@ -2213,6 +2213,7 @@ message-codegen = [
     { name = "empy" },
     { name = "lark" },
     { name = "pytest" },
+    { name = "requests" },
     { name = "rosbags" },
     { name = "ruff" },
     { name = "tomli", marker = "python_full_version < '3.11'" },
@@ -2568,6 +2569,7 @@ message-codegen = [
     { name = "empy", specifier = "==4.2" },
     { name = "lark", specifier = "==1.2.2" },
     { name = "pytest", specifier = "==8.3.5" },
+    { name = "requests", specifier = ">=2.31" },
     { name = "rosbags", specifier = "==0.11.0" },
     { name = "ruff", specifier = "==0.14.3" },
     { name = "tomli", marker = "python_full_version < '3.11'", specifier = ">=2" },
@@ -2733,7 +2735,7 @@ dependencies = [
 
 [package.metadata]
 requires-dist = [
-    { name = "dimos-message-build", specifier = "==0.1.0" },
+    { name = "dimos-message-build", directory = "dimos/message_codegen" },
     { name = "numpy", specifier = ">=1.26.4" },
     { name = "rosbags", specifier = "==0.11.0" },
 ]

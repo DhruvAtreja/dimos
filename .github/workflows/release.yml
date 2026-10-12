@@ -135,7 +135,7 @@ jobs:
         run: |
           uv run --no-project --with requests python scripts/prepare_message_parser.py
           uv build dimos/message_codegen --wheel --out-dir wheelhouse
-          uv build packages/dimos-generated --wheel --out-dir wheelhouse
+          uv build packages/dimos-generated --no-sources --find-links wheelhouse --wheel --out-dir wheelhouse
       - name: Build wheels
         uses: pypa/cibuildwheel@v4.2.1
       - name: Attestation

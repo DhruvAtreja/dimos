@@ -18,7 +18,7 @@ from importlib import import_module
 from pathlib import Path
 from typing import Any
 
-from .definitions import Definitions
+from .builtin import supported_names
 
 
 def schema_root() -> Path:
@@ -28,6 +28,6 @@ def schema_root() -> Path:
 def message_types() -> dict[str, Any]:
     extension = import_module("dimos_generated")
     return {
-        message.name: getattr(getattr(extension, message.package).msg, message.short_name)
-        for message in Definitions([]).resolve()
+        name: getattr(getattr(extension, name.split("/")[0]).msg, name.split("/")[-1])
+        for name in supported_names()
     }

@@ -1,5 +1,5 @@
 [build-system]
-requires = ["setuptools>=70", "wheel"]
+requires = ["setuptools>=70", "wheel", "dimos-message-build==0.1.0"]
 build-backend = "setuptools.build_meta"
 
 [project]
@@ -12,12 +12,10 @@ dependencies = ["numpy>=1.26.4", "rosbags==0.11.0", "dimos-message-build==0.1.0"
 [project.entry-points."dimos.messages"]
 dimos_generated = "dimos_generated_schemas.provider"
 
-[tool.setuptools]
-package-dir = {"" = "src"}
-
-[tool.setuptools.packages.find]
-where = ["src"]
-
 [tool.setuptools.package-data]
 dimos_generated = ["py.typed", "*.pyi", "**/*.pyi"]
 dimos_generated_schemas = ["schemas.json", "schemas/**/*", "package/**/*"]
+
+# Checkout-only uv source. Release sdists omit this local path.
+[tool.uv.sources]
+dimos-message-build = { path = "../../dimos/message_codegen" }

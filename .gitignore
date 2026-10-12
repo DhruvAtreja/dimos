@@ -109,3 +109,6 @@ optuna.db
 *.bin
 
 /dimos/message_codegen/.upstream/
+
+# Built-in package generation belongs in ignored build output.
+/packages/dimos-generated/canonical/

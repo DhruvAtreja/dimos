@@ -1,1 +1,0 @@
-"""Generated message/schema provider."""

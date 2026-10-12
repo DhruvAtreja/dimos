@@ -58,7 +58,7 @@ jobs:
           build/message-wheel-download/bin/python -m pip download --only-binary=:all: --platform any --implementation py --python-version 3.10 --dest build/message-test-dependencies setuptools==77.0.3 wheel==0.48.0 packaging==25.0 tomli==2.4.0
       - name: Build and smoke-test compiler-free built-in source wheel
         run: |
-          uv build packages/dimos-generated --wheel --out-dir wheelhouse
+          uv build packages/dimos-generated --no-sources --find-links wheelhouse --wheel --out-dir wheelhouse
           uv venv build/message-smoke
           uv pip install --python build/message-smoke/bin/python wheelhouse/dimos_generated-*.whl wheelhouse/dimos_message_build-*.whl
           build/message-smoke/bin/python -I .github/scripts/message_wheel_smoke.py
@@ -103,7 +103,7 @@ jobs:
           build/message-wheel-download/bin/python -m pip download --only-binary=:all: --platform any --implementation py --python-version 3.10 --dest build/message-test-dependencies setuptools==77.0.3 wheel==0.48.0 packaging==25.0 tomli==2.4.0
       - name: Build and smoke-test compiler-free built-in source wheel
         run: |
-          uv build packages/dimos-generated --wheel --out-dir wheelhouse
+          uv build packages/dimos-generated --no-sources --find-links wheelhouse --wheel --out-dir wheelhouse
           uv venv build/message-smoke
           uv pip install --python build/message-smoke/bin/python wheelhouse/dimos_generated-*.whl wheelhouse/dimos_message_build-*.whl
           build/message-smoke/bin/python -I .github/scripts/message_wheel_smoke.py

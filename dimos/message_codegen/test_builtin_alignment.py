@@ -13,7 +13,6 @@
 # limitations under the License.
 
 import ast
-import importlib.util
 import json
 import os
 from pathlib import Path
@@ -26,21 +25,6 @@ import pytest
 
 @pytest.fixture(scope="module")
 def aligned_checkout(tmp_path_factory):
-    missing = None
-    if importlib.util.find_spec("ruff") is None:
-        missing = "Install the locked message-codegen dependency group for alignment tests"
-    elif shutil.which("rustup") is None:
-        missing = "Alignment tests require the explicitly installed Rust 1.92.0 formatter"
-    else:
-        formatter = subprocess.run(
-            ["rustup", "run", "1.92.0", "rustfmt", "--version"], capture_output=True, text=True
-        )
-        if formatter.returncode:
-            missing = "Alignment tests require rustup toolchain install 1.92.0 --component rustfmt"
-    if missing:
-        if os.environ.get("DIMOS_MESSAGE_ALIGNMENT_REQUIRED") == "1":
-            pytest.fail(missing)
-        pytest.skip(missing)
     root = Path(__file__).resolve().parents[2]
     checkout = tmp_path_factory.mktemp("aligned-source")
     ignore = shutil.ignore_patterns("build", "dist", "*.egg-info", "__pycache__", "target")
@@ -53,6 +37,8 @@ def aligned_checkout(tmp_path_factory):
         checkout / "scripts/generate_builtin_messages.py",
     )
     shutil.copyfile(root / "pyproject.toml", checkout / "pyproject.toml")
+    result = run_generation(checkout, check=False)
+    assert result.returncode == 0, result.stderr
     result = run_generation(checkout, check=True)
     assert result.returncode == 0, result.stderr
     return checkout
@@ -81,6 +67,7 @@ def run_generation(checkout, *, check):
         "schema",
         "new_type",
         "deleted_type",
+        "renamed_type",
         "generator",
         "version",
         "extra_output",
@@ -96,7 +83,7 @@ def test_independent_regeneration_rejects_and_repairs_drift(aligned_checkout, tm
     checkout = tmp_path / "checkout"
     shutil.copytree(aligned_checkout, checkout)
     definitions = checkout / "dimos/message_codegen/schemas"
-    output = checkout / "packages/dimos-generated/src"
+    output = checkout / "packages/dimos-generated/build/message-source/python"
     point = definitions / "geometry_msgs/msg/Point.msg"
     if change == "field":
         point.write_text(point.read_text().replace("float64 x", "float32 x"))
@@ -107,8 +94,25 @@ def test_independent_regeneration_rejects_and_repairs_drift(aligned_checkout, tm
         (definitions / "alignment_msgs/msg/AlignmentProbe.msg").write_text(
             "std_msgs/Header header\nfloat64 value\n"
         )
+        catalog = definitions / "catalog.json"
+        data = json.loads(catalog.read_text())
+        data["roots"]["alignment_msgs/msg/AlignmentProbe"] = "Explicit test contract"
+        catalog.write_text(json.dumps(data))
     elif change == "deleted_type":
         (definitions / "std_msgs/msg/Empty.msg").unlink()
+        catalog = definitions / "catalog.json"
+        data = json.loads(catalog.read_text())
+        del data["roots"]["std_msgs/msg/Empty"]
+        catalog.write_text(json.dumps(data))
+    elif change == "renamed_type":
+        previous = definitions / "dimos_msgs/msg/VideoStats.msg"
+        previous.rename(previous.with_name("RenamedStats.msg"))
+        catalog = definitions / "catalog.json"
+        data = json.loads(catalog.read_text())
+        data["roots"]["dimos_msgs/msg/RenamedStats"] = data["roots"].pop(
+            "dimos_msgs/msg/VideoStats"
+        )
+        catalog.write_text(json.dumps(data))
     elif change == "generator":
         runtime = checkout / "dimos/message_codegen/templates/message_build.rs"
         runtime.write_text("// Deliberately changed generator output\n" + runtime.read_text())
@@ -160,6 +164,10 @@ def test_independent_regeneration_rejects_and_repairs_drift(aligned_checkout, tm
         ) >= 0
     elif change == "deleted_type":
         assert not (output / "dimos_generated_schemas/schemas/std_msgs/msg/Empty.msg").exists()
+    elif change == "renamed_type":
+        text = (output / "dimos_generated/dimos_msgs/msg/__init__.py").read_text()
+        assert "RenamedStats" in text
+        assert "VideoStats" not in text
     elif change == "version":
         statements = ast.parse((output / "dimos_generated/__init__.py").read_text()).body
         version = next(

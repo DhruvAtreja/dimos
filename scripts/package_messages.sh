@@ -12,10 +12,10 @@ import shutil
 import subprocess
 import tarfile
 import tomllib
-from dimos.message_codegen.generate import generate
+from dimos.message_codegen.builtin import generate_builtin
 output = Path("build/message-codegen/release")
 version = tomllib.loads(Path("packages/dimos-generated/pyproject.toml").read_text())["project"]["version"]
-generate([], output, version=version, shared=True, languages=("cpp", "rust"))
+generate_builtin(output, version)
 subprocess.run(["cargo", "package", "--manifest-path", str(output / "rust/Cargo.toml"), "--allow-dirty", *(["--offline"] if os.environ.get("DIMOS_OFFLINE") == "1" else [])], check=True)
 dist = output / "dist"
 dist.mkdir(exist_ok=True)

@@ -11,7 +11,6 @@ global-exclude .DS_Store
 recursive-include dimos *.yaml *.yml *.json *.urdf *.html *.css *.js *.svg *.tcss
 graft dimos/message_codegen/schemas
 graft dimos/message_codegen/templates
-include dimos/message_codegen/_vendor/*.pyi
 include scripts/setup_message_codegen.sh
 include dimos/message_codegen/pyproject.toml
 graft packages/dimos-generated
