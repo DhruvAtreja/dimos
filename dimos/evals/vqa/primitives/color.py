@@ -61,7 +61,7 @@ def dominant_color_in_bbox(
     """Map the largest HSV bucket inside a bbox to a fixed color choice."""
     import cv2
 
-    x0, y0, x1, y1 = (int(round(v)) for v in bbox_xyxy)
+    x0, y0, x1, y1 = (round(v) for v in bbox_xyxy)
     x0 = max(0, min(x0, image.width - 1))
     x1 = max(x0 + 1, min(x1, image.width))
     y0 = max(0, min(y0, image.height - 1))
@@ -73,15 +73,13 @@ def dominant_color_in_bbox(
 
     rgb = np.asarray(crop[:, :, :3], dtype=np.uint8)
     hsv = cv2.cvtColor(rgb, cv2.COLOR_RGB2HSV)
-    hue = hsv[:, :, 0].astype(np.intp)
+    hsv[:, :, 0].astype(np.intp)
     sat = hsv[:, :, 1].astype(np.intp)
     val = hsv[:, :, 2].astype(np.intp)
 
     valid = (sat >= 40) & (val >= 40)
     if int(valid.sum()) < _MIN_VALID_PIXELS:
-        raise InsufficientEvidenceError(
-            "object color crop lacks enough saturated, well-lit pixels"
-        )
+        raise InsufficientEvidenceError("object color crop lacks enough saturated, well-lit pixels")
 
     buckets = np.array([_hue_to_bucket(int(h), int(s), int(v)) for h, s, v in hsv[valid]])
     counts = np.bincount(buckets, minlength=len(COLOR_CHOICES))

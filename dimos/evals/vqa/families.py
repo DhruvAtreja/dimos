@@ -29,7 +29,11 @@ from dimos.evals.vqa.contracts import (
     ObjectRangeEstimator,
     QuestionProposal,
 )
-from dimos.evals.vqa.primitives.bearing import BEARING_CHOICES, bearing_choice, estimate_camera_bearing
+from dimos.evals.vqa.primitives.bearing import (
+    BEARING_CHOICES,
+    bearing_choice,
+    estimate_camera_bearing,
+)
 from dimos.evals.vqa.primitives.color import COLOR_CHOICES, dominant_color_in_bbox
 
 if TYPE_CHECKING:
@@ -323,7 +327,9 @@ def _answer_presence_and(
     )
 
 
-def _answer_object_color(proposal: QuestionProposal, image: Image, detector: VlModel) -> FamilyAnswer:
+def _answer_object_color(
+    proposal: QuestionProposal, image: Image, detector: VlModel
+) -> FamilyAnswer:
     object_name = proposal.object_names[0]
     detections = detector.query_detections(image, object_name)
     if len(detections) != 1:

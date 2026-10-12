@@ -50,7 +50,9 @@ class _FullMaskEstimator:
             mask=mask,
         )
 
-    def estimate_many(self, image: Image, object_names: tuple[str, ...]) -> tuple[ObjectMaskEvidence, ...]:
+    def estimate_many(
+        self, image: Image, object_names: tuple[str, ...]
+    ) -> tuple[ObjectMaskEvidence, ...]:
         return tuple(self.estimate(image, name) for name in object_names)
 
 
@@ -67,7 +69,9 @@ def _spread_camera_points() -> np.ndarray:
 
 
 def _frame_with_points(points: np.ndarray) -> PointCloudFrame:
-    image = Image.from_numpy(np.zeros((20, 20, 3), dtype=np.uint8), frame_id="camera_optical", ts=1.0)
+    image = Image.from_numpy(
+        np.zeros((20, 20, 3), dtype=np.uint8), frame_id="camera_optical", ts=1.0
+    )
     camera_info = CameraInfo.from_intrinsics(
         10.0, 10.0, 10.0, 10.0, image.width, image.height, frame_id="camera_optical"
     )
