@@ -20,12 +20,12 @@ from types import SimpleNamespace
 from pydantic import ValidationError
 import pytest
 
-from dimos.control.sonic.sonic_safety import (
+from dimos.msgs.sensor_msgs.MotorCommandArray import MotorCommandArray
+from dimos.msgs.std_msgs.String import String
+from dimos.robot.unitree.g1.control_safety import (
     COMMAND_TIMEOUT_SECONDS,
     DAMPING_KD,
 )
-from dimos.msgs.sensor_msgs.MotorCommandArray import MotorCommandArray
-from dimos.msgs.std_msgs.String import String
 from dimos.robot.unitree.g1.wholebody_connection import (
     _NUM_MOTOR_SLOTS,
     _NUM_MOTORS,
@@ -212,7 +212,7 @@ def test_fault_stays_in_damping_through_fresh_commands_and_shutdown(connection, 
     connection._on_motor_command(_command())
     trip = {
         "operator": lambda: connection.set_estop(True),
-        "policy": lambda: connection._on_sonic_fault(String("inference failed")),
+        "policy": lambda: connection._on_controller_fault(String("inference failed")),
         "overspeed": lambda: _feedback(connection, tick=2, motor=28, velocity=36.0),
         "nonfinite": lambda: connection._on_motor_command(_command(float("nan"))),
     }
@@ -229,6 +229,22 @@ def test_fault_stays_in_damping_through_fresh_commands_and_shutdown(connection, 
     connection.stop()
     assert publisher.frames[-1] == [(0.0, 0.0, 0.0, DAMPING_KD, 0.0)] * 29
     assert publisher.modes[-1] == [1] * 29
+
+
+@pytest.mark.parametrize(
+    "message, reason",
+    [("external controller failed", "external controller failed"), ("", "controller fault")],
+)
+def test_controller_fault_preserves_reason_and_latches_damping(connection, message, reason):
+    publisher = _wire(connection, soft_start_seconds=0.0)
+    connection._on_motor_command(_command())
+
+    connection._on_controller_fault(String(message))
+    connection._on_motor_command(_command(2.0))
+    connection._publish_latest_command(10.0)
+
+    assert connection.command_stream_status()["fault_reason"] == reason
+    assert publisher.frames[-1] == [(0.0, 0.0, 0.0, DAMPING_KD, 0.0)] * 29
 
 
 @pytest.mark.parametrize(
