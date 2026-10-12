@@ -33,15 +33,13 @@ from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
 from dimos.msgs.tf2_msgs.TFMessage import TFMessage
 from dimos.navigation import spec
 
-_HOLDS_GOAL = frozenset({GoalStatus.PENDING, GoalStatus.ACTIVE})
-
 
 def _answers(assumed: GoalStatus, msg: GoalStatus) -> bool:
     """Whether the planner's report covers the goal message a status was assumed for."""
     same_goal = msg.goal_id.id == assumed.goal_id.id
     if assumed.status == GoalStatus.PENDING:
         return bool(same_goal)
-    return not same_goal or msg.status not in _HOLDS_GOAL
+    return not same_goal or not spec.holds_goal(msg.status)
 
 
 class MLSPlannerNativeConfig(NativeModuleConfig):
@@ -146,12 +144,14 @@ class MLSPlannerNative(NativeModule, spec.GlobalPlanner, spec.NavigationInterfac
         """Cancel the goal. False when the planner held none."""
         cancel = PointStamped(math.nan, math.nan, math.nan)
         status = self.get_status()
-        if status is None or status.status not in _HOLDS_GOAL:
+        if status is None or not spec.holds_goal(status.status):
             self.goal.transport.publish(cancel)
             return False
         self._send(
             cancel,
-            GoalStatus(goal_id=status.goal_id, status=GoalStatus.PREEMPTED, text="canceled"),
+            GoalStatus(
+                goal_id=status.goal_id, status=GoalStatus.PREEMPTED, text=spec.PREEMPT_CANCELED
+            ),
         )
         return True
 

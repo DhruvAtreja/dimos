@@ -23,7 +23,7 @@ from dimos.core.module import Module, ModuleConfig
 from dimos.core.stream import In
 from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
 from dimos.msgs.tf2_msgs.TFMessage import TFMessage
-from dimos.navigation.spec import NavigationInterfaceSpec, goal_ended
+from dimos.navigation.spec import PREEMPT_REPLACED, NavigationInterfaceSpec, goal_ended
 
 
 class PointNavSkillContainerConfig(ModuleConfig):
@@ -65,7 +65,8 @@ class PointNavSkillContainer(Module):
         if ended.status == GoalStatus.SUCCEEDED:
             outcome = "Reached the target"
         elif ended.status == GoalStatus.PREEMPTED:
-            outcome = "Replaced by another goal" if ended.text == "replaced" else "Cancelled"
+            replaced = ended.text == PREEMPT_REPLACED
+            outcome = "Replaced by another goal" if replaced else "Cancelled"
         elif ended.status == GoalStatus.REJECTED:
             outcome = f"Failed: {ended.text}"
         else:

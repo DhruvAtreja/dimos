@@ -31,7 +31,7 @@ from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
 from dimos.msgs.geometry_msgs.Quaternion import Quaternion
 from dimos.msgs.geometry_msgs.Vector3 import Vector3
 from dimos.msgs.tf2_msgs.TFMessage import TFMessage
-from dimos.navigation.spec import NavigationInterfaceSpec, goal_ended
+from dimos.navigation.spec import PREEMPT_REPLACED, NavigationInterfaceSpec, goal_ended
 from dimos.robot.unitree.go2.connection_spec import GO2ConnectionSpec
 from dimos.utils.logging_config import setup_logger
 
@@ -293,7 +293,7 @@ class UnitreeSkillContainer(Module):
         if report.status == GoalStatus.SUCCEEDED:
             return "Navigation goal reached"
         if report.status == GoalStatus.PREEMPTED:
-            if report.text == "replaced":
+            if report.text == PREEMPT_REPLACED:
                 return "Navigation was replaced by another goal"
             return "Navigation was canceled"
         return f"Navigation failed: {report.text}"

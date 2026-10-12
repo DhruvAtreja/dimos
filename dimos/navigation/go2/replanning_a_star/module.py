@@ -32,7 +32,7 @@ from dimos.msgs.nav_msgs.Odometry import Odometry
 from dimos.msgs.nav_msgs.Path import Path
 from dimos.navigation.go2.replanning_a_star.global_planner import GlobalPlanner, GoalEnd
 from dimos.navigation.go2.replanning_a_star.module_spec import ReplanningAStarPlannerSpec
-from dimos.navigation.spec import goal_id, goal_status
+from dimos.navigation.spec import PREEMPT_CANCELED, PREEMPT_REPLACED, goal_id, goal_status
 from dimos.utils.logging_config import setup_logger
 
 logger = setup_logger()
@@ -154,7 +154,7 @@ class ReplanningAStarPlanner(Module, ReplanningAStarPlannerSpec):
             held, self._goal = self._goal, goal
             # A goal sent again keeps its id, so it is not preempted.
             if held is not None and goal_id(held) != goal_id(goal):
-                self._report(held, GoalStatus.PREEMPTED, "replaced")
+                self._report(held, GoalStatus.PREEMPTED, PREEMPT_REPLACED)
             self._report(goal, GoalStatus.ACTIVE, "navigating")
             self._planner.handle_goal_request(goal)
 
@@ -185,7 +185,7 @@ class ReplanningAStarPlanner(Module, ReplanningAStarPlannerSpec):
         with self._goal_lock:
             goal, self._goal = self._goal, None
             if goal is not None:
-                self._report(goal, GoalStatus.PREEMPTED, "canceled")
+                self._report(goal, GoalStatus.PREEMPTED, PREEMPT_CANCELED)
             self._planner.cancel_goal()
         return True
 

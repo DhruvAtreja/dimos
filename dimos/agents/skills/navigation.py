@@ -30,7 +30,7 @@ from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
 from dimos.msgs.geometry_msgs.Quaternion import Quaternion
 from dimos.msgs.geometry_msgs.Vector3 import Vector3, make_vector3
 from dimos.msgs.sensor_msgs.Image import Image
-from dimos.navigation.spec import NavigationInterfaceSpec
+from dimos.navigation.spec import PREEMPT_REPLACED, NavigationInterfaceSpec, holds_goal
 from dimos.perception.experimental.object_tracking_spec import ObjectTrackingSpec
 from dimos.perception.experimental.spatial_memory_spec import SpatialMemorySpec
 from dimos.types.robot_location import RobotLocation
@@ -225,9 +225,9 @@ class NavigationSkillContainer(Module):
                 logger.warning(f"Navigation to '{query}' ended with no goal reached")
                 return None
             wait = max(deadline - time.monotonic(), 0.0)
-            if msg.status in (GoalStatus.PENDING, GoalStatus.ACTIVE):
+            if holds_goal(msg.status):
                 continue
-            if msg.status == GoalStatus.PREEMPTED and msg.text == "replaced":
+            if msg.status == GoalStatus.PREEMPTED and msg.text == PREEMPT_REPLACED:
                 continue
             if msg.status == GoalStatus.SUCCEEDED:
                 logger.info(f"Reached '{query}'")

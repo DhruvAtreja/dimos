@@ -49,6 +49,15 @@ class NavigationState(Enum):
     FOLLOWING_PATH = "following_path"
 
 
+PREEMPT_REPLACED = "replaced"
+PREEMPT_CANCELED = "canceled"
+
+
+def holds_goal(status: int) -> bool:
+    """Whether a status means the planner still holds the goal."""
+    return status in (GoalStatus.PENDING, GoalStatus.ACTIVE)
+
+
 def goal_id(goal: Timestamped) -> str:
     """The id nav_status reports carry for a goal, which is its stamp."""
     sec, nsec = goal.ros_timestamp()
@@ -68,10 +77,10 @@ def goal_status(goal: Timestamped, status: int, text: str) -> GoalStatus:
 def goal_ended(goal: Timestamped, msg: GoalStatus) -> GoalStatus | None:
     """The report that ended a goal, or None when this one does not show it over."""
     if msg.goal_id.id == goal_id(goal):
-        return None if msg.status in (GoalStatus.PENDING, GoalStatus.ACTIVE) else msg
+        return None if holds_goal(msg.status) else msg
     # A newer goal means the report that ended this one was missed.
     if [msg.goal_id.stamp.sec, msg.goal_id.stamp.nsec] > goal.ros_timestamp():
-        return goal_status(goal, GoalStatus.PREEMPTED, "replaced")
+        return goal_status(goal, GoalStatus.PREEMPTED, PREEMPT_REPLACED)
     return None
 
 

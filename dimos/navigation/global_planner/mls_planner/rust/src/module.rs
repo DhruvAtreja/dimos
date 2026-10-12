@@ -60,6 +60,11 @@ struct SeedRegion {
     bounds: PoseStamped,
 }
 
+/// The text of a PREEMPTED report, which says why the goal was preempted.
+/// Matches dimos/navigation/spec.py.
+const PREEMPT_REPLACED: &str = "replaced";
+const PREEMPT_CANCELED: &str = "canceled";
+
 /// How often the latest goal status repeats between transitions.
 const STATUS_HEARTBEAT: Duration = Duration::from_secs(1);
 
@@ -406,7 +411,7 @@ impl MlsPlanner {
                 let held = *self.active_goal.lock().expect("goal mutex");
                 // A goal sent again keeps its id, so it is not preempted.
                 if let Some(held) = held.filter(|held| !held.id.same_stamp(&id)) {
-                    self.preempt(held, "replaced").await;
+                    self.preempt(held, PREEMPT_REPLACED).await;
                 }
                 self.status()
                     .report(Report::new(id, GoalStatus::PENDING, "planning"))
@@ -415,12 +420,12 @@ impl MlsPlanner {
             }
             GoalRequest::Cancel => {
                 if let Some(held) = self.set_active_goal(None) {
-                    self.preempt(held, "canceled").await;
+                    self.preempt(held, PREEMPT_CANCELED).await;
                 }
             }
             GoalRequest::Invalid => {
                 if let Some(held) = self.set_active_goal(None) {
-                    self.preempt(held, "replaced").await;
+                    self.preempt(held, PREEMPT_REPLACED).await;
                 }
                 let id = self.next_goal_id(&msg.header.stamp);
                 self.status()
@@ -1639,7 +1644,7 @@ mod tests {
     #[test]
     fn a_report_for_a_goal_that_is_over_is_dropped() {
         let mut latest = None;
-        let preempted = Report::new(goal_id(1), GoalStatus::PREEMPTED, "canceled");
+        let preempted = Report::new(goal_id(1), GoalStatus::PREEMPTED, PREEMPT_CANCELED);
         assert!(record(&mut latest, &preempted));
         assert!(!record(
             &mut latest,
