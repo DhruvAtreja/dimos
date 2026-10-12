@@ -7,7 +7,7 @@ upper-body reference targets. No headset or teleop service is required.
 The default gait is `SLOW_WALK`. Velocity commands set direction and speed
 within that gait; they never select walking or running automatically. With a
 walking gait selected, zero input idles while preserving that selection. Use
-`set_locomotion_mode` on G1SonicConnection to change modes; `None` restores
+`set_locomotion_mode` on G1SonicPolicyModule to change modes; `None` restores
 `SLOW_WALK`.
 
 Install the workstation dependencies and NVIDIA assets:
@@ -40,7 +40,7 @@ dimos --transport zenoh shell
 ```
 
 ```python
-c = app.G1SonicConnection
+c = app.G1SonicPolicyModule
 c.status()
 c.set_locomotion_mode("SLOW_WALK")
 c.list_motion_clips()
@@ -61,7 +61,7 @@ Hardware starts unarmed with policy outputs in dry-run.
 After checking startup and feedback, the hardware activation RPCs are:
 
 ```python
-c = app.G1SonicConnection
+c = app.G1SonicPolicyModule
 c.set_dry_run(False)
 c.arm()
 ```
@@ -75,11 +75,11 @@ the earlier hardware instability remain open validation issues.
 
 ## Module interface
 
-The blueprint runs `G1SonicConnection` directly, without ControlCoordinator,
+The blueprint runs `G1SonicPolicyModule` directly, without ControlCoordinator,
 coordinator tasks or a task-compatibility wrapper. Command flow is:
 
 ```text
-navigation / teleop -> MovementManager -> G1SonicConnection -> SonicController -> motor IO
+navigation / teleop -> MovementManager -> G1SonicPolicyModule -> SonicController -> motor IO
                       selects cmd_vel                        runs SONIC at 50 Hz
 ```
 
@@ -90,11 +90,16 @@ competing publishers on `cmd_vel`. There is no general task-priority scheduler
 or timed arm-trajectory API in this stack. SONIC owns all 29 motor targets;
 arm inputs condition the policy rather than independently controlling motors.
 
-The connection exposes streams and RPCs and delegates to `SonicController` in
+The policy module exposes streams and RPCs and delegates to `SonicController` in
 `sonic_controller.py`. That controller owns the 50 Hz loop, pose ramp and fault
 latch; `SonicPipeline` handles model inference. `G1WholeBodyConnection` owns real
 motor IO and its independent 500 Hz publisher. MuJoCo uses the existing
 shared-memory whole-body adapter. SONIC sends no motor commands before its models load.
+
+SONIC has no sim2 dependency. Migrating its simulated motor backend belongs in
+the later sim2 integration, not this policy PR. The driver's
+`controller_fault: In[String]` accepts faults from any motor controller;
+`G1SonicPolicyModule.controller_fault` supplies that signal for SONIC.
 
 - `base_command: In[Twist]`: `linear.x`, `linear.y`, and `angular.z`, remapped
   to `cmd_vel`. After one second without fresh input, SONIC commands zero
@@ -142,7 +147,7 @@ and `/g1/joint_command` are not part of the SONIC interface.
 ## Focused validation
 
 ```bash
-uv run pytest dimos/robot/unitree/g1/test_sonic_connection.py \
+uv run pytest dimos/robot/unitree/g1/test_sonic_policy.py \
   dimos/robot/unitree/g1/test_wholebody_connection.py dimos/control/sonic \
   -m 'not mujoco'
 ```

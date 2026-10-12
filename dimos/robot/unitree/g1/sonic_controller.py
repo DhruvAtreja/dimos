@@ -40,13 +40,6 @@ from dimos.control.sonic.sonic_pipeline import (
     SONIC_KP,
     SonicPipeline,
 )
-from dimos.control.sonic.sonic_safety import (
-    FEEDBACK_TIMEOUT_SECONDS,
-    JOINT_VELOCITY_LIMIT,
-    SonicSafetyError,
-    check_joint_velocities,
-    damping_commands,
-)
 from dimos.control.sonic.streamed_motion import StreamedMotion
 from dimos.hardware.whole_body.spec import IMUState, MotorCommand, MotorState
 from dimos.msgs.geometry_msgs.Quaternion import Quaternion
@@ -56,6 +49,13 @@ from dimos.msgs.sensor_msgs.JointState import JointState
 from dimos.msgs.sensor_msgs.MotorCommandArray import MotorCommandArray
 from dimos.msgs.std_msgs.String import String
 from dimos.protocol.service.spec import BaseConfig
+from dimos.robot.unitree.g1.control_safety import (
+    FEEDBACK_TIMEOUT_SECONDS,
+    JOINT_VELOCITY_LIMIT,
+    G1ControlError,
+    check_joint_velocities,
+    damping_commands,
+)
 from dimos.simulation.adapters.whole_body.g1 import SimMujocoG1WholeBodyAdapter
 from dimos.utils.logging_config import setup_logger
 
@@ -95,7 +95,7 @@ class SonicControlState(str, Enum):
 
 
 class SonicController:
-    """Internal controller used by G1SonicConnection; owns no module transports."""
+    """Internal controller used by G1SonicPolicyModule; owns no module transports."""
 
     def __init__(
         self,
@@ -260,9 +260,9 @@ class SonicController:
             if msg is None or imu is None:
                 return None
             if t_now - min(self._feedback_at, self._imu_at) >= self.config.feedback_timeout:
-                raise SonicSafetyError("SONIC feedback timeout")
+                raise G1ControlError("SONIC feedback timeout")
         if any(len(values) != NUM_JOINTS for values in (msg.position, msg.velocity, msg.effort)):
-            raise SonicSafetyError("incomplete robot joint feedback")
+            raise G1ControlError("incomplete robot joint feedback")
         return (
             [
                 MotorState(q=q, dq=dq, tau=tau)
@@ -294,16 +294,16 @@ class SonicController:
                 state = self._read_state(t_now)
                 if state is None:
                     if self._state_seen:
-                        raise SonicSafetyError("robot feedback lost")
+                        raise G1ControlError("robot feedback lost")
                     return None
                 motors, imu = state
                 if len(motors) != NUM_JOINTS:
-                    raise SonicSafetyError("incomplete robot joint feedback")
+                    raise G1ControlError("incomplete robot joint feedback")
                 self._cached_q_29[:] = [m.q for m in motors]
                 self._cached_dq_29[:] = [m.dq for m in motors]
                 self._state_seen = True
                 if not np.isfinite(self._cached_q_29).all():
-                    raise SonicSafetyError("non-finite robot joint positions")
+                    raise G1ControlError("non-finite robot joint positions")
                 ts = time.time()
                 self._publish_joint_state(
                     JointState(
@@ -354,7 +354,7 @@ class SonicController:
     def _write_commands(self, commands: list[MotorCommand]) -> None:
         if self._adapter is not None:
             if not self._adapter.write_motor_commands(commands):
-                raise SonicSafetyError("MuJoCo rejected SONIC motor commands")
+                raise G1ControlError("MuJoCo rejected SONIC motor commands")
         else:
             self._publish_motor_command(
                 MotorCommandArray(
@@ -403,7 +403,7 @@ class SonicController:
                 self._ramp_start = current_29.copy()
                 self._initialization_start_t = t_now
                 logger.info(
-                    "G1SonicConnection initializing to SONIC default pose",
+                    "G1SonicPolicyModule initializing to SONIC default pose",
                     connection="g1",
                     ramp_seconds=self._arming_duration,
                 )
@@ -467,18 +467,18 @@ class SonicController:
         )
         self._record_policy_timing(time.perf_counter() - policy_started_at, policy_started_at)
         if targets_29.shape != (NUM_JOINTS,) or not np.isfinite(targets_29).all():
-            raise SonicSafetyError("invalid SONIC motor targets")
+            raise G1ControlError("invalid SONIC motor targets")
         self._last_targets = targets_29.tolist()
 
         if (t_now - self._last_diag_log_t) >= 5.0:
-            logger.info("G1SonicConnection", connection="g1", **self._policy.snapshot())
+            logger.info("G1SonicPolicyModule", connection="g1", **self._policy.snapshot())
             self._last_diag_log_t = t_now
 
         if self._dry_run:
             if (t_now - self._last_dry_run_log_t) >= 1.0:
                 max_delta = float(np.max(np.abs(targets_29 - current_29)))
                 logger.info(
-                    "G1SonicConnection DRY-RUN",
+                    "G1SonicPolicyModule DRY-RUN",
                     connection="g1",
                     max_dq_rad=max_delta,
                 )
@@ -492,7 +492,7 @@ class SonicController:
 
     def _hold_output(self) -> list[float]:
         if self._hold_targets is None:
-            raise SonicSafetyError("dry-run has no prepared hold target")
+            raise G1ControlError("dry-run has no prepared hold target")
         return self._hold_targets.copy()
 
     def set_estop(self, estopped: bool) -> None:
@@ -535,7 +535,7 @@ class SonicController:
             self._policy.play_clip(motion)
             self._stream_source_requested = True
             logger.info(
-                "G1SonicConnection playing clip",
+                "G1SonicPolicyModule playing clip",
                 connection="g1",
                 clip=name,
                 frames=len(jp),
@@ -579,7 +579,7 @@ class SonicController:
         with self._control_lock:
             applied = self._policy.set_mode(mode)
             logger.info(
-                "G1SonicConnection locomotion mode",
+                "G1SonicPolicyModule locomotion mode",
                 connection="g1",
                 requested=mode,
                 applied=applied,
@@ -617,7 +617,9 @@ class SonicController:
             if self.fault_reason is not None:
                 raise RuntimeError("SONIC damping stop is latched; restart the stack to recover")
             if not self._active:
-                logger.warning("G1SonicConnection arm() before start(); ignoring", connection="g1")
+                logger.warning(
+                    "G1SonicPolicyModule arm() before start(); ignoring", connection="g1"
+                )
                 return False
             if (
                 self._control_state
@@ -633,7 +635,7 @@ class SonicController:
             )
             self._arm_pending = True
             logger.info(
-                "G1SonicConnection arm requested",
+                "G1SonicPolicyModule arm requested",
                 connection="g1",
                 control_state=self._control_state.value,
             )
@@ -655,7 +657,7 @@ class SonicController:
             self._last_targets = None
             self._reset_policy_state()
             logger.info(
-                "G1SonicConnection policy stopped",
+                "G1SonicPolicyModule policy stopped",
                 connection="g1",
                 control_state=self._control_state.value,
             )
@@ -685,7 +687,7 @@ class SonicController:
             self._reset_policy_state()
 
             logger.info(
-                "G1SonicConnection runtime state reset",
+                "G1SonicPolicyModule runtime state reset",
                 connection="g1",
                 reactivate=should_reactivate,
             )
@@ -698,7 +700,7 @@ class SonicController:
                 return
             self._dry_run = new_val
             self._last_dry_run_log_t = 0.0
-            logger.info("G1SonicConnection dry_run changed", connection="g1", dry_run=new_val)
+            logger.info("G1SonicPolicyModule dry_run changed", connection="g1", dry_run=new_val)
 
     def status(self) -> dict[str, Any]:
         with self._control_lock:

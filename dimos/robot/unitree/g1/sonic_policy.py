@@ -12,7 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""DimOS streams and shell commands for the G1 SONIC controller."""
+"""SONIC policy module: walking intent in, motor targets out."""
 
 from __future__ import annotations
 
@@ -30,11 +30,11 @@ from dimos.msgs.std_msgs.String import String
 from dimos.robot.unitree.g1.sonic_controller import SonicController, SonicControllerConfig
 
 
-class G1SonicConnectionConfig(ModuleConfig, SonicControllerConfig):
+class G1SonicPolicyConfig(ModuleConfig, SonicControllerConfig):
     pass
 
 
-class G1SonicConnection(Module):
+class G1SonicPolicyModule(Module):
     """Walk through Twist commands and condition SONIC with arm references.
 
     SonicController owns the policy loop and activation lifecycle. Hardware
@@ -42,7 +42,7 @@ class G1SonicConnection(Module):
     navigation or teleoperation input before it reaches base_command.
     """
 
-    config: G1SonicConnectionConfig
+    config: G1SonicPolicyConfig
     dedicated_worker: ClassVar[bool] = True
 
     base_command: In[Twist]
@@ -53,7 +53,7 @@ class G1SonicConnection(Module):
     motor_states: In[JointState]
     low_level_imu: In[Imu]
     motor_command: Out[MotorCommandArray]
-    sonic_fault: Out[String]
+    controller_fault: Out[String]
     g1_fault: In[String]
 
     def __init__(self, **kwargs: Any) -> None:
@@ -63,7 +63,7 @@ class G1SonicConnection(Module):
             publish_joint_state=lambda msg: self.joint_state.publish(msg),
             publish_imu=lambda msg: self.imu.publish(msg),
             publish_motor_command=lambda msg: self.motor_command.publish(msg),
-            publish_fault=lambda msg: self.sonic_fault.publish(msg),
+            publish_fault=lambda msg: self.controller_fault.publish(msg),
         )
 
     @rpc

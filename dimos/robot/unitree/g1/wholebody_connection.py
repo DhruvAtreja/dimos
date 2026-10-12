@@ -38,13 +38,6 @@ if TYPE_CHECKING:
 
 from dimos.constants import DEFAULT_THREAD_JOIN_TIMEOUT
 from dimos.control.components import make_humanoid_joints
-from dimos.control.sonic.sonic_safety import (
-    DAMPING_KD,
-    FEEDBACK_TIMEOUT_SECONDS,
-    JOINT_VELOCITY_LIMIT,
-    SonicSafetyError,
-    check_joint_velocities,
-)
 from dimos.core.core import rpc
 from dimos.core.module import Module, ModuleConfig
 from dimos.core.stream import In, Out
@@ -55,6 +48,13 @@ from dimos.msgs.sensor_msgs.Imu import Imu
 from dimos.msgs.sensor_msgs.JointState import JointState
 from dimos.msgs.sensor_msgs.MotorCommandArray import MotorCommandArray
 from dimos.msgs.std_msgs.String import String
+from dimos.robot.unitree.g1.control_safety import (
+    DAMPING_KD,
+    FEEDBACK_TIMEOUT_SECONDS,
+    JOINT_VELOCITY_LIMIT,
+    G1ControlError,
+    check_joint_velocities,
+)
 from dimos.utils.logging_config import setup_logger
 
 logger = setup_logger()
@@ -107,8 +107,8 @@ class G1WholeBodyConnectionConfig(ModuleConfig):
     feedback_timeout_seconds: float = Field(
         default=FEEDBACK_TIMEOUT_SECONDS, gt=0.0, allow_inf_nan=False
     )
-    # SONIC refreshes its hold target even in dry-run and opts into this
-    # watchdog. Older controllers intentionally stop publishing while idle.
+    # Continuous controllers opt into this watchdog. Other controllers
+    # intentionally stop publishing while idle.
     command_timeout_seconds: float | None = Field(default=None, gt=0.0, allow_inf_nan=False)
     joint_velocity_limit: float = Field(default=JOINT_VELOCITY_LIMIT, gt=0.0, allow_inf_nan=False)
 
@@ -150,7 +150,7 @@ class G1WholeBodyConnection(Module):
     config: G1WholeBodyConnectionConfig
 
     motor_command: In[MotorCommandArray]
-    sonic_fault: In[String]
+    controller_fault: In[String]
     motor_states: Out[JointState]
     imu: Out[Imu]
     g1_fault: Out[String]
@@ -254,7 +254,9 @@ class G1WholeBodyConnection(Module):
         self._command_frames_sent = 0
 
         self.register_disposable(Disposable(self.motor_command.subscribe(self._on_motor_command)))
-        self.register_disposable(Disposable(self.sonic_fault.subscribe(self._on_sonic_fault)))
+        self.register_disposable(
+            Disposable(self.controller_fault.subscribe(self._on_controller_fault))
+        )
 
         self._publish_thread = Thread(
             target=self._publish_loop, name="g1-wholebody-state-pump", daemon=True
@@ -353,8 +355,8 @@ class G1WholeBodyConnection(Module):
                 values.extend(fresh.imu_state.quaternion)
                 values.extend(fresh.imu_state.gyroscope)
                 if not all(math.isfinite(value) for value in values):
-                    raise SonicSafetyError("non-finite robot feedback")
-            except SonicSafetyError as exc:
+                    raise G1ControlError("non-finite robot feedback")
+            except G1ControlError as exc:
                 self._latch_fault_locked(str(exc))
         self._verify_mode_machine_once(fresh)
 
@@ -623,9 +625,9 @@ class G1WholeBodyConnection(Module):
                 raise RuntimeError("G1 damping stop is latched; restart the stack to recover")
         return True
 
-    def _on_sonic_fault(self, msg: String) -> None:
+    def _on_controller_fault(self, msg: String) -> None:
         with self._lock:
-            self._latch_fault_locked(msg.data or "SONIC control fault")
+            self._latch_fault_locked(msg.data or "controller fault")
 
     @rpc
     def command_stream_status(self) -> dict[str, float | int | str | None]:

@@ -245,7 +245,7 @@ all_modules = {
     "g1-manipulation-module": "dimos.robot.unitree.g1.blueprints.basic.unitree_g1_teleop.G1ManipulationModule",
     "g1-recorder": "dimos.robot.unitree.g1.g1_recorder.G1Recorder",
     "g1-sim-connection": "dimos.robot.unitree.g1.mujoco_sim.G1SimConnection",
-    "g1-sonic-connection": "dimos.robot.unitree.g1.sonic_connection.G1SonicConnection",
+    "g1-sonic-policy-module": "dimos.robot.unitree.g1.sonic_policy.G1SonicPolicyModule",
     "g1-tf-publisher": "dimos.robot.unitree.g1.g1_tf_publisher.G1TfPublisher",
     "g1-whole-body-connection": "dimos.robot.unitree.g1.wholebody_connection.G1WholeBodyConnection",
     "go2-audio-bridge-module": "dimos.teleop.hosted.go2_audio_bridge.Go2AudioBridgeModule",

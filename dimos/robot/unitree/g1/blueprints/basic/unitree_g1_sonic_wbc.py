@@ -15,9 +15,9 @@
 """Unitree G1 SONIC (GEAR-SONIC) whole-body-control blueprint.
 
 Unified 29-DOF policy: planner + encoder + decoder. Selectable GEAR locomotion
-modes are reachable directly on the connection module:
+modes are reachable directly on the policy module:
 
-    app.G1SonicConnection.set_locomotion_mode("HAPPY_DANCE_WALK")
+    app.G1SonicPolicyModule.set_locomotion_mode("HAPPY_DANCE_WALK")
 
 Usage:
     dimos --transport zenoh --simulation mujoco run unitree-g1-sonic-wbc
@@ -40,7 +40,6 @@ from yourdfpy import URDF  # type: ignore[import-untyped]
 from dimos.control.components import make_humanoid_joints
 from dimos.control.sonic.models import sonic_model_directory
 from dimos.control.sonic.sonic_pipeline import DEFAULT_ANGLES_DDS
-from dimos.control.sonic.sonic_safety import COMMAND_TIMEOUT_SECONDS
 from dimos.core.coordination.blueprints import autoconnect
 from dimos.core.global_config import global_config
 from dimos.core.module import Module
@@ -54,8 +53,9 @@ from dimos.navigation.go2.replanning_a_star.module import ReplanningAStarPlanner
 from dimos.navigation.movement_manager.movement_manager import MovementManager
 from dimos.protocol.pubsub.impl.zenohpubsub import QOS_LATEST_WINS, Topic as ZenohTopic
 from dimos.robot.unitree.g1.config import G1
+from dimos.robot.unitree.g1.control_safety import COMMAND_TIMEOUT_SECONDS
 from dimos.robot.unitree.g1.g1_rerun import g1_costmap
-from dimos.robot.unitree.g1.sonic_connection import G1SonicConnection
+from dimos.robot.unitree.g1.sonic_policy import G1SonicPolicyModule
 from dimos.simulation.scenes.catalog import resolve_scene_package
 from dimos.utils.data import LfsPath
 from dimos.visualization.rerun.scene_package import scene_package_static_entities
@@ -220,7 +220,7 @@ else:
     _nav_remap = []
 
 
-_connection = G1SonicConnection.blueprint(
+_policy = G1SonicPolicyModule.blueprint(
     encoder_onnx=_SONIC_RELEASE_DIR / "sonic_v1_1" / "model_encoder.onnx",
     decoder_onnx=_SONIC_RELEASE_DIR / "sonic_v1_1" / "model_decoder.onnx",
     planner_onnx=_SONIC_PLANNER_PATH,
@@ -269,14 +269,14 @@ _costmap_renderer = g1_costmap if global_config.simulation == "mujoco" else _ren
 _remappings = [
     *_nav_remap,
     _imu_remap,
-    (G1SonicConnection, "base_command", "cmd_vel"),
-    (G1SonicConnection, "joint_state", "g1_joints"),
+    (G1SonicPolicyModule, "base_command", "cmd_vel"),
+    (G1SonicPolicyModule, "joint_state", "g1_joints"),
 ]
 
 unitree_g1_sonic_wbc = (
     autoconnect(
         _backend,
-        _connection,
+        _policy,
         _nav_stack,
         vis_module(
             viewer_backend=global_config.viewer,

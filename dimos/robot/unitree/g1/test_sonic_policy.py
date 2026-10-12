@@ -20,7 +20,6 @@ import pytest
 import pytest_asyncio
 
 from dimos.control.sonic.sonic_pipeline import DEFAULT_ANGLES_DDS
-from dimos.control.sonic.sonic_safety import damping_commands
 from dimos.core.global_config import global_config
 from dimos.hardware.whole_body.spec import IMUState, MotorState
 from dimos.msgs.geometry_msgs.Quaternion import Quaternion
@@ -29,7 +28,8 @@ from dimos.msgs.geometry_msgs.Vector3 import Vector3
 from dimos.msgs.sensor_msgs.Imu import Imu
 from dimos.msgs.sensor_msgs.JointState import JointState
 from dimos.msgs.std_msgs.String import String
-from dimos.robot.unitree.g1.sonic_connection import G1SonicConnection
+from dimos.robot.unitree.g1.control_safety import damping_commands
+from dimos.robot.unitree.g1.sonic_policy import G1SonicPolicyModule
 
 
 @pytest_asyncio.fixture
@@ -44,7 +44,7 @@ async def connection(mocker, tmp_path):
     ).return_value
     adapter.read_motor_states.return_value = [MotorState()] * 29
     adapter.read_imu.return_value = IMUState()
-    c = G1SonicConnection(
+    c = G1SonicPolicyModule(
         encoder_onnx=model,
         decoder_onnx=model,
         planner_onnx=model,
@@ -183,7 +183,7 @@ def test_fault_during_inference_discards_targets_and_stays_latched(
 )
 async def test_hardware_faults_do_not_trigger_motor_takeover(connection, mocker, source, reason):
     # Before startup there is no simulator adapter: the real DDS connection owns the stop.
-    publish = mocker.patch.object(connection.sonic_fault, "publish")
+    publish = mocker.patch.object(connection.controller_fault, "publish")
     motor_publish = mocker.patch.object(connection.motor_command, "publish")
     if source == "operator":
         connection.set_estop(True)
@@ -200,7 +200,7 @@ async def test_hardware_feedback_drives_commands_and_staleness_latches_stop(
 ):
     monkeypatch.setattr(connection.config, "simulation_address", None)
     publish = mocker.patch.object(connection.motor_command, "publish")
-    fault = mocker.patch.object(connection.sonic_fault, "publish")
+    fault = mocker.patch.object(connection.controller_fault, "publish")
     connection.start()
     await connection.handle_motor_states(
         JointState(position=[0.4] * 29, velocity=[0.0] * 29, effort=[0.0] * 29)
@@ -308,7 +308,7 @@ def test_stopping_sonic_latches_damping(connection):
 @pytest.mark.parametrize(
     "simulation, backend", [("", "G1WholeBodyConnection"), ("mujoco", "MujocoSimModule")]
 )
-def test_blueprint_routes_commands_directly_without_coordinator(
+def test_blueprint_routes_policy_commands_without_coordinator_or_sim2(
     monkeypatch, mocker, simulation, backend
 ):
     monkeypatch.setattr(global_config, "simulation", simulation)
@@ -321,11 +321,14 @@ def test_blueprint_routes_commands_directly_without_coordinator(
     )["unitree_g1_sonic_wbc"]
 
     modules = {atom.module.__name__ for atom in blueprint.active_blueprints}
-    assert "G1SonicConnection" in modules
+    assert "G1SonicPolicyModule" in modules
     assert "MovementManager" in modules
     assert backend in modules
     assert not {"SonicCoordinator", "ControlCoordinator"} & modules
-    assert blueprint.remapping_map[(G1SonicConnection.name, "base_command")] == "cmd_vel"
+    assert all(
+        not atom.module.__module__.startswith("dimos.sim2") for atom in blueprint.active_blueprints
+    )
+    assert blueprint.remapping_map[(G1SonicPolicyModule.name, "base_command")] == "cmd_vel"
     assert (
         blueprint.transport_map[("cmd_vel", Twist)].channel == "dimos/cmd_vel/geometry_msgs.Twist"
     )
