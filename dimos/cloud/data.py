@@ -238,6 +238,7 @@ class MultipartBackend:
         tag: str = "",
         progress: Progress | None = None,
         size: int = 0,
+        full: bool = False,
     ) -> Path:
         tick = progress or (lambda phase, done, total: None)
         d = self.api.download(upload_id)
@@ -264,6 +265,9 @@ class MultipartBackend:
                 codecs.decompress(wire, raw, plain := Path(tmp) / "plain")
             else:
                 raw.rename(plain := Path(tmp) / "plain")
+            if d.get("crop") and not full and _manifest(plain) is not None:
+                tick("trim", 0, 0)
+                _crop(plain, d["crop"]["start"], d["crop"]["end"])
             _move_into_place(plain, out)
         return out
 
@@ -332,7 +336,11 @@ class CloudData:
         return hits[0]
 
     def pull(
-        self, upload_id: str | None, dest: Path | None = None, progress: Progress | None = None
+        self,
+        upload_id: str | None,
+        dest: Path | None = None,
+        progress: Progress | None = None,
+        full: bool = False,
     ) -> Path:
         row = self.resolve(upload_id)
         return self.backend.pull(
@@ -341,6 +349,7 @@ class CloudData:
             tag=_tag(row),
             progress=progress,
             size=int(row.get("size") or 0),
+            full=full,
         )
 
     def ls(self) -> list[dict[str, Any]]:
@@ -418,6 +427,26 @@ def _move_into_place(src: Path, out: Path) -> None:
         os.close(fd)
         shutil.move(str(src), tmp)
         Path(tmp).replace(out)
+
+
+def _crop(db: Path, start: float, end: float) -> None:
+    """Keeps [start, end] of every stream, by recorded timestamp. A stream with a single
+    message (recording metadata, a latched static transform) is kept whole."""
+    with contextlib.closing(sqlite3.connect(db)) as conn:
+        tables = {r[0] for r in conn.execute("SELECT name FROM sqlite_master WHERE type='table'")}
+        for (name,) in conn.execute("SELECT name FROM _streams").fetchall():
+            if (
+                name not in tables
+                or conn.execute(f'SELECT count(*) FROM "{name}"').fetchone()[0] < 2
+            ):
+                continue
+            outside = f'SELECT id FROM "{name}" WHERE ts < ? OR ts > ?'
+            for side in (f"{name}_blob", f"{name}_rtree"):
+                if side in tables:
+                    conn.execute(f'DELETE FROM "{side}" WHERE id IN ({outside})', (start, end))
+            conn.execute(f'DELETE FROM "{name}" WHERE ts < ? OR ts > ?', (start, end))
+        conn.commit()
+        conn.execute("VACUUM")
 
 
 def _is_sidecar(path: Path) -> bool:
