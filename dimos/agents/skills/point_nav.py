@@ -45,8 +45,6 @@ class PointNavSkillContainer(Module):
     tf: In[TFMessage]
     nav_status: In[GoalStatus]
 
-    _target: tuple[float, float] = (0.0, 0.0)
-    """The x, y of the go_to under way."""
     _goal: PoseStamped | None = None
     """The goal of the go_to under way. None when there is none."""
 
@@ -54,7 +52,7 @@ class PointNavSkillContainer(Module):
         # Subscribe to tf now so the first go_to already has a pose.
         self.tfbuffer  # noqa: B018
         yield
-        self._finish("Cancelled, module stopping")
+        self._finish("Canceled, module stopping")
 
     async def handle_nav_status(self, msg: GoalStatus) -> None:
         if self._goal is None:
@@ -66,7 +64,7 @@ class PointNavSkillContainer(Module):
             outcome = "Reached the target"
         elif ended.status == GoalStatus.PREEMPTED:
             replaced = ended.text == PREEMPT_REPLACED
-            outcome = "Replaced by another goal" if replaced else "Cancelled"
+            outcome = "Replaced by another goal" if replaced else "Canceled"
         elif ended.status == GoalStatus.REJECTED:
             outcome = f"Failed: {ended.text}"
         else:
@@ -101,20 +99,19 @@ class PointNavSkillContainer(Module):
         # The planner picks the one nearest the goal's z, so send the height of the floor under
         # the robot.
         floor_z = pose.z - self.config.base_height_m
-        self._target = (x, y)
         self._goal = PoseStamped(position=(x, y, floor_z), frame_id=self.config.world_frame)
         self._navigation.set_goal(self._goal)
         return "Navigating. A tool update reports the robot's position when it stops."
 
     def _finish(self, outcome: str, *, cancel: bool = True) -> None:
-        if self._goal is None:
+        goal, self._goal = self._goal, None
+        if goal is None:
             return
-        self._goal = None
         pose = self._pose()
         if pose is None:
             where = "robot position unknown"
         else:
-            distance = math.dist(self._target, (pose.x, pose.y))
+            distance = math.dist((goal.x, goal.y), (pose.x, pose.y))
             where = f"robot at ({pose.x:.2f}, {pose.y:.2f}), {distance:.2f} m from the target"
         self.tool_update("go_to", f"{outcome}; {where}.")
         self.stop_tool("go_to")
@@ -125,5 +122,5 @@ class PointNavSkillContainer(Module):
     @skill
     async def stop_navigation(self) -> str:
         """Cancel the current goal and stop moving."""
-        self._finish("Cancelled")
+        self._finish("Canceled")
         return "Stopped."

@@ -12,10 +12,12 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from collections.abc import Callable
+from collections.abc import Callable, Generator
+from concurrent.futures import ThreadPoolExecutor
 import difflib
 import math
 from typing import Any
+from unittest.mock import Mock
 
 from dimos_lcm.actionlib_msgs import GoalStatus
 from langchain_core.messages import HumanMessage
@@ -148,6 +150,27 @@ class _StatusTransport(Transport[GoalStatus]):
         return lambda: self.subscribers.remove(callback)
 
 
+@pytest.fixture()
+def navigating(
+    mocker: MockerFixture,
+) -> Generator[tuple[UnitreeSkillContainer, _StatusTransport, Mock], None, None]:
+    transport = _StatusTransport()
+    container = UnitreeSkillContainer()
+    container.nav_status.transport = transport
+    navigation = mocker.Mock()
+    mocker.patch.object(container, "_navigation", navigation, create=True)
+    try:
+        yield container, transport, navigation
+    finally:
+        container._close_module()
+
+
+def _navigate(container: UnitreeSkillContainer, goal: PoseStamped) -> str:
+    """Run _navigate, failing instead of hanging when it never returns."""
+    with ThreadPoolExecutor(max_workers=1) as pool:
+        return pool.submit(container._navigate, goal).result(timeout=5.0)
+
+
 @pytest.mark.parametrize(
     ("status", "text", "outcome"),
     [
@@ -159,21 +182,22 @@ class _StatusTransport(Transport[GoalStatus]):
     ],
 )
 def test_navigate_returns_how_the_goal_ended(
-    mocker: MockerFixture, status: int, text: str, outcome: str
+    navigating: tuple[UnitreeSkillContainer, _StatusTransport, Mock],
+    status: int,
+    text: str,
+    outcome: str,
 ) -> None:
-    transport = _StatusTransport()
-    container = UnitreeSkillContainer()
-    container.nav_status.transport = transport
-    goal = _pose(1, 0, 0)
+    container, transport, navigation = navigating
+    earlier = PoseStamped(ts=900.0, position=(5.0, 0.0, 0.0))
 
     def set_goal(sent: PoseStamped) -> bool:
+        # The heartbeat still repeats how the goal before this one ended.
+        transport.broadcast(None, goal_status(earlier, GoalStatus.ABORTED, "no safe path"))
         transport.broadcast(None, goal_status(sent, GoalStatus.ACTIVE, "navigating"))
         transport.broadcast(None, goal_status(sent, status, text))
         return True
 
-    mocker.patch.object(container, "_navigation", mocker.Mock(set_goal=set_goal), create=True)
-    try:
-        assert container._navigate(goal) == outcome
-        assert transport.subscribers == []
-    finally:
-        container._close_module()
+    navigation.set_goal.side_effect = set_goal
+
+    assert _navigate(container, _pose(1, 0, 0)) == outcome
+    assert transport.subscribers == []

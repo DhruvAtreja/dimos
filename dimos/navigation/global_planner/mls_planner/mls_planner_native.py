@@ -36,9 +36,9 @@ from dimos.navigation import spec
 
 def _answers(assumed: GoalStatus, msg: GoalStatus) -> bool:
     """Whether the planner's report covers the goal message a status was assumed for."""
-    same_goal = msg.goal_id.id == assumed.goal_id.id
+    same_goal: bool = msg.goal_id.id == assumed.goal_id.id
     if assumed.status == GoalStatus.PENDING:
-        return bool(same_goal)
+        return same_goal
     return not same_goal or not spec.holds_goal(msg.status)
 
 
