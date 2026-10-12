@@ -123,6 +123,8 @@ class SceneDescription(SceneRecord):
     # scripted obstacles, moved every physics step
     movers: tuple[MoverSpec, ...] = ()
     provenance: dict[str, Any] = Field(default_factory=dict)
+    # data other tools keep with the scene (an editor's project, saved views, a nav test), keyed by tool; sim2 ignores it
+    extensions: dict[str, Any] = Field(default_factory=dict)
 
 
 class EntityState(SceneRecord):
