@@ -132,6 +132,9 @@ def _build(*, pointlio: bool) -> Blueprint:
         MovementManager.blueprint(),
         vis_module(global_config.viewer),
     )
+    if not pointlio:
+        # the sim lidar publishes `pointcloud`; the mapper reads `lidar` (as on the G1 sim2 blueprint)
+        blueprint = blueprint.remappings([(VoxelGridMapper, "lidar", "pointcloud")])
     if pointlio:
         blueprint = blueprint.remappings(
             [

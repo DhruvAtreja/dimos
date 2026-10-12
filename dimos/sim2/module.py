@@ -30,6 +30,10 @@ import mujoco
 from dimos.core.core import rpc
 from dimos.core.module import Module, ModuleConfig
 from dimos.core.stream import Out
+from dimos.msgs.geometry_msgs.Quaternion import Quaternion
+from dimos.msgs.geometry_msgs.Transform import Transform
+from dimos.msgs.geometry_msgs.Vector3 import Vector3
+from dimos.msgs.tf2_msgs.TFMessage import TFMessage
 from dimos.sim2.runtime import SimulationRuntime
 from dimos.sim2.scene_types import SceneDescription, SceneState, SceneUpdate
 from dimos.sim2.spec import WorldConfig
@@ -54,6 +58,8 @@ class SimulationModule(Module):
     config: SimulationModuleConfig
     dedicated_worker = True
     sim_truth: Out[SceneState]
+    # world -> <mover body> for every scripted mover (movers.json), so viewers can draw them moving
+    tf: Out[TFMessage]
 
     def __init__(self, **kwargs: Any) -> None:
         super().__init__(**kwargs)
@@ -66,6 +72,7 @@ class SimulationModule(Module):
         self._failure: str | None = None
         self._truth_enabled = False
         self._truth_thread: threading.Thread | None = None
+        self._movers_thread: threading.Thread | None = None
 
     @rpc
     def build(self) -> None:
@@ -103,6 +110,11 @@ class SimulationModule(Module):
         self._stop.clear()
         self._thread = threading.Thread(target=self._run, name="sim2-physics", daemon=True)
         self._thread.start()
+        if self._runtime is not None and self._runtime.movers.tracks:
+            self._movers_thread = threading.Thread(
+                target=self._publish_movers, name="sim2-movers", daemon=True
+            )
+            self._movers_thread.start()
         if self.config.viewer:
             description = self.describe()
             executable = Path(sys.executable)
@@ -137,6 +149,32 @@ class SimulationModule(Module):
             runtime.snapshots.set_lifecycle("faulted")
             for binding in runtime.robots.values():
                 binding.channel.set_lifecycle("faulted")
+
+    def _publish_movers(self) -> None:
+        runtime = self._runtime
+        assert runtime is not None
+        bodies = [(t.mocap_id, t.spec.body) for t in runtime.movers.tracks]
+        while not self._stop.wait(0.05):
+            with runtime.lock:
+                poses = [
+                    (body, runtime.data.mocap_pos[i].copy(), runtime.data.mocap_quat[i].copy())
+                    for i, body in bodies
+                ]
+            now = time.time()
+            self.tf.publish(
+                TFMessage(
+                    *(
+                        Transform(
+                            translation=Vector3(*xyz),
+                            rotation=Quaternion(float(q[1]), float(q[2]), float(q[3]), float(q[0])),
+                            frame_id="world",
+                            child_frame_id=body,
+                            ts=now,
+                        )
+                        for body, xyz, q in poses
+                    )
+                )
+            )
 
     def _publish_truth(self) -> None:
         while not self._stop.wait(0.1):
@@ -236,6 +274,8 @@ class SimulationModule(Module):
     @rpc
     def stop(self) -> None:
         self._stop.set()
+        if self._movers_thread is not None:
+            self._movers_thread.join(timeout=5)
         if self._truth_thread is not None:
             self._truth_thread.join(timeout=5)
             if self._truth_thread.is_alive():
