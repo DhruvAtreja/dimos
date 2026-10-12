@@ -387,6 +387,23 @@ def test_suite_has_100_trials_with_scene_object_and_order_tags() -> None:
     assert unreachable == ["scenereplica-scene-11-cracker_box"]
 
 
+def test_dan_suite_runs_the_same_trials_on_its_own_launch() -> None:
+    baseline = _scenereplica().SUITE
+    from dimos.evals.suites import scenereplica_dan
+
+    assert scenereplica_dan.BLUEPRINT == ["xarm-perception-sim2-dan", "mcp-server", "observe-skill"]
+    assert len(scenereplica_dan.SUITE) == len(baseline) == 100
+    for dan, base in zip(scenereplica_dan.SUITE, baseline, strict=True):
+        assert (dan.id, dan.inputs, dan.tags) == (base.id, base.inputs, base.tags)
+        assert (dan.timeout_s, dan.threshold) == (base.timeout_s, base.threshold)
+        assert isinstance(dan.environment, Sim2Environment)
+        assert isinstance(base.environment, Sim2Environment)
+        assert dan.environment.config.blueprint == scenereplica_dan.BLUEPRINT
+        assert dan.environment.config.model_dump(exclude={"blueprint"}) == (
+            base.environment.config.model_dump(exclude={"blueprint"})
+        )
+
+
 def test_prompt_never_gives_object_positions() -> None:
     module = _scenereplica()
     scene_dir = get_data_dir() / "scenereplica" / "scene-01"
