@@ -89,8 +89,8 @@ fn test_config() -> Config {
         step_penalty_weight: 0.0,
         goal_tolerance: 0.3,
         viz_publish_hz: 2.0,
-        viz_region_m: 4.0,
-        viz_sweep_regions: 0,
+        viz_cell_m: 4.0,
+        viz_sweep_cells: 0,
         worker_threads: 4,
     }
 }
@@ -247,7 +247,7 @@ fn node_edge_pairs(p: &Planner) -> BTreeSet<(VoxelKey, VoxelKey, u32)> {
     let cells = &p.graph.cells;
     p.graph
         .node_edges
-        .edges
+        .edges()
         .iter()
         .map(|e| {
             let a = cells.coord(e.a);
@@ -981,10 +981,7 @@ fn wipe_then_regrow_leaves_no_ghost_graph() {
     };
     p.update_region(&[], &bounds, &cfg);
     assert!(p.graph.nodes.is_empty(), "nodes survived the wipe");
-    assert!(
-        p.graph.node_edges.edges.is_empty(),
-        "edges survived the wipe"
-    );
+    assert!(p.graph.node_edges.is_empty(), "edges survived the wipe");
 
     for n in [12, 20, 30, 45, 80] {
         p.update_region(&floor(n), &bounds, &cfg);

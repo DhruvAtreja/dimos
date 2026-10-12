@@ -156,12 +156,21 @@ pub struct RepairWindow<'a> {
 /// slot the edges whose corridor runs through it.
 #[derive(Default)]
 pub struct NodeEdges {
-    pub edges: Vec<NodeEdge>,
-    pub adj: AHashMap<NodeId, Vec<NodeEdgeIdx>>,
+    edges: Vec<NodeEdge>,
+    adj: AHashMap<NodeId, Vec<NodeEdgeIdx>>,
     through: Vec<SmallVec<[NodeEdgeIdx; 2]>>,
 }
 
 impl NodeEdges {
+    pub fn edges(&self) -> &[NodeEdge] {
+        &self.edges
+    }
+
+    /// The edges touching a node.
+    pub fn adjacent(&self, node: NodeId) -> &[NodeEdgeIdx] {
+        self.adj.get(&node).map_or(&[], Vec::as_slice)
+    }
+
     pub fn len(&self) -> usize {
         self.edges.len()
     }

@@ -17,7 +17,6 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
-use crate::columns::ColumnWindow;
 use crate::mls_planner::{Config, Planner, RegionBounds, DEBUG_LOG_PERIOD};
 use crate::region_viz::{pack_cell, Cell, RegionContent, RegionViz};
 use crate::voxel::{surface_point_xyz, VoxelKey};
@@ -464,9 +463,9 @@ impl Worker {
         let mut last_path_at: Option<Instant> = None;
         let mut last_viz_at: Option<Instant> = None;
         let mut viz = RegionViz::new(
-            (self.config.viz_region_m / self.config.voxel_size).round() as i32,
+            (self.config.viz_cell_m / self.config.voxel_size).round() as i32,
             self.config.viz_reach_cells(),
-            self.config.viz_sweep_regions as usize,
+            self.config.viz_sweep_cells as usize,
         );
         let mut seed_progress = SeedProgress::default();
         loop {
@@ -611,7 +610,9 @@ impl Worker {
                 };
                 let region = region_bounds(&bounds).capped_at(sensor_z, self.config.max_overhead_m);
                 let process_start = Instant::now();
-                self.apply_region(planner, &points, &region, viz, Planner::update_region);
+                if let Some(window) = planner.update_region(&points, &region, &self.config) {
+                    viz.mark_window(window);
+                }
                 debug_throttled!(
                     DEBUG_LOG_PERIOD,
                     process_ms = process_start.elapsed().as_secs_f64() * 1e3,
@@ -637,26 +638,7 @@ impl Worker {
     /// premap's own, so no sensor ceiling applies.
     fn ingest_seed(&self, planner: &mut Planner, seed: QueuedSeed, viz: &mut RegionViz) {
         let region = region_bounds(&seed.bounds);
-        self.apply_region(
-            planner,
-            &seed.points,
-            &region,
-            viz,
-            Planner::update_seed_region,
-        );
-    }
-
-    /// Replace the voxels in a region with the given update and repair the
-    /// graph around them, marking the rewritten window for the viz.
-    fn apply_region(
-        &self,
-        planner: &mut Planner,
-        points: &[Xyz],
-        region: &RegionBounds,
-        viz: &mut RegionViz,
-        update: fn(&mut Planner, &[Xyz], &RegionBounds, &Config) -> Option<ColumnWindow>,
-    ) {
-        if let Some(window) = update(planner, points, region, &self.config) {
+        if let Some(window) = planner.update_seed_region(&seed.points, &region, &self.config) {
             viz.mark_window(window);
         }
     }

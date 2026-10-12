@@ -19,8 +19,7 @@
 use ahash::{AHashMap, AHashSet};
 use rayon::prelude::*;
 
-pub use crate::columns::ColumnIz;
-use crate::columns::ColumnWindow;
+use crate::columns::{ColumnIz, ColumnWindow};
 use crate::voxel::VoxelKey;
 
 const WORD_BITS: usize = u64::BITS as usize;

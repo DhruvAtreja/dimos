@@ -164,7 +164,7 @@ pub fn window_clusters(
     clusters
 }
 
-pub const NO_CLUSTER: u32 = u32::MAX;
+const NO_CLUSTER: u32 = u32::MAX;
 
 /// Which cluster each window cell belongs to and its position in it, dense
 /// per slot. Cells outside the window read NO_CLUSTER.

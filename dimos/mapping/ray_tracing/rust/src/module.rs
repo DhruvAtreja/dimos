@@ -453,8 +453,8 @@ impl Worker {
                 &mut state.mapper,
                 &mut state.viz,
                 self.config.voxel_size,
-                self.config.viz_region_m,
-                self.config.viz_sweep_regions as usize,
+                self.config.viz_cell_m,
+                self.config.viz_sweep_cells as usize,
             )
         });
         for (cell, points) in due {
@@ -778,9 +778,9 @@ mod tests {
             tf_wait_timeout_s: 0.05,
             worker_threads: 4,
             region_m: 4.0,
-            viz_region_m: 4.0,
+            viz_cell_m: 4.0,
             viz_emit_every: 0,
-            viz_sweep_regions: 0,
+            viz_sweep_cells: 0,
         }
     }
 

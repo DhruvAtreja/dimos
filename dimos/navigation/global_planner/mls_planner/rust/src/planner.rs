@@ -608,11 +608,8 @@ fn node_dijkstra(
         if d > dist.get(&u).copied().unwrap_or(f32::INFINITY) {
             continue;
         }
-        let Some(adj) = plg.node_edges.adj.get(&u) else {
-            continue;
-        };
-        for &edge_idx in adj {
-            let edge = &plg.node_edges.edges[edge_idx as usize];
+        for &edge_idx in plg.node_edges.adjacent(u) {
+            let edge = &plg.node_edges.edges()[edge_idx as usize];
             let neighbor = if edge.a == u { edge.b } else { edge.a };
             let nd = d + edge.cost;
             if nd < dist.get(&neighbor).copied().unwrap_or(f32::INFINITY) {
@@ -669,7 +666,7 @@ fn assemble_cells(
             .node_edges
             .between(a, b)
             .expect("consecutive nodes in path must share an edge");
-        let edge = &plg.node_edges.edges[edge_idx as usize];
+        let edge = &plg.node_edges.edges()[edge_idx as usize];
 
         // The stored corridor runs a to b. Dead cells are skipped: the update
         // safety walk drops broken corridors, so gaps here are rare races.
@@ -902,8 +899,8 @@ mod tests {
             step_penalty_weight: 4.0,
             goal_tolerance: 0.3,
             viz_publish_hz: 2.0,
-            viz_region_m: 4.0,
-            viz_sweep_regions: 0,
+            viz_cell_m: 4.0,
+            viz_sweep_cells: 0,
             worker_threads: 4,
         };
         plan(plg, start, goal, &config).map(|(wp, _)| wp)
@@ -933,8 +930,8 @@ mod tests {
             step_penalty_weight: 4.0,
             goal_tolerance: 0.3,
             viz_publish_hz: 2.0,
-            viz_region_m: 4.0,
-            viz_sweep_regions: 0,
+            viz_cell_m: 4.0,
+            viz_sweep_cells: 0,
             worker_threads: 4,
         }
     }

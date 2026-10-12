@@ -23,7 +23,7 @@ use rayon::prelude::*;
 use validator::ValidationError;
 
 use crate::adjacency::{build_surface_cells, build_surface_lookup, rebuild_edges_around, CellId};
-use crate::columns::{ColumnWindow, TILE_EDGE};
+use crate::columns::{ColumnIz, ColumnWindow, TILE_EDGE};
 use crate::dijkstra::window_clusters;
 use crate::edges::{
     build_node_edges, build_node_edges_region, edges_to_segments, PlannerGraph, RepairWindow,
@@ -32,7 +32,7 @@ use crate::nodes::{
     place_nodes, place_nodes_region, relocate_dead_nodes, PlacementParams, HOLE_SPAN_CELLS,
 };
 use crate::planner;
-use crate::surfaces::{extract_surfaces, extract_surfaces_region, ColumnIz, ColumnMask};
+use crate::surfaces::{extract_surfaces, extract_surfaces_region, ColumnMask};
 use crate::voxel::{voxelize, VoxelKey};
 
 #[native_config]
@@ -85,9 +85,9 @@ pub struct Config {
     pub viz_publish_hz: f32,
     /// Edge of the square cells the surface and edge viz publish by.
     #[validate(range(exclusive_min = 0.0))]
-    pub viz_region_m: f32,
+    pub viz_cell_m: f32,
     /// Unchanged cells republished per tick, round robin. 0 turns the sweep off.
-    pub viz_sweep_regions: u32,
+    pub viz_sweep_cells: u32,
     /// Worker threads for parallel planner work.
     #[validate(range(min = 1))]
     pub worker_threads: u32,
@@ -297,10 +297,10 @@ impl Planner {
             let pad = (2 * config.closing_passes()) as i32;
 
             let stage = Instant::now();
-            let (changed, edits) = self.replace_region_voxels(local_points, bounds, voxel_size);
+            let edits = self.replace_region_voxels(local_points, bounds, voxel_size);
             let diff_ms = ms_since(stage);
             // No voxel changed, so surfaces and the graph are untouched.
-            if changed.is_empty() {
+            if edits.is_empty() {
                 return None;
             }
 
@@ -308,7 +308,7 @@ impl Planner {
             // the extraction reads one more pad around that.
             let bbox = bounds.column_bbox(voxel_size);
             let mut footprint = ColumnMask::new(bbox, 2 * pad);
-            for &col in &changed {
+            for col in edits.columns() {
                 footprint.set(col);
             }
             let write = footprint.dilated(pad);
@@ -330,7 +330,7 @@ impl Planner {
                 replace_ms,
                 graph_ms = ms_since(stage),
                 bbox_columns = (bbox.1 - bbox.0 + 1) as i64 * (bbox.3 - bbox.2 + 1) as i64,
-                changed_columns = changed.len(),
+                changed_columns = edits.columns().count(),
                 cells_added,
                 cells_removed,
                 "region update stages"
@@ -371,7 +371,7 @@ impl Planner {
         }
         let mut seeds = added;
         seeds.extend_from_slice(&removed);
-        if seeds.is_empty() && edits.changed.is_empty() && edits.flipped.is_empty() {
+        if seeds.is_empty() && edits.is_empty() {
             return;
         }
 
@@ -435,14 +435,13 @@ impl Planner {
     }
 
     /// Replace the cylinder's voxels with the local map points, ignoring
-    /// points outside it. Returns the columns whose voxels changed and the
-    /// edits themselves.
+    /// points outside it. Returns the voxel edits.
     fn replace_region_voxels(
         &mut self,
         local_points: &[(f32, f32, f32)],
         bounds: &RegionBounds,
         voxel_size: f32,
-    ) -> (Vec<(i32, i32)>, VoxelEdits) {
+    ) -> VoxelEdits {
         let incoming: Vec<VoxelKey> = local_points
             .par_iter()
             .map(|&p| voxelize(p, voxel_size))
@@ -490,7 +489,7 @@ impl Planner {
                 voxel_edits.changed.push((edit.col, heights));
             }
         }
-        (edits.iter().map(|edit| edit.col).collect(), voxel_edits)
+        voxel_edits
     }
 
     /// Replace the surface_lookup entries for write-mask columns whose cells
@@ -759,12 +758,12 @@ impl Planner {
     /// Corridor segments of every node edge, for visualization.
     pub fn edge_segments(&self) -> Vec<(VoxelKey, VoxelKey, f32)> {
         self.pool
-            .install(|| edges_to_segments(&self.graph.node_edges.edges))
+            .install(|| edges_to_segments(self.graph.node_edges.edges()))
     }
 
     /// The same segments without materializing them.
     pub fn edge_segment_iter(&self) -> impl Iterator<Item = (VoxelKey, VoxelKey, f32)> + '_ {
-        self.graph.node_edges.edges.iter().flat_map(|edge| {
+        self.graph.node_edges.edges().iter().flat_map(|edge| {
             edge.chain
                 .windows(2)
                 .map(move |pair| (pair[0], pair[1], edge.cost))
@@ -807,6 +806,18 @@ impl Planner {
 struct VoxelEdits {
     changed: Vec<((i32, i32), Vec<i32>)>,
     flipped: Vec<(i32, i32)>,
+}
+
+impl VoxelEdits {
+    fn is_empty(&self) -> bool {
+        self.changed.is_empty() && self.flipped.is_empty()
+    }
+
+    /// Every column with a voxel edit.
+    fn columns(&self) -> impl Iterator<Item = (i32, i32)> + '_ {
+        let changed = self.changed.iter().map(|&(col, _)| col);
+        changed.chain(self.flipped.iter().copied())
+    }
 }
 
 /// One column's voxel changes from a region update.

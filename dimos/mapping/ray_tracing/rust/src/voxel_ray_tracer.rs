@@ -120,11 +120,11 @@ pub struct Config {
     pub region_m: f32,
     /// Edge of the square cells the map viz publishes by, at least a chunk edge.
     #[validate(range(exclusive_min = 0.0))]
-    pub viz_region_m: f32,
+    pub viz_cell_m: f32,
     /// Publish the cells whose chunks changed every Nth frame. Zero disables it.
     pub viz_emit_every: u32,
     /// Unchanged cells republished per viz tick, round robin. Zero turns the sweep off.
-    pub viz_sweep_regions: u32,
+    pub viz_sweep_cells: u32,
 }
 
 fn validate_config(cfg: &Config) -> Result<(), ValidationError> {
