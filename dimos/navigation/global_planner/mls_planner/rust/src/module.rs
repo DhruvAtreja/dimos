@@ -18,6 +18,7 @@ use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
 use crate::mls_planner::{Config, Plan, Planner, RegionBounds};
+use crate::planner::snap_pose_to_cell;
 use crate::region_viz::{pack_cell, Cell, RegionContent, RegionViz};
 use crate::voxel::{surface_point_xyz, VoxelKey, Xyz};
 use dimos_module::time::now;
@@ -964,7 +965,7 @@ impl Replan {
 
 /// Decide a replan pass. A goal already within tolerance needs no path.
 fn replan(planner: &mut Planner, start: Xyz, goal: Xyz, config: &Config) -> Replan {
-    if is_at_goal(start, goal, config.goal_tolerance, config.goal_z_tolerance) {
+    if is_at_goal(planner, start, goal, config) {
         return Replan::Reached;
     }
     Replan::Planned(planner.plan_or_truncate(start, goal, config))
@@ -1022,8 +1023,22 @@ fn region_messages(
 }
 
 /// True if within tolerance of the goal on the ground plane and vertically.
-fn is_at_goal(start: Xyz, goal: Xyz, tol: f32, z_tol: f32) -> bool {
-    (start.0 - goal.0).hypot(start.1 - goal.1) < tol && (start.2 - goal.2).abs() < z_tol
+/// The goal's height is that of the surface it plans to, or its own z when it
+/// snaps to none.
+fn is_at_goal(planner: &Planner, start: Xyz, goal: Xyz, config: &Config) -> bool {
+    if (start.0 - goal.0).hypot(start.1 - goal.1) >= config.goal_tolerance {
+        return false;
+    }
+    let goal_z = snap_pose_to_cell(
+        &planner.graph().surface_lookup,
+        goal,
+        config.voxel_size,
+        config.robot_height,
+    )
+    .map_or(goal.2, |(ix, iy, iz)| {
+        surface_point_xyz(ix, iy, iz, config.voxel_size).2
+    });
+    (start.2 - goal_z).abs() < config.goal_z_tolerance
 }
 
 fn same_stamp(a: &Time, b: &Time) -> bool {
@@ -1253,13 +1268,6 @@ fn read_f32_le(buf: &[u8], off: usize) -> f32 {
 mod tests {
     use super::*;
 
-    #[test]
-    fn is_at_goal_respects_the_planar_and_vertical_tolerances() {
-        assert!(is_at_goal((0.0, 0.0, 0.0), (0.05, 0.0, 0.4), 0.1, 0.5));
-        assert!(!is_at_goal((0.0, 0.0, 0.0), (0.05, 0.0, 9.0), 0.1, 0.5));
-        assert!(!is_at_goal((0.0, 0.0, 0.0), (0.2, 0.0, 0.0), 0.1, 0.5));
-    }
-
     fn test_config() -> Config {
         Config {
             world_frame: "odom".into(),
@@ -1307,6 +1315,30 @@ mod tests {
             &test_config(),
         );
         assert_eq!(outcome, Replan::Reached);
+    }
+
+    #[test]
+    fn a_goal_above_the_floor_it_snaps_to_is_reached_on_arrival() {
+        let config = Config {
+            robot_height: 0.65,
+            ..test_config()
+        };
+        let cell = config.voxel_size;
+        // A 6 m by 2 m floor whose top is one cell up.
+        let floor: Vec<Xyz> = (0..60)
+            .flat_map(|ix| {
+                (0..20).map(move |iy| ((ix as f32 + 0.5) * cell, (iy as f32 + 0.5) * cell, 0.05))
+            })
+            .collect();
+        let mut planner = Planner::new(1);
+        planner.update_global_map(&floor, &config);
+        // Further above the floor than goal_z_tolerance, yet within the snap.
+        let goal = (5.0, 1.0, cell + 0.62);
+
+        let far = replan(&mut planner, (1.0, 1.0, cell), goal, &config);
+        assert!(matches!(far, Replan::Planned(Plan::Full(_))), "{far:?}");
+        let arrived = replan(&mut planner, (5.0, 1.0, cell), goal, &config);
+        assert_eq!(arrived, Replan::Reached);
     }
 
     fn stamped(stamp: Time) -> Header {
