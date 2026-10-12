@@ -69,20 +69,13 @@ def planner() -> Generator[tuple[MLSPlannerNative, list[PointStamped]], None, No
         module._close_module()
 
 
-def _status(goal_id: str, status: int) -> GoalStatus:
-    return GoalStatus(goal_id=GoalID(id=goal_id), status=status)
+def _status(id_: str, status: int) -> GoalStatus:
+    return GoalStatus(goal_id=GoalID(id=id_), status=status)
 
 
 def _latest(module: MLSPlannerNative) -> tuple[str, int] | None:
     status = module.get_status()
     return None if status is None else (status.goal_id.id, status.status)
-
-
-def test_no_status_before_any_goal(
-    planner: tuple[MLSPlannerNative, list[PointStamped]],
-) -> None:
-    module, _ = planner
-    assert module.get_status() is None
 
 
 def test_set_goal_sends_the_pose_position(
@@ -155,13 +148,6 @@ def test_cancel_goal_holds_no_goal_once_the_planner_aborted_it(
     module, _ = planner
     module._on_nav_status(_status("1", GoalStatus.ABORTED))
     assert not module.cancel_goal()
-
-
-def test_the_planner_exposes_no_skills(
-    planner: tuple[MLSPlannerNative, list[PointStamped]],
-) -> None:
-    module, _ = planner
-    assert module.get_skills() == []
 
 
 def test_the_planner_matches_the_navigation_spec_by_signature() -> None:

@@ -462,7 +462,7 @@ impl MlsPlanner {
 #[derive(Clone, Debug, PartialEq)]
 struct Report {
     id: GoalId,
-    status: u8,
+    status: i8,
     reason: &'static str,
     remaining_m: Option<f32>,
 }
@@ -471,7 +471,7 @@ impl Report {
     fn new(id: GoalId, status: i8, reason: &'static str) -> Self {
         Self {
             id,
-            status: status as u8,
+            status,
             reason,
             remaining_m: None,
         }
@@ -489,9 +489,8 @@ impl Report {
         })
     }
 
-    /// Whether the goal is over.
     fn is_terminal(&self) -> bool {
-        ![GoalStatus::PENDING, GoalStatus::ACTIVE].contains(&(self.status as i8))
+        ![GoalStatus::PENDING, GoalStatus::ACTIVE].contains(&self.status)
     }
 
     fn message(&self) -> GoalStatus {
@@ -507,7 +506,7 @@ impl Report {
                 },
                 id: format!("{}.{:09}", self.id.sec, self.id.nsec),
             },
-            status: self.status,
+            status: self.status as u8,
             text,
         }
     }

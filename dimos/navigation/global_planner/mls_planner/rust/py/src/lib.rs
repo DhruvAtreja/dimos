@@ -98,7 +98,7 @@ impl MLSPlanner {
             wall_buffer_weight,
             step_threshold_m,
             step_penalty_weight,
-            // Unused here. Only the binary's replan loop reads the goal tolerances.
+            // Unused here. Only the binary's replan loop reads the goal tolerances and blocked timeout.
             goal_tolerance: 1.0,
             goal_z_tolerance: 1.0,
             blocked_timeout_s: 0.0,
