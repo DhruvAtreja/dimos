@@ -221,7 +221,7 @@ impl MLSPlanner {
         let graph = self.planner.graph();
         let positions: Vec<f32> = py.allow_threads(|| {
             let mut out: Vec<f32> = Vec::with_capacity(graph.nodes.len() * 3);
-            for n in &graph.nodes {
+            for n in graph.nodes.iter() {
                 out.push(n.pos.0);
                 out.push(n.pos.1);
                 out.push(n.pos.2);

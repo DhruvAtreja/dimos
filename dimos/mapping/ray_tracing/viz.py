@@ -65,7 +65,7 @@ def render_map_region(
     voxel_size: float,
     height_range: tuple[float, float],
 ) -> RerunMulti:
-    """One region of the voxel map on its own static entity, empty when the region emptied."""
+    """One cell of the voxel map on its own static entity, empty when the cell emptied."""
     cell = voxel_map_points(msg.points_f32(), voxel_size, height_range)
     return [RerunEntry(region_entity(MAP_REGIONS_ENTITY, msg.seq), cell, static=True)]
 

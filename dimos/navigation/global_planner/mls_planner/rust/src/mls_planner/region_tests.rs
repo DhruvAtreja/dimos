@@ -1386,7 +1386,7 @@ fn assert_chains_reach_their_nodes(p: &Planner) {
             assert!(steps < 10_000, "chain of {:?} loops", g.cells.coord(id));
         }
         assert!(
-            g.node_index.has(cur),
+            g.nodes.has(cur),
             "chain of {:?} ends off a node at {:?}",
             g.cells.coord(id),
             g.cells.coord(cur)

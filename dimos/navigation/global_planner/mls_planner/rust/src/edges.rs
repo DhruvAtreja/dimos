@@ -27,15 +27,10 @@ use smallvec::SmallVec;
 use crate::adjacency::{CellId, SurfaceCells, SurfaceLookup, NO_CELL};
 use crate::dijkstra::{
     dijkstra, dijkstra_clusters, reattach_descendants, stranded, walk_preds, ClusterIndex,
-    DijkstraState, Frontier, Weight,
+    DijkstraState, Frontier, RepairWindow, Weight,
 };
-use crate::nodes::{NodeData, NodeIndex, NodeScratch};
+use crate::nodes::{NodeId, NodeScratch, Nodes};
 use crate::voxel::VoxelKey;
-
-/// A node is identified by the CellId it sits on. Stable across incremental
-/// updates so cached edges and the Voronoi forest survive a regional rebuild.
-pub type NodeId = CellId;
-pub const NO_NODE: NodeId = NO_CELL;
 
 /// Index into the planner graph node edges.
 pub type NodeEdgeIdx = u32;
@@ -144,14 +139,6 @@ fn corridor_cost(cells: &SurfaceCells, edge: &NodeEdge) -> Option<f32> {
     Some(total)
 }
 
-/// The cells a repair re-labels, split into the connected clusters the
-/// searches run over, with the cluster index assigned for them.
-pub struct RepairWindow<'a> {
-    pub cells: &'a [CellId],
-    pub clusters: &'a [Vec<CellId>],
-    pub index: &'a ClusterIndex,
-}
-
 /// The node graph's edges, their per-node adjacency, and per surface cell
 /// slot the edges whose corridor runs through it.
 #[derive(Default)]
@@ -166,7 +153,6 @@ impl NodeEdges {
         &self.edges
     }
 
-    /// The edges touching a node.
     pub fn adjacent(&self, node: NodeId) -> &[NodeEdgeIdx] {
         self.adj.get(&node).map_or(&[], Vec::as_slice)
     }
@@ -187,7 +173,6 @@ impl NodeEdges {
         }
     }
 
-    /// The edge between two nodes, if any.
     pub fn between(&self, a: NodeId, b: NodeId) -> Option<NodeEdgeIdx> {
         self.adj.get(&a)?.iter().copied().find(|&i| {
             let e = &self.edges[i as usize];
@@ -208,20 +193,22 @@ impl NodeEdges {
             list.clear();
         }
         self.ensure_capacity(cells.slot_capacity());
-        for (i, e) in self.edges.iter().enumerate() {
-            let i = i as NodeEdgeIdx;
-            self.adj.entry(e.a).or_default().push(i);
-            self.adj.entry(e.b).or_default().push(i);
-            Self::index_chain(&mut self.through, cells, i, &e.chain);
+        for i in 0..self.edges.len() {
+            self.index_edge(cells, i as NodeEdgeIdx);
         }
     }
 
     fn push(&mut self, cells: &SurfaceCells, edge: NodeEdge) {
-        let i = self.edges.len() as NodeEdgeIdx;
-        self.adj.entry(edge.a).or_default().push(i);
-        self.adj.entry(edge.b).or_default().push(i);
-        Self::index_chain(&mut self.through, cells, i, &edge.chain);
         self.edges.push(edge);
+        self.index_edge(cells, (self.edges.len() - 1) as NodeEdgeIdx);
+    }
+
+    /// List an edge under its two nodes and its corridor cells.
+    fn index_edge(&mut self, cells: &SurfaceCells, i: NodeEdgeIdx) {
+        let e = &self.edges[i as usize];
+        self.adj.entry(e.a).or_default().push(i);
+        self.adj.entry(e.b).or_default().push(i);
+        Self::index_chain(&mut self.through, cells, i, &e.chain);
     }
 
     /// Swap in a new corridor for the same node pair.
@@ -245,6 +232,100 @@ impl NodeEdges {
                 if let Some(slot) = cells.id(c) {
                     if let Some(x) = self.through[slot as usize].iter_mut().find(|x| **x == last) {
                         *x = i;
+                    }
+                }
+            }
+        }
+    }
+
+    /// The edges a repair has to revisit, highest index first: every edge of
+    /// a gone node, flagged, and every edge whose corridor runs through a
+    /// window or removed cell.
+    fn touched(
+        &mut self,
+        window: &[CellId],
+        removed: &[CellId],
+        gone: &[NodeId],
+    ) -> Vec<(NodeEdgeIdx, bool)> {
+        let mut work: Vec<(NodeEdgeIdx, bool)> = Vec::new();
+        for g in gone {
+            if let Some(list) = self.adj.remove(g) {
+                work.extend(list.into_iter().map(|i| (i, true)));
+            }
+        }
+        for &c in window.iter().chain(removed) {
+            work.extend(self.through[c as usize].iter().map(|&i| (i, false)));
+        }
+        for &r in removed {
+            self.through[r as usize].clear();
+        }
+        work.sort_unstable_by(|x, y| y.cmp(x));
+        work.dedup_by_key(|x| x.0);
+        work
+    }
+
+    /// Drop the edges of gone nodes, and re-price the touched corridors or
+    /// drop the ones that broke. Returns a node of every broken corridor.
+    fn reprice_or_drop(
+        &mut self,
+        cells: &SurfaceCells,
+        window: &[CellId],
+        removed: &[CellId],
+        gone: &[NodeId],
+    ) -> Vec<NodeId> {
+        self.ensure_capacity(cells.slot_capacity());
+        let work = self.touched(window, removed, gone);
+        let costs: Vec<Option<f32>> = {
+            let edges = &self.edges;
+            work.par_iter()
+                .map(|&(i, doomed)| {
+                    if doomed {
+                        None
+                    } else {
+                        corridor_cost(cells, &edges[i as usize])
+                    }
+                })
+                .collect()
+        };
+        // Descending order keeps swap_remove from moving an edge still to be
+        // visited.
+        let mut broken: Vec<NodeId> = Vec::new();
+        for ((i, doomed), cost) in work.into_iter().zip(costs) {
+            match cost {
+                Some(cost) => self.edges[i as usize].cost = cost,
+                None => {
+                    if !doomed {
+                        broken.push(self.edges[i as usize].a);
+                    }
+                    self.swap_remove(cells, i);
+                }
+            }
+        }
+        broken
+    }
+
+    /// Take the fresh crossings in: a new node pair gets its edge, and a
+    /// known pair switches corridor only when the new one is clearly cheaper.
+    fn adopt_crossings(
+        &mut self,
+        cells: &SurfaceCells,
+        state: &DijkstraState,
+        mut crossings: Vec<NodeEdge>,
+    ) {
+        crossings.sort_unstable_by_key(|e| (e.a, e.b));
+        for mut e in crossings {
+            match self.between(e.a, e.b) {
+                Some(i) => {
+                    let limit = CORRIDOR_ADOPT_FRAC * self.edges[i as usize].cost;
+                    // The estimate gates the walk, the walked price decides.
+                    let walked = e.cost < limit && capture_priced(cells, state, &mut e);
+                    if walked && e.cost < limit {
+                        self.replace(cells, i, e);
+                    }
+                }
+                None => {
+                    if capture_priced(cells, state, &mut e) {
+                        self.push(cells, e);
                     }
                 }
             }
@@ -310,7 +391,7 @@ impl NodeEdges {
 pub struct PlannerGraph {
     pub cells: SurfaceCells,
     pub surface_lookup: SurfaceLookup,
-    pub nodes: Vec<NodeData>,
+    pub nodes: Nodes,
     pub node_edges: NodeEdges,
     /// Each cell's nearest node and the predecessor back toward it. The planner
     /// walks these to expand a node-to-node edge into its cell path.
@@ -319,9 +400,7 @@ pub struct PlannerGraph {
     pub wall_state: DijkstraState,
     /// Reusable dense scratch for node placement, shared across region frames.
     pub node_scratch: NodeScratch,
-    /// Which cell holds which node, and node cells by spacing bin.
-    pub node_index: NodeIndex,
-    /// The repair window's clusters, assigned for the duration of a repair.
+    /// Reusable storage for a repair window's clusters.
     pub cluster_index: ClusterIndex,
 }
 
@@ -335,7 +414,7 @@ impl PlannerGraph {
 /// Voronoi region boundaries.
 pub fn build_node_edges(
     cells: &SurfaceCells,
-    nodes: &[NodeData],
+    nodes: &Nodes,
     state: &mut DijkstraState,
     out: &mut NodeEdges,
 ) {
@@ -354,11 +433,9 @@ pub fn build_node_edges(
 }
 
 /// Repair the node edges inside a window to match what a full build gives.
-#[allow(clippy::too_many_arguments)]
 pub fn build_node_edges_region(
     cells: &SurfaceCells,
-    nodes: &[NodeData],
-    index: &NodeIndex,
+    nodes: &Nodes,
     window: &RepairWindow,
     removed: &[CellId],
     gone: &[NodeId],
@@ -370,121 +447,79 @@ pub fn build_node_edges_region(
         out.clear();
         return;
     }
+    let reattached = relabel_window(cells, nodes, window, state);
+    // A gone id that is live again was reused by a new node, which needs the
+    // same rescan as a broken corridor to get its edges outside the window back.
+    let mut rescan: Vec<NodeId> = gone.to_vec();
+    rescan.extend(out.reprice_or_drop(cells, window.cells(), removed, gone));
+    let scan = scan_cells(cells, nodes, state, window, &reattached, rescan);
+    let crossings: Vec<NodeEdge> = boundary_edge_map(cells, state, &scan)
+        .into_values()
+        .filter(|e| nodes.has(e.a) && nodes.has(e.b))
+        .collect();
+    out.adopt_crossings(cells, state, crossings);
+}
+
+/// Re-label the window from the nodes in and around it, then the cells
+/// outside it that hung off a re-labeled cell. Returns the cells re-searched
+/// beyond the cluster searches.
+fn relabel_window(
+    cells: &SurfaceCells,
+    nodes: &Nodes,
+    window: &RepairWindow,
+    state: &mut DijkstraState,
+) -> Vec<CellId> {
     let sources: Vec<CellId> = window
-        .cells
+        .cells()
         .iter()
         .copied()
-        .filter(|&w| index.has(w))
+        .filter(|&w| nodes.has(w))
         .collect();
     let changed = dijkstra_clusters(
         cells,
         &sources,
-        window.clusters,
-        window.index,
+        window.clusters(),
+        window.index(),
         state,
         Weight::Penalized,
-        Frontier::Chained(&|c| index.has(c)),
+        Frontier::Chained(&|c| nodes.has(c)),
     );
-    let unreached = stranded(cells, window.cells, state, Weight::Penalized);
-    let reattached = reattach_descendants(
+    let unreached = stranded(cells, window.cells(), state, Weight::Penalized);
+    reattach_descendants(
         cells,
         &changed,
         &unreached,
-        window.index,
+        window.index(),
         state,
         Weight::Penalized,
-    );
-    out.ensure_capacity(cells.slot_capacity());
+    )
+}
 
-    // A gone node's edges go whatever their corridors say. Descending order
-    // keeps swap_remove from moving an edge still to be visited.
-    let mut work: Vec<(NodeEdgeIdx, bool)> = Vec::new();
-    for g in gone {
-        if let Some(list) = out.adj.remove(g) {
-            work.extend(list.into_iter().map(|i| (i, true)));
-        }
-    }
-    for &c in window.cells.iter().chain(removed) {
-        work.extend(out.through[c as usize].iter().map(|&i| (i, false)));
-    }
-    for &r in removed {
-        out.through[r as usize].clear();
-    }
-    work.sort_unstable_by(|x, y| y.cmp(x));
-    work.dedup_by_key(|x| x.0);
-    // Corridors are priced in parallel, then applied in order. A removal only
-    // moves an edge from above the ones still to be visited.
-    let costs: Vec<Option<f32>> = {
-        let edges = &out.edges;
-        work.par_iter()
-            .map(|&(i, doomed)| {
-                if doomed {
-                    None
-                } else {
-                    corridor_cost(cells, &edges[i as usize])
-                }
-            })
-            .collect()
-    };
-    // A gone id that is live again was reused by a new node, which needs the
-    // same rescan to get its edges outside the window back.
-    let mut broken: Vec<NodeId> = gone.to_vec();
-    for ((i, doomed), cost) in work.into_iter().zip(costs) {
-        let e = &out.edges[i as usize];
-        let a = e.a;
-        if doomed {
-            out.swap_remove(cells, i);
-            continue;
-        }
-        match cost {
-            Some(cost) if cost == e.cost => {}
-            Some(cost) => {
-                out.edges[i as usize].cost = cost;
-            }
-            None => {
-                broken.push(a);
-                out.swap_remove(cells, i);
-            }
-        }
-    }
-
-    // A broken corridor's nodes may still touch outside the window, so one
-    // endpoint's whole region joins the scan to give the pair its edge back.
+/// The cells to scan for boundary crossings: the window, the re-searched
+/// cells outside it, and the whole region of each node to rescan. A broken
+/// corridor's nodes may still touch outside the window, and the region scan
+/// gives the pair its edge back.
+fn scan_cells(
+    cells: &SurfaceCells,
+    nodes: &Nodes,
+    state: &DijkstraState,
+    window: &RepairWindow,
+    reattached: &[CellId],
+    mut rescan: Vec<NodeId>,
+) -> Vec<CellId> {
     let mut beyond: AHashSet<CellId> = reattached
         .iter()
         .copied()
-        .filter(|&c| !window.index.in_window(c))
+        .filter(|&c| !window.index().in_window(c))
         .collect();
-    broken.sort_unstable();
-    broken.dedup();
-    for a in broken {
-        if index.has(a) {
-            flood_region(cells, state, window.index, a, &mut beyond);
+    rescan.sort_unstable();
+    rescan.dedup();
+    for node in rescan {
+        if nodes.has(node) {
+            flood_region(cells, state, window.index(), node, &mut beyond);
         }
     }
-    let scan: Vec<CellId> = window.cells.iter().copied().chain(beyond).collect();
-    let mut crossings: Vec<NodeEdge> = boundary_edge_map(cells, state, &scan)
-        .into_values()
-        .filter(|e| index.has(e.a) && index.has(e.b))
-        .collect();
-    crossings.sort_unstable_by_key(|e| (e.a, e.b));
-    for mut e in crossings {
-        match out.between(e.a, e.b) {
-            Some(i) => {
-                let limit = CORRIDOR_ADOPT_FRAC * out.edges[i as usize].cost;
-                // The estimate gates the walk, the walked price decides.
-                let walked = e.cost < limit && capture_priced(cells, state, &mut e);
-                if walked && e.cost < limit {
-                    out.replace(cells, i, e);
-                }
-            }
-            None => {
-                if capture_priced(cells, state, &mut e) {
-                    out.push(cells, e);
-                }
-            }
-        }
-    }
+    window.cells().iter().copied().chain(beyond).collect()
 }
 
 fn best_boundary_edges(cells: &SurfaceCells, state: &DijkstraState, out: &mut Vec<NodeEdge>) {
@@ -615,7 +650,6 @@ pub fn edges_to_segments(node_edges: &[NodeEdge]) -> Vec<(VoxelKey, VoxelKey, f3
 mod tests {
     use super::*;
     use crate::adjacency::{build_surface_cells, build_surface_lookup};
-    use crate::dijkstra::window_clusters;
     use crate::nodes::{NodeData, PlacementParams};
     use crate::voxel::surface_point_xyz;
 
@@ -625,7 +659,7 @@ mod tests {
         let mut plg = PlannerGraph::new();
         build_surface_lookup(surface, &mut plg.surface_lookup);
         build_surface_cells(&mut plg.cells, &plg.surface_lookup, VOXEL, 2);
-        plg.nodes = node_cells
+        let list = node_cells
             .iter()
             .map(|&c| {
                 let id = plg.cells.id(c).expect("node cell must be in surface");
@@ -635,7 +669,7 @@ mod tests {
                 }
             })
             .collect();
-        plg.node_index.rebuild(&plg.cells, &plg.nodes, &params());
+        plg.nodes = Nodes::from_list(&plg.cells, list, &params());
         build_node_edges(
             &plg.cells,
             &plg.nodes,
@@ -709,13 +743,14 @@ mod tests {
             }
         }
 
-        plg.nodes = [(0, 0, 0), (5, 0, 0)]
+        let list = [(0, 0, 0), (5, 0, 0)]
             .iter()
             .map(|&c| NodeData {
                 cell_id: plg.cells.id(c).unwrap(),
                 pos: surface_point_xyz(c.0, c.1, c.2, VOXEL),
             })
             .collect();
+        plg.nodes = Nodes::from_list(&plg.cells, list, &params());
         build_node_edges(
             &plg.cells,
             &plg.nodes,
@@ -830,24 +865,14 @@ mod tests {
         let PlannerGraph {
             cells,
             nodes,
-            node_index,
             node_edges,
             cell_state,
             node_scratch,
             cluster_index,
             ..
         } = pg;
-        let clusters = window_clusters(cells, window, &mut node_scratch.seen);
-        cluster_index.assign(cells.slot_capacity(), &clusters);
-        let repair = RepairWindow {
-            cells: window,
-            clusters: &clusters,
-            index: cluster_index,
-        };
-        build_node_edges_region(
-            cells, nodes, node_index, &repair, removed, gone, cell_state, node_edges,
-        );
-        cluster_index.clear(&clusters);
+        let repair = RepairWindow::new(cells, window, cluster_index, &mut node_scratch.seen);
+        build_node_edges_region(cells, nodes, &repair, removed, gone, cell_state, node_edges);
         assert_indexed(cells, node_edges);
     }
 
@@ -893,9 +918,8 @@ mod tests {
             pg.cells.id((2, 5, 0)).unwrap(),
             pg.cells.id((27, 5, 0)).unwrap(),
         );
-        // A corridor cell near the first node goes. The repair window around
-        // it re-labels from the first node and reaches nowhere near the line
-        // where the two regions meet.
+        // A corridor cell near the first node goes, and the repair window
+        // around it reaches nowhere near the line where the two regions meet.
         let broken = pg.node_edges.edges[0].chain[4];
         assert!(broken.0 < 10, "the break is on the first node's side");
         let removed = pg.cells.remove(broken).unwrap();
@@ -921,8 +945,8 @@ mod tests {
         let mut pg = setup(&strip_cells(), &[(0, 0, 0), (10, 0, 0), (19, 0, 0)]);
         assert_eq!(pg.node_edges.len(), 2);
         let gone = pg.cells.id((10, 0, 0)).unwrap();
-        pg.nodes.retain(|n| n.cell_id != gone);
-        pg.node_index.rebuild(&pg.cells, &pg.nodes, &params());
+        let i = pg.nodes.node_at(gone).unwrap();
+        pg.nodes.swap_remove(&pg.cells, &params(), i);
 
         let window: Vec<CellId> = pg.cells.ids().collect();
         repair_region(&mut pg, &window, &[], &[gone]);

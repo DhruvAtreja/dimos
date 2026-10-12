@@ -17,7 +17,7 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
-use crate::mls_planner::{Config, Planner, RegionBounds, DEBUG_LOG_PERIOD};
+use crate::mls_planner::{ms_since, Config, Planner, RegionBounds, DEBUG_LOG_PERIOD};
 use crate::region_viz::{pack_cell, Cell, RegionContent, RegionViz};
 use crate::voxel::{surface_point_xyz, VoxelKey};
 use dimos_module::time::now;
@@ -64,8 +64,7 @@ struct QueuedSeed {
     bounds: PoseStamped,
 }
 
-/// One viz tick's content, read from the graph by the worker and built into
-/// messages and published off it.
+/// One viz tick's content, read by the worker and published off it.
 struct VizBatch {
     regions: Vec<(Cell, RegionContent)>,
     node_points: Vec<Xyz>,
@@ -380,11 +379,11 @@ impl MlsPlanner {
         let replaced = self.pending.lock().expect("pending mutex").replace(update);
         match replaced {
             Some(MapUpdate::Region { received, .. }) => warn!(
-                waited_ms = received.elapsed().as_secs_f64() * 1e3,
-                "A live cloud was replaced by a newer one before the worker took it."
+                waited_ms = ms_since(received),
+                "A live cloud was replaced before the worker took it."
             ),
             Some(MapUpdate::Global { .. }) => {
-                warn!("A global map was replaced by a live cloud before the worker took it.")
+                warn!("A global map was replaced before the worker took it.")
             }
             None => {}
         }
@@ -473,7 +472,7 @@ impl Worker {
             let update = self.pending.lock().expect("pending mutex").take();
             if update.is_some() || goal_changed {
                 if let Some(MapUpdate::Region { received, .. }) = &update {
-                    seed_progress.record_live_wait(received.elapsed().as_secs_f64() * 1e3);
+                    seed_progress.record_live_wait(ms_since(*received));
                 }
                 let live_update = match update {
                     Some(update) => {
@@ -500,7 +499,7 @@ impl Worker {
                 let points = seed.points.len();
                 let region_start = Instant::now();
                 tokio::task::block_in_place(|| self.ingest_seed(&mut planner, seed, &mut viz));
-                let region_ms = region_start.elapsed().as_secs_f64() * 1e3;
+                let region_ms = ms_since(region_start);
                 seed_progress.record(points, region_ms);
                 seed_progress.log_progress(queued);
                 self.publish_viz_if_due(&planner, &mut viz, &mut last_viz_at)
@@ -615,7 +614,7 @@ impl Worker {
                 }
                 debug_throttled!(
                     DEBUG_LOG_PERIOD,
-                    process_ms = process_start.elapsed().as_secs_f64() * 1e3,
+                    process_ms = ms_since(process_start),
                     wait_ms = process_start.duration_since(received).as_secs_f64() * 1e3,
                     points = points.len(),
                     "local region processed"
@@ -678,7 +677,7 @@ impl Worker {
             publish_path(&self.path, &empty_path(&self.config.world_frame, now())).await;
             return;
         }
-        let plan_ms = plan_start.elapsed().as_secs_f64() * 1e3;
+        let plan_ms = ms_since(plan_start);
         let produced = Instant::now();
         let since_last_ms = last_path_at.map_or(-1.0, |t| (produced - t).as_secs_f64() * 1e3);
         *last_path_at = Some(produced);

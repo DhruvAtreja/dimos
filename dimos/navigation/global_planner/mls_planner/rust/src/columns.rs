@@ -20,6 +20,7 @@ use ahash::AHashMap;
 use rayon::prelude::*;
 use smallvec::SmallVec;
 
+use crate::bit_grid::BitGrid;
 use crate::voxel::VoxelKey;
 
 /// Inclusive column window, as x0, x1, y0, y1.
@@ -27,7 +28,7 @@ pub type ColumnWindow = (i32, i32, i32, i32);
 
 const TILE_BITS: i32 = 5;
 /// Columns per tile edge.
-pub const TILE_EDGE: i32 = 1 << TILE_BITS;
+const TILE_EDGE: i32 = 1 << TILE_BITS;
 const TILE_MASK: i32 = TILE_EDGE - 1;
 const TILE_COLUMNS: usize = (TILE_EDGE * TILE_EDGE) as usize;
 
@@ -156,4 +157,282 @@ impl ColumnIz {
             })
         })
     }
+}
+
+/// Dense set of columns over an inclusive box, for change footprints that
+/// dilate by the morphology reach.
+#[derive(Clone)]
+pub struct ColumnMask {
+    x0: i32,
+    y0: i32,
+    grid: BitGrid,
+    /// Inclusive row range holding set bits, so scans skip the rest.
+    rows_set: Option<(usize, usize)>,
+}
+
+impl ColumnMask {
+    /// An empty mask over the box widened by `margin` on every side.
+    pub fn new((x0, x1, y0, y1): ColumnWindow, margin: i32) -> Self {
+        let width = (x1 - x0 + 1 + 2 * margin).max(0) as usize;
+        let height = (y1 - y0 + 1 + 2 * margin).max(0) as usize;
+        Self {
+            x0: x0 - margin,
+            y0: y0 - margin,
+            grid: BitGrid::new(width, height),
+            rows_set: None,
+        }
+    }
+
+    fn local(&self, (ix, iy): (i32, i32)) -> Option<(usize, usize)> {
+        let (x, y) = (ix - self.x0, iy - self.y0);
+        (x >= 0 && y >= 0 && (x as usize) < self.grid.width() && (y as usize) < self.grid.height())
+            .then_some((x as usize, y as usize))
+    }
+
+    /// Mark a column. Columns outside the box are ignored.
+    pub fn set(&mut self, col: (i32, i32)) {
+        if let Some((x, y)) = self.local(col) {
+            self.grid.set(x, y);
+            self.rows_set = Some(match self.rows_set {
+                None => (y, y),
+                Some((lo, hi)) => (lo.min(y), hi.max(y)),
+            });
+        }
+    }
+
+    pub fn contains(&self, col: (i32, i32)) -> bool {
+        self.local(col).is_some_and(|(x, y)| self.grid.get(x, y))
+    }
+
+    /// Every column within `r` of a set column, clipped to the box.
+    pub fn dilated(&self, r: i32) -> ColumnMask {
+        let Some((lo, hi)) = self.rows_set else {
+            return self.clone();
+        };
+        let r = r.max(0) as usize;
+        let last_row = self.grid.height() - 1;
+        ColumnMask {
+            x0: self.x0,
+            y0: self.y0,
+            grid: self.grid.square_dilated(r, (lo, hi)),
+            rows_set: Some((lo.saturating_sub(r), (hi + r).min(last_row))),
+        }
+    }
+
+    /// Inclusive bbox of the set columns, None when empty.
+    pub fn bounds(&self) -> Option<ColumnWindow> {
+        let mut bb: Option<ColumnWindow> = None;
+        for y in self.rows() {
+            let Some((xmin, xmax)) = self.grid.row_span(y) else {
+                continue;
+            };
+            let (ix0, ix1, iy) = (
+                self.x0 + xmin as i32,
+                self.x0 + xmax as i32,
+                self.y0 + y as i32,
+            );
+            bb = Some(match bb {
+                None => (ix0, ix1, iy, iy),
+                Some((bx0, bx1, by0, by1)) => {
+                    (bx0.min(ix0), bx1.max(ix1), by0.min(iy), by1.max(iy))
+                }
+            });
+        }
+        bb
+    }
+
+    /// Row indices that may hold set columns.
+    pub fn rows(&self) -> std::ops::Range<usize> {
+        match self.rows_set {
+            Some((lo, hi)) => lo..hi + 1,
+            None => 0..0,
+        }
+    }
+
+    /// The set columns of one row.
+    pub fn row_columns(&self, row: usize) -> impl Iterator<Item = (i32, i32)> + '_ {
+        let iy = self.y0 + row as i32;
+        self.grid
+            .row_cells(row)
+            .map(move |x| (self.x0 + x as i32, iy))
+    }
+}
+
+/// The heights a repair's edits added or removed per column, sorted, and the
+/// columns that gained their first voxel or lost their last.
+#[derive(Default)]
+pub struct VoxelEdits {
+    pub changed: Vec<((i32, i32), Vec<i32>)>,
+    pub flipped: Vec<(i32, i32)>,
+}
+
+impl VoxelEdits {
+    pub fn is_empty(&self) -> bool {
+        self.changed.is_empty() && self.flipped.is_empty()
+    }
+
+    /// Every column with a voxel edit.
+    pub fn columns(&self) -> impl Iterator<Item = (i32, i32)> + '_ {
+        let changed = self.changed.iter().map(|&(col, _)| col);
+        changed.chain(self.flipped.iter().copied())
+    }
+}
+
+/// One column's voxel changes from a region update.
+pub struct ColumnEdit {
+    pub col: (i32, i32),
+    pub removed: Vec<i32>,
+    pub added: Vec<i32>,
+}
+
+/// Incoming voxels bucketed by column over a column bbox, each column's z
+/// values sorted and deduped.
+pub struct ColumnBuckets {
+    x0: i32,
+    y0: i32,
+    width: usize,
+    height: usize,
+    bands: Vec<Band>,
+}
+
+/// The columns of TILE_EDGE consecutive rows of a bbox.
+struct Band {
+    starts: Vec<usize>,
+    lens: Vec<usize>,
+    zs: Vec<i32>,
+}
+
+const BAND_ROWS: usize = TILE_EDGE as usize;
+
+impl ColumnBuckets {
+    pub fn new(keys: &[VoxelKey], (x0, x1, y0, y1): ColumnWindow) -> Self {
+        let width = (x1 - x0 + 1).max(0) as usize;
+        let height = (y1 - y0 + 1).max(0) as usize;
+        let n_bands = height.div_ceil(BAND_ROWS);
+        let band_of = |&(_, iy, _): &VoxelKey| {
+            let y = iy - y0;
+            debug_assert!(y >= 0 && (y as usize) < height);
+            y as usize / BAND_ROWS
+        };
+        let grouped: Vec<Vec<VoxelKey>> = keys
+            .par_iter()
+            .fold(
+                || vec![Vec::new(); n_bands],
+                |mut groups, k| {
+                    groups[band_of(k)].push(*k);
+                    groups
+                },
+            )
+            .reduce(
+                || vec![Vec::new(); n_bands],
+                |mut a, b| {
+                    for (into, from) in a.iter_mut().zip(b) {
+                        into.extend(from);
+                    }
+                    a
+                },
+            );
+        let bands: Vec<Band> = grouped
+            .into_par_iter()
+            .enumerate()
+            .map(|(bi, band_keys)| {
+                let rows = BAND_ROWS.min(height - bi * BAND_ROWS);
+                Band::new(&band_keys, x0, y0 + (bi * BAND_ROWS) as i32, width, rows)
+            })
+            .collect();
+        Self {
+            x0,
+            y0,
+            width,
+            height,
+            bands,
+        }
+    }
+
+    /// The sorted z values a column received, empty outside the bbox.
+    pub fn column(&self, (ix, iy): (i32, i32)) -> &[i32] {
+        let (x, y) = (ix - self.x0, iy - self.y0);
+        if x < 0 || y < 0 || x as usize >= self.width || y as usize >= self.height {
+            return &[];
+        }
+        let (x, y) = (x as usize, y as usize);
+        self.bands[y / BAND_ROWS].column(x, y % BAND_ROWS, self.width)
+    }
+}
+
+impl Band {
+    fn new(keys: &[VoxelKey], x0: i32, y0: i32, width: usize, rows: usize) -> Self {
+        let n = width * rows;
+        let index = |&(ix, iy, _): &VoxelKey| (iy - y0) as usize * width + (ix - x0) as usize;
+        let mut starts = vec![0usize; n + 1];
+        for k in keys {
+            starts[index(k) + 1] += 1;
+        }
+        for i in 0..n {
+            starts[i + 1] += starts[i];
+        }
+        let mut fill = starts.clone();
+        let mut zs = vec![0i32; keys.len()];
+        for k in keys {
+            let i = index(k);
+            zs[fill[i]] = k.2;
+            fill[i] += 1;
+        }
+        let mut lens = vec![0usize; n];
+        for i in 0..n {
+            let col = &mut zs[starts[i]..starts[i + 1]];
+            col.sort_unstable();
+            let mut kept = 0;
+            for j in 0..col.len() {
+                if kept == 0 || col[j] != col[kept - 1] {
+                    col[kept] = col[j];
+                    kept += 1;
+                }
+            }
+            lens[i] = kept;
+        }
+        Self { starts, lens, zs }
+    }
+
+    fn column(&self, x: usize, row: usize, width: usize) -> &[i32] {
+        let i = row * width + x;
+        &self.zs[self.starts[i]..self.starts[i] + self.lens[i]]
+    }
+}
+
+/// Merge a column's current voxels inside the region against its new ones.
+/// None when nothing changed.
+pub fn diff_column(
+    col: (i32, i32),
+    old: &[i32],
+    new: &[i32],
+    in_region: impl Fn(VoxelKey) -> bool,
+) -> Option<ColumnEdit> {
+    let (ix, iy) = col;
+    let mut removed: Vec<i32> = Vec::new();
+    let mut added: Vec<i32> = Vec::new();
+    let mut new_iter = new.iter().copied().peekable();
+    for &iz in old {
+        if !in_region((ix, iy, iz)) {
+            continue;
+        }
+        while let Some(&nz) = new_iter.peek() {
+            if nz >= iz {
+                break;
+            }
+            added.push(nz);
+            new_iter.next();
+        }
+        if new_iter.peek() == Some(&iz) {
+            new_iter.next();
+        } else {
+            removed.push(iz);
+        }
+    }
+    added.extend(new_iter);
+    (!removed.is_empty() || !added.is_empty()).then_some(ColumnEdit {
+        col,
+        removed,
+        added,
+    })
 }

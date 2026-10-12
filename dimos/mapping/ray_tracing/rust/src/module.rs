@@ -46,8 +46,8 @@ enum Job {
 const JOB_QUEUE_CAPACITY: usize = 256;
 
 /// How long a load may go without a tile, with live clouds keeping the
-/// worker busy, before it is reported as stalled.
-const SEED_STALL_WARN_AFTER: Duration = Duration::from_secs(5);
+/// worker busy, before it is reported as starved.
+const SEED_STARVED_WARN_AFTER: Duration = Duration::from_secs(5);
 
 #[derive(Module)]
 #[module(name = "ray_tracing", setup = spawn_worker, teardown = stop_worker)]
@@ -213,6 +213,11 @@ impl SeedLoad {
         Some(region.cylinder)
     }
 
+    /// Whether live clouds have kept the worker from a tile for too long.
+    fn starved(&self) -> bool {
+        self.last_tile_at.elapsed() >= SEED_STARVED_WARN_AFTER
+    }
+
     fn finished(&self) -> bool {
         self.next_region >= self.regions.len()
     }
@@ -255,6 +260,21 @@ struct State {
     last_frame_stamp: Time,
     seed: SeedState,
     viz: RegionSweep,
+}
+
+fn warn_if_seed_starved(seed: &SeedState) {
+    let SeedState::Loading(load) = seed else {
+        return;
+    };
+    if load.starved() {
+        warn_throttled!(
+            SEED_STARVED_WARN_AFTER,
+            tiles_done = load.tiles_done,
+            tiles = load.tile_count,
+            max_live_wait_ms = load.max_live_wait_ms,
+            "Premap load is starved: live clouds have kept the worker busy since the last tile.",
+        );
+    }
 }
 
 /// Owns the mapper and does every map mutation and publish off the handle
@@ -311,17 +331,7 @@ impl Worker {
         match job {
             Job::Lidar(msg, received) => {
                 self.ingest_frame(state, msg, received).await;
-                if let SeedState::Loading(load) = &state.seed {
-                    if load.last_tile_at.elapsed() >= SEED_STALL_WARN_AFTER {
-                        warn_throttled!(
-                            SEED_STALL_WARN_AFTER,
-                            tiles_done = load.tiles_done,
-                            tiles = load.tile_count,
-                            max_live_wait_ms = load.max_live_wait_ms,
-                            "Premap load is stalled: live clouds have kept the worker busy since the last tile.",
-                        );
-                    }
-                }
+                warn_if_seed_starved(&state.seed);
             }
             Job::LoadedMap(msg) => self.place_loaded_map(state, msg).await,
             Job::SeedPrepared(partition) => {

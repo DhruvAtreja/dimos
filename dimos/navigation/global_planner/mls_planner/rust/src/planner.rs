@@ -18,9 +18,10 @@ use ahash::{AHashMap, AHashSet};
 
 use crate::adjacency::{rise, CellId, SurfaceCells, SurfaceLookup};
 use crate::dijkstra::{walk_preds, Scored};
-use crate::edges::{NodeId, PlannerGraph, NO_NODE};
+use crate::edges::PlannerGraph;
 use crate::mls_planner::Config;
 use crate::nodes::penalty_of;
+use crate::nodes::{NodeId, NO_NODE};
 use crate::voxel::{surface_point_xyz, VoxelKey};
 
 /// Robot-rooted candidate search radius, in multiples of node spacing.
@@ -846,7 +847,7 @@ mod tests {
     use super::*;
     use crate::adjacency::{build_surface_cells, build_surface_lookup};
     use crate::edges::build_node_edges;
-    use crate::nodes::NodeData;
+    use crate::nodes::{NodeData, Nodes};
 
     const VOXEL: f32 = 0.1;
     const Z_TOL: f32 = 1.5;
@@ -855,7 +856,7 @@ mod tests {
         let mut plg = PlannerGraph::new();
         build_surface_lookup(surface_cells, &mut plg.surface_lookup);
         build_surface_cells(&mut plg.cells, &plg.surface_lookup, VOXEL, 2);
-        plg.nodes = node_cells
+        let list = node_cells
             .iter()
             .map(|&c| {
                 let id = plg.cells.id(c).expect("node cell must be in surface");
@@ -865,6 +866,8 @@ mod tests {
                 }
             })
             .collect();
+        let params = truncate_config().placement_params();
+        plg.nodes = Nodes::from_list(&plg.cells, list, &params);
         build_node_edges(
             &plg.cells,
             &plg.nodes,

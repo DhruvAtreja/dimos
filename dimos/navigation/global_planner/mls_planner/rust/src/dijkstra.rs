@@ -164,6 +164,49 @@ pub fn window_clusters(
     clusters
 }
 
+/// The cells a repair re-labels, split into the connected clusters the
+/// searches run over. The cluster index is assigned while it lives.
+pub struct RepairWindow<'a> {
+    cells: &'a [CellId],
+    clusters: Vec<Vec<CellId>>,
+    index: &'a mut ClusterIndex,
+}
+
+impl<'a> RepairWindow<'a> {
+    pub fn new(
+        cells: &SurfaceCells,
+        window: &'a [CellId],
+        index: &'a mut ClusterIndex,
+        seen: &mut Vec<bool>,
+    ) -> Self {
+        let clusters = window_clusters(cells, window, seen);
+        index.assign(cells.slot_capacity(), &clusters);
+        Self {
+            cells: window,
+            clusters,
+            index,
+        }
+    }
+
+    pub fn cells(&self) -> &[CellId] {
+        self.cells
+    }
+
+    pub fn clusters(&self) -> &[Vec<CellId>] {
+        &self.clusters
+    }
+
+    pub fn index(&self) -> &ClusterIndex {
+        self.index
+    }
+}
+
+impl Drop for RepairWindow<'_> {
+    fn drop(&mut self) {
+        self.index.clear(&self.clusters);
+    }
+}
+
 const NO_CLUSTER: u32 = u32::MAX;
 
 /// Which cluster each window cell belongs to and its position in it, dense
@@ -175,7 +218,7 @@ pub struct ClusterIndex {
 }
 
 impl ClusterIndex {
-    pub fn assign(&mut self, n_slots: usize, clusters: &[Vec<CellId>]) {
+    fn assign(&mut self, n_slots: usize, clusters: &[Vec<CellId>]) {
         if self.cluster_of.len() < n_slots {
             self.cluster_of.resize(n_slots, NO_CLUSTER);
             self.local.resize(n_slots, 0);
@@ -189,7 +232,7 @@ impl ClusterIndex {
     }
 
     /// Back to all-outside for the next window.
-    pub fn clear(&mut self, clusters: &[Vec<CellId>]) {
+    fn clear(&mut self, clusters: &[Vec<CellId>]) {
         for cluster in clusters {
             for &id in cluster {
                 self.cluster_of[id as usize] = NO_CLUSTER;
@@ -264,10 +307,8 @@ pub fn chain_source(
     None
 }
 
-/// Multi-source Dijkstra over the window, cluster by cluster in parallel. A
-/// cluster's search relaxes only its own cells and reads the cached labels
-/// just outside the window, so the clusters never interact. Returns the
-/// window cells that lost their source or changed it.
+/// Multi-source Dijkstra over the window, one cluster at a time in parallel.
+/// Returns the window cells that lost their source or changed it.
 pub fn dijkstra_clusters(
     cells: &SurfaceCells,
     sources: &[CellId],
@@ -430,9 +471,8 @@ pub fn stranded(
     out
 }
 
-/// Search again, from the settled cells around them, the cells whose cached
-/// chain ran through a changed window cell and the window cells left
-/// unreached. Returns the cells it searched.
+/// Re-search the cells whose cached chain ran through a changed window cell,
+/// plus the unreached window cells. Returns the cells searched.
 pub fn reattach_descendants(
     cells: &SurfaceCells,
     changed: &[CellId],

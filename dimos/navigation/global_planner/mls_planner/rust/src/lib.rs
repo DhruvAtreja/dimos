@@ -13,6 +13,7 @@
 // limitations under the License.
 
 mod adjacency;
+mod bit_grid;
 mod columns;
 mod dijkstra;
 pub mod edges;
