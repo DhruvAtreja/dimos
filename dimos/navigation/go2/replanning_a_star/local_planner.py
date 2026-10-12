@@ -33,6 +33,7 @@ from dimos.navigation.go2.replanning_a_star.navigation_map import NavigationMap
 from dimos.navigation.go2.replanning_a_star.path_clearance import PathClearance
 from dimos.navigation.go2.replanning_a_star.path_distancer import PathDistancer
 from dimos.utils.logging_config import setup_logger
+from dimos.utils.realtime import make_current_thread_periodic
 from dimos.utils.trigonometry import angle_diff
 
 PlannerState: TypeAlias = Literal[
@@ -193,6 +194,7 @@ class LocalPlanner(Resource):
         with self._lock:
             self._change_state(new_state)
 
+        make_current_thread_periodic(1.0 / self._control_frequency)
         while not stop_event.is_set():
             start_time = time.perf_counter()
 

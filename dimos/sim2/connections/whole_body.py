@@ -52,6 +52,9 @@ class WholeBodyConnectionConfig(ModuleConfig):
 
 class WholeBodyConnection(Module):
     config: WholeBodyConnectionConfig
+    # the policy's feedback (200 Hz): sharing a process with planners/mappers lets their GIL time stall it past the
+    # policy's 150 ms watchdog
+    dedicated_worker = True
     motor_command: In[MotorCommandArray]
     motor_states: Out[JointState]
     imu: Out[Imu]

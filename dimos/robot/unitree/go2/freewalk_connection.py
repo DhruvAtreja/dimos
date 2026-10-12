@@ -57,6 +57,9 @@ class Go2FreewalkConnectionConfig(ModuleConfig):
     maximum_forward: float = Field(default=1.0, gt=0)
     maximum_lateral: float = Field(default=0.5, gt=0)
     maximum_yaw: float = Field(default=1.0, gt=0)
+    # The FREE policy barely turns below ~0.25 rad/s (measured in sim2 over 5 s: 0.3 -> 0.08, 0.6 -> 0.33,
+    # 1.0 -> 0.7 rad/s), so a planner's gentle turns stall. A requested turn gets this much added; 0 disables it.
+    yaw_deadband: float = Field(default=0.25, ge=0)
 
 
 class Go2FreewalkConnection(Module):
@@ -110,6 +113,8 @@ class Go2FreewalkConnection(Module):
             limits = np.array(
                 [self.config.maximum_forward, self.config.maximum_lateral, self.config.maximum_yaw]
             )
+            if abs(command[2]) > 0.02:
+                command[2] += np.sign(command[2]) * self.config.yaw_deadband
             self._requested = np.clip(command, -limits, limits)
             self._command_time = time.monotonic()
 
