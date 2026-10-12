@@ -18,6 +18,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 import math
+from pathlib import Path
 import threading
 import time
 from typing import Any
@@ -37,6 +38,7 @@ from dimos.sim2.ipc.abi import (
     FrameLayout,
 )
 from dimos.sim2.ipc.channel import FrameMetadata, RobotChannel
+from dimos.sim2.movers import Movers
 from dimos.sim2.scene import describe_scene, load_scene
 from dimos.sim2.scene_types import EntityState, RegionState, SceneState, SceneUpdate
 from dimos.sim2.sensors.spec import Imu, Lidar, TimedRayPattern
@@ -66,6 +68,7 @@ class SimulationRuntime:
         self.description = describe_scene(config.scene)
         self.model = load_scene(config, self.description)
         self.data = mujoco.MjData(self.model)
+        self.movers = Movers.load(Path(config.scene), self.model)
         self.lock = threading.RLock()
         self.episode = 0
         self.tick = 0
@@ -203,6 +206,7 @@ class SimulationRuntime:
                         else 0.0
                     )
             self._apply_update(self.description.initial)
+            self.movers.apply(self.data)
             self._baseline = np.empty(nstate)
             mujoco.mj_getState(self.model, self.data, self._baseline, STATE)
             self.reset()
@@ -363,6 +367,7 @@ class SimulationRuntime:
                 return
             for binding in self.robots.values():
                 self._apply(binding)
+            self.movers.apply(self.data)
             mujoco.mj_step(self.model, self.data)
             self.tick += 1
             self._publish()
