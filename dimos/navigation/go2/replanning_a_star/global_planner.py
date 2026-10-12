@@ -15,8 +15,8 @@
 import math
 from threading import Event, RLock, Thread, current_thread
 import time
+from typing import NamedTuple
 
-from dimos_lcm.std_msgs import Bool
 import numpy as np
 from reactivex import Subject
 from reactivex.disposable import CompositeDisposable
@@ -43,9 +43,16 @@ from dimos.utils.trigonometry import angle_diff
 logger = setup_logger()
 
 
+class GoalEnd(NamedTuple):
+    """The goal the planner let go of, None when it held none, and whether it arrived."""
+
+    goal: PoseStamped | None
+    arrived: bool
+
+
 class GlobalPlanner(Resource):
     path: Subject[Path]
-    goal_reached: Subject[Bool]
+    goal_ended: Subject[GoalEnd]
 
     _current_odom: PoseStamped | None = None
     _current_goal: PoseStamped | None = None
@@ -75,7 +82,7 @@ class GlobalPlanner(Resource):
 
     def __init__(self, global_config: GlobalConfig) -> None:
         self.path = Subject()
-        self.goal_reached = Subject()
+        self.goal_ended = Subject()
 
         self._global_config = global_config
         self._navigation_map = NavigationMap(self._global_config, "voronoi")
@@ -155,6 +162,7 @@ class GlobalPlanner(Resource):
 
         with self._lock:
             self._position_tracker.reset_data()
+            ended = self._current_goal
 
             if not but_will_try_again:
                 self._current_goal = None
@@ -164,7 +172,7 @@ class GlobalPlanner(Resource):
         self._local_planner.stop_planning()
 
         if not but_will_try_again:
-            self.goal_reached.on_next(Bool(arrived))
+            self.goal_ended.on_next(GoalEnd(ended, arrived))
 
     def set_replanning_enabled(self, enabled: bool) -> None:
         with self._lock:

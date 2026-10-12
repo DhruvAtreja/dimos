@@ -30,7 +30,7 @@ from dimos.msgs.geometry_msgs.Twist import Twist
 from dimos.msgs.nav_msgs.OccupancyGrid import OccupancyGrid
 from dimos.msgs.nav_msgs.Odometry import Odometry
 from dimos.msgs.nav_msgs.Path import Path
-from dimos.navigation.go2.replanning_a_star.global_planner import GlobalPlanner
+from dimos.navigation.go2.replanning_a_star.global_planner import GlobalPlanner, GoalEnd
 from dimos.navigation.go2.replanning_a_star.module_spec import ReplanningAStarPlannerSpec
 from dimos.navigation.spec import goal_id, goal_status
 from dimos.utils.logging_config import setup_logger
@@ -82,7 +82,8 @@ class ReplanningAStarPlanner(Module, ReplanningAStarPlannerSpec):
         self._planner = GlobalPlanner(effective_global_config)
         self._goal: PoseStamped | None = None
         self._status: GoalStatus | None = None
-        self._status_lock = threading.Lock()
+        # Held across a goal change and its reports, so each report names the right goal.
+        self._goal_lock = threading.RLock()
 
     @rpc
     def start(self) -> None:
@@ -115,8 +116,7 @@ class ReplanningAStarPlanner(Module, ReplanningAStarPlannerSpec):
 
         self.register_disposable(self._planner.cmd_vel.subscribe(self.nav_cmd_vel.publish))
 
-        self.register_disposable(self._planner.goal_reached.subscribe(self.goal_reached.publish))
-        self.register_disposable(self._planner.goal_reached.subscribe(self._on_goal_reached))
+        self.register_disposable(self._planner.goal_ended.subscribe(self._on_goal_ended))
         self.register_disposable(
             interval(_STATUS_HEARTBEAT_S).subscribe(lambda _: self._repeat_status())
         )
@@ -140,31 +140,35 @@ class ReplanningAStarPlanner(Module, ReplanningAStarPlannerSpec):
             self.cancel_goal()
 
     def _report(self, goal: PoseStamped, status: int, text: str) -> None:
-        with self._status_lock:
+        with self._goal_lock:
             self._status = goal_status(goal, status, text)
             self.nav_status.publish(self._status)
 
     def _repeat_status(self) -> None:
-        with self._status_lock:
+        with self._goal_lock:
             if self._status is not None:
                 self.nav_status.publish(self._status)
 
     def _on_goal(self, goal: PoseStamped) -> None:
-        held, self._goal = self._goal, goal
-        # A goal sent again keeps its id, so it is not preempted.
-        if held is not None and goal_id(held) != goal_id(goal):
-            self._report(held, GoalStatus.PREEMPTED, "replaced")
-        self._report(goal, GoalStatus.ACTIVE, "navigating")
-        self._planner.handle_goal_request(goal)
+        with self._goal_lock:
+            held, self._goal = self._goal, goal
+            # A goal sent again keeps its id, so it is not preempted.
+            if held is not None and goal_id(held) != goal_id(goal):
+                self._report(held, GoalStatus.PREEMPTED, "replaced")
+            self._report(goal, GoalStatus.ACTIVE, "navigating")
+            self._planner.handle_goal_request(goal)
 
-    def _on_goal_reached(self, msg: Bool) -> None:
-        goal, self._goal = self._goal, None
-        if goal is None:
-            return
-        if msg.data:
-            self._report(goal, GoalStatus.SUCCEEDED, "reached")
-        else:
-            self._report(goal, GoalStatus.ABORTED, "navigation failed")
+    def _on_goal_ended(self, end: GoalEnd) -> None:
+        self.goal_reached.publish(Bool(end.arrived))
+        with self._goal_lock:
+            # The planner can end a goal that was replaced or canceled meanwhile.
+            if end.goal is None or end.goal is not self._goal:
+                return
+            self._goal = None
+            if end.arrived:
+                self._report(end.goal, GoalStatus.SUCCEEDED, "reached")
+            else:
+                self._report(end.goal, GoalStatus.ABORTED, "navigation failed")
 
     @rpc
     def set_goal(self, goal: PoseStamped) -> bool:
@@ -173,14 +177,16 @@ class ReplanningAStarPlanner(Module, ReplanningAStarPlannerSpec):
 
     @rpc
     def get_status(self) -> GoalStatus | None:
-        return self._status
+        with self._goal_lock:
+            return self._status
 
     @rpc
     def cancel_goal(self) -> bool:
-        goal, self._goal = self._goal, None
-        if goal is not None:
-            self._report(goal, GoalStatus.PREEMPTED, "canceled")
-        self._planner.cancel_goal()
+        with self._goal_lock:
+            goal, self._goal = self._goal, None
+            if goal is not None:
+                self._report(goal, GoalStatus.PREEMPTED, "canceled")
+            self._planner.cancel_goal()
         return True
 
     @rpc
