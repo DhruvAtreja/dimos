@@ -19,6 +19,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from multiprocessing import resource_tracker
 from multiprocessing.shared_memory import SharedMemory
+import os
 import struct
 from typing import Any, Literal
 
@@ -40,6 +41,7 @@ _OBSERVATION_ACTIVE_OFFSET = 16
 _LIFECYCLE_OFFSET = 20
 _ACTION_SEQUENCE_OFFSET = 24
 _OBSERVATION_SEQUENCE_OFFSET = 32
+_CREATOR_PID_OFFSET = 48
 _EPISODE_OFFSET = 40
 
 LifecycleState = Literal["starting", "ready", "faulted", "closed"]
@@ -95,7 +97,11 @@ class RobotChannel:
 
     @classmethod
     def create(cls, descriptor: ChannelDescriptor) -> RobotChannel:
-        shm = SharedMemory(name=descriptor.shm_name, create=True, size=descriptor.total_size)
+        try:
+            shm = SharedMemory(name=descriptor.shm_name, create=True, size=descriptor.total_size)
+        except FileExistsError:
+            _unlink_if_orphaned(descriptor.shm_name)
+            shm = SharedMemory(name=descriptor.shm_name, create=True, size=descriptor.total_size)
         channel = cls(descriptor, shm, owner=True)
         channel._buffer[: descriptor.total_size] = bytes(descriptor.total_size)
         _HEADER.pack_into(
@@ -327,6 +333,23 @@ class RobotChannel:
 
     def __exit__(self, *_: Any) -> None:
         self.close()
+
+
+def _unlink_if_orphaned(name: str) -> None:
+    """Remove a channel left behind by a crashed run, identified by its dead creator."""
+    stale = SharedMemory(name=name, create=False)
+    try:
+        if bytes(stale.buf[:8]) != CHANNEL_MAGIC:
+            return
+        (creator,) = struct.unpack_from("<Q", stale.buf, _CREATOR_PID_OFFSET)
+        try:
+            os.kill(creator, 0)
+            return  # its creator is alive: a real collision, let create() raise
+        except ProcessLookupError:
+            pass
+        stale.unlink()
+    finally:
+        stale.close()
 
 
 def _resource_tracker_pid() -> int:
