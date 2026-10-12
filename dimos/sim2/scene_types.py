@@ -19,7 +19,15 @@ from __future__ import annotations
 import math
 from typing import Annotated, Any, Literal, Protocol
 
-from pydantic import BaseModel, BeforeValidator, ConfigDict, Field, FiniteFloat, PlainSerializer
+from pydantic import (
+    BaseModel,
+    BeforeValidator,
+    ConfigDict,
+    Field,
+    FiniteFloat,
+    PlainSerializer,
+    PositiveFloat,
+)
 
 from dimos.msgs.geometry_msgs.Pose import Pose
 from dimos.spec.utils import Spec
@@ -87,6 +95,21 @@ class SceneRegion(SceneRecord):
     size: Vec3
 
 
+class MoverSpec(BaseModel):
+    """A scripted obstacle: a mocap body looping along waypoints (see dimos/sim2/movers.py)."""
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    body: str
+    waypoints: tuple[Vec3, ...] = Field(min_length=2)
+    speed: PositiveFloat
+    # "loop" returns from the last waypoint to the first; "pingpong" retraces the path.
+    mode: Literal["loop", "pingpong"] = "loop"
+    # "path" faces the direction of travel (yaw only); "fixed" keeps the body's authored rotation.
+    heading: Literal["path", "fixed"] = "path"
+    phase: FiniteFloat = 0.0  # seconds of travel already done at sim time 0
+
+
 class SceneDescription(SceneRecord):
     format: Literal["dimos.scene.v1"] = "dimos.scene.v1"
     id: str
@@ -97,6 +120,8 @@ class SceneDescription(SceneRecord):
     # Named support poses, independent of robot root height and identity.
     spawns: dict[str, PoseValue] = Field(default_factory=dict)
     hidden_geom_groups: tuple[int, ...] = ()
+    # scripted obstacles, moved every physics step
+    movers: tuple[MoverSpec, ...] = ()
     provenance: dict[str, Any] = Field(default_factory=dict)
 
 

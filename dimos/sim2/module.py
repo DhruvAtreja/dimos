@@ -58,7 +58,7 @@ class SimulationModule(Module):
     config: SimulationModuleConfig
     dedicated_worker = True
     sim_truth: Out[SceneState]
-    # world -> <mover body> for every scripted mover (movers.json), so viewers can draw them moving
+    # world -> <mover body> for every scripted mover (scene.json `movers`), so viewers can draw them moving
     tf: Out[TFMessage]
 
     def __init__(self, **kwargs: Any) -> None:

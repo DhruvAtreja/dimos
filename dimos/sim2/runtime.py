@@ -18,7 +18,6 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 import math
-from pathlib import Path
 import threading
 import time
 from typing import Any
@@ -68,7 +67,7 @@ class SimulationRuntime:
         self.description = describe_scene(config.scene)
         self.model = load_scene(config, self.description)
         self.data = mujoco.MjData(self.model)
-        self.movers = Movers.load(Path(config.scene), self.model)
+        self.movers = Movers.load(self.description, self.model)
         self.lock = threading.RLock()
         self.episode = 0
         self.tick = 0

@@ -54,10 +54,10 @@ def write_scene(root: Path, movers: list[dict]) -> Path:
                     "mover": {"body": "mover", "label": "mover", "kind": "mover"},
                     "crate": {"body": "crate", "label": "crate", "kind": "box", "movable": True},
                 },
+                "movers": movers,
             }
         )
     )
-    (root / "movers.json").write_text(json.dumps({"format": "dimos.movers.v1", "movers": movers}))
     return root / "scene.xml"
 
 

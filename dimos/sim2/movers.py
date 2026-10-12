@@ -14,7 +14,7 @@
 
 """Scripted obstacles: mocap bodies that loop along a waypoint path, set every physics step.
 
-Declared in `movers.json` beside the scene's `scene.xml`. A mover is kinematic: it pushes the robot
+Declared in the scene's `scene.json` (`movers`). A mover is kinematic: it pushes the robot
 and is never pushed back. Its pose is a pure function of sim time, so runs are deterministic and a
 reset (which rewinds sim time) puts every mover back at its start.
 """
@@ -22,35 +22,12 @@ reset (which rewinds sim time) puts every mover back at its start.
 from __future__ import annotations
 
 import math
-from pathlib import Path
-from typing import Literal
 
 import mujoco
 import numpy as np
 from numpy.typing import NDArray
-from pydantic import BaseModel, ConfigDict, Field, FiniteFloat, PositiveFloat
 
-Vec3 = tuple[FiniteFloat, FiniteFloat, FiniteFloat]
-
-
-class MoverSpec(BaseModel):
-    model_config = ConfigDict(frozen=True, extra="forbid")
-
-    body: str
-    waypoints: tuple[Vec3, ...] = Field(min_length=2)
-    speed: PositiveFloat
-    # "loop" returns from the last waypoint to the first; "pingpong" retraces the path.
-    mode: Literal["loop", "pingpong"] = "loop"
-    # "path" faces the direction of travel (yaw only); "fixed" keeps the body's authored rotation.
-    heading: Literal["path", "fixed"] = "path"
-    phase: FiniteFloat = 0.0  # seconds of travel already done at sim time 0
-
-
-class MoversFile(BaseModel):
-    model_config = ConfigDict(frozen=True, extra="forbid")
-
-    format: Literal["dimos.movers.v1"] = "dimos.movers.v1"
-    movers: tuple[MoverSpec, ...] = ()
+from dimos.sim2.scene_types import MoverSpec, SceneDescription
 
 
 class _Track:
@@ -94,13 +71,9 @@ class Movers:
         self.tracks = tracks
 
     @classmethod
-    def load(cls, scene: Path, model: mujoco.MjModel) -> Movers:
-        path = scene.with_name("movers.json")
-        if not path.is_file():
-            return cls([])
-        spec = MoversFile.model_validate_json(path.read_text())
+    def load(cls, description: SceneDescription, model: mujoco.MjModel) -> Movers:
         tracks = []
-        for mover in spec.movers:
+        for mover in description.movers:
             body = model.body(mover.body).id
             mocap_id = int(model.body_mocapid[body])
             if mocap_id < 0:
