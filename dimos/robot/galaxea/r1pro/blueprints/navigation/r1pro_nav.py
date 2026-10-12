@@ -45,7 +45,8 @@ OVERHEAD_CLEARANCE_M = 1.9
 MAX_STEP_HEIGHT_M = 0.03
 
 VOXEL_SIZE_M = 0.07
-WALL_CLEARANCE_M = 0.3
+# A hard limit, so the chassis can turn in place anywhere on a route.
+WALL_CLEARANCE_M = ROTATION_DIAMETER_M / 2
 PLANNER_VIZ_HZ = 0.0
 
 # Head depth kept only in the band from the floor to just above the lidar's plane, what the lidar sees worst;
@@ -59,12 +60,6 @@ HEAD_CLOUD_MAX_HEIGHT_M = 0.35
 HEAD_CLOUD_DECIMATION = 11
 HEAD_CLOUD_MAX_POINTS = 1500
 MAX_CLOUD_AGE_S = 1.0
-
-
-def _render_path(msg: Any) -> Any:
-    if len(msg.poses) == 0:
-        return None
-    return msg
 
 
 # Both clouds share the `lidar` port, so the viewer splits them by frame_id.
@@ -117,7 +112,6 @@ _rerun_config = {
         "world/imu_torso": None,
         "world/r1pro/imu": None,
         "world/region_bounds": None,
-        "world/planner_path": _render_path,
         "world/path": None,
         **planner_visual_override(PLANNER_VIZ_HZ, VOXEL_SIZE_M, WALL_CLEARANCE_M),
     },
@@ -164,7 +158,8 @@ r1pro_nav = autoconnect(
         ]
     ),
     DanLocalPlanner.blueprint(
-        lock_replan=0.4,
+        # No commit window: MLS's obstacle truncations must reach the follower at once.
+        lock_replan=0.0,
         # Keep MLS's 3D waypoints; the 2D resampler zeroes every Z.
         resample_spacing_m=0.0,
     ).remappings([(DanLocalPlanner, "odom", "chassis_odom")]),
