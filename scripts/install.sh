@@ -22,7 +22,7 @@ INSTALLER_VERSION="0.3.0"
 
 # ─── package lists (edit these when dependencies change) ──────────────────────
 UBUNTU_PACKAGES="ca-certificates curl git build-essential portaudio19-dev git-lfs libturbojpeg pre-commit libgl1 libegl1 libglib2.0-0 ffmpeg libsndfile1 pkg-config"
-STEAMOS_PACKAGES="gcc glibc linux-api-headers portaudio pkgconf make"
+STEAMOS_PACKAGES="gcc glibc linux-api-headers portaudio pkgconf make git-lfs"
 MACOS_PACKAGES="gnu-sed gcc portaudio git-lfs libjpeg-turbo pre-commit ffmpeg libsndfile pkg-config"
 
 INSTALL_MODE="${DIMOS_INSTALL_MODE:-}"
@@ -525,11 +525,11 @@ verify_nix_develop() {
 }
 
 # SteamOS strips development headers, even from packages it reports as installed.
-# Reinstall them with the compiler; restore the read-only setting on success or failure.
+# Reinstall them with the compiler (and git-lfs, which SteamOS lacks); restore the read-only setting on success or failure.
 install_steamos_deps() (
     local -a privilege=(/usr/bin/env) packages=()
     if [[ $(id -u) != 0 ]]; then privilege=(sudo); fi
-    if has_cmd cc && has_cmd g++ && has_cmd make && has_cmd pkg-config && \
+    if has_cmd cc && has_cmd g++ && has_cmd make && has_cmd pkg-config && has_cmd git-lfs && \
             [[ -f /usr/include/stdio.h && -f /usr/include/linux/types.h && -f /usr/include/portaudio.h ]] && \
             printf '#include <vector>\nint main() { return std::vector<int>{1}.at(0) - 1; }\n' | \
                 g++ -x c++ -c -o /dev/null - >/dev/null 2>&1; then
@@ -550,6 +550,57 @@ install_steamos_deps() (
     run_cmd "${privilege[@]}" pacman-key --populate archlinux holo
     run_cmd "${privilege[@]}" pacman -S --noconfirm "${packages[@]}"
 )
+
+# A default SDK newer than the linker ("tapi error: unknown architecture") fails every native extension.
+# Build with nixpkgs' clang (own SDK and linker, output links only /usr/lib), else update the Command Line
+# Tools (needs sudo), else build with an older installed SDK that links.
+cxx_links() { c++ -x c++ - -o /dev/null >/dev/null 2>&1 <<< 'int main() { return 0; }'; }
+
+use_nix_compiler() {
+    [[ "$HAS_NIX" == 1 ]] || return 1
+    local clang
+    info "the C++ linker can't use the default macOS SDK; getting nixpkgs' clang..."
+    clang=$(nix --extra-experimental-features 'nix-command flakes' build --no-link --print-out-paths nixpkgs#clang) || return 1
+    PATH="$clang/bin:$PATH" cxx_links || return 1
+    export PATH="$clang/bin:$PATH"
+    warn "building with nixpkgs' clang, since the default macOS SDK doesn't link"
+    dim "  other native builds (e.g. Homebrew's) will fail until the Command Line Tools are updated (softwareupdate --list)"
+}
+
+update_command_line_tools() {
+    local label
+    local -a privilege=(/usr/bin/env)
+    if [[ $(id -u) != 0 ]]; then privilege=(sudo); fi
+    info "the C++ linker can't use the default macOS SDK; checking for a Command Line Tools update..."
+    label=$(softwareupdate --list 2>/dev/null | sed -n 's/^ *\* Label: \(Command Line Tools.*\)$/\1/p' | sort -V | tail -n 1)
+    if [[ -z "$label" ]]; then
+        warn "no Command Line Tools update available"
+        return 1
+    fi
+    prompt_confirm "Install $label (about 1 GB, needs your password)?" yes || return 1
+    run_cmd "${privilege[@]}" softwareupdate --install "$label" --agree-to-license || return 1
+    cxx_links
+}
+
+select_macos_sdk() {
+    has_cmd c++ || return 0
+    cxx_links && return
+    use_nix_compiler && return
+    update_command_line_tools && { ok "Command Line Tools updated"; return; }
+    local sdk developer_dir
+    developer_dir=$(xcode-select -p 2>/dev/null || true)
+    while IFS= read -r sdk; do
+        if SDKROOT="$sdk" cxx_links; then
+            export SDKROOT="$sdk"
+            warn "building with $sdk, since the default macOS SDK doesn't link"
+            dim "  native builds outside this installer will fail until the Command Line Tools are updated (softwareupdate --list)"
+            return
+        fi
+    done < <(find "$developer_dir/SDKs" "$developer_dir/Platforms/MacOSX.platform/Developer/SDKs" \
+        -maxdepth 1 -name 'MacOSX[0-9]*.sdk' 2>/dev/null | sort -rV)
+    { c++ -x c++ - -o /dev/null <<< 'int main() { return 0; }' 2>&1 || true; } | tail -n 5 >&2
+    die "the C++ compiler can't link with any installed macOS SDK; update the Command Line Tools (softwareupdate --list) and re-run"
+}
 
 # ─── system dependencies ─────────────────────────────────────────────────────
 install_system_deps() {
@@ -1027,6 +1078,7 @@ main() {
         export UV_PYTHON_PREFERENCE=only-managed
     fi
     if [[ "$SETUP_METHOD" != "nix" ]]; then install_system_deps; fi
+    if [[ "$DETECTED_OS" == "macos" && "$USE_NIX" != 1 && "$DRY_RUN" != 1 ]]; then select_macos_sdk; fi
     install_uv
 
     if [[ -z "$DETECTED_PYTHON" ]]; then
