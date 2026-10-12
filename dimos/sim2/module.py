@@ -35,6 +35,7 @@ from dimos.sim2.scene_types import SceneDescription, SceneState, SceneUpdate
 from dimos.sim2.spec import WorldConfig
 from dimos.spec.utils import Spec
 from dimos.utils.logging_config import setup_logger
+from dimos.utils.realtime import make_current_thread_periodic
 
 logger = setup_logger()
 
@@ -119,6 +120,7 @@ class SimulationModule(Module):
     def _run(self) -> None:
         runtime = self._runtime
         assert runtime is not None
+        make_current_thread_periodic(self.config.world.timestep)
         deadline = time.monotonic()
         try:
             while not self._stop.is_set():

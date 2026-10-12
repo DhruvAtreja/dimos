@@ -27,6 +27,7 @@ from dimos.core.module import Module, ModuleConfig
 from dimos.sim2.module import SimulationSpec
 from dimos.sim2.sensors.reader import WorldReader
 from dimos.utils.logging_config import setup_logger
+from dimos.utils.realtime import make_current_thread_periodic
 
 logger = setup_logger()
 
@@ -62,6 +63,7 @@ class SensorModule(Module, ABC):
             raise error
 
     def _run(self, description: dict[str, Any]) -> None:
+        make_current_thread_periodic(1.0 / self.config.rate_hz)
         opened = False
         reader_created = False
         try:

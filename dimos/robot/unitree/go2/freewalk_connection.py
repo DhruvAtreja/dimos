@@ -41,6 +41,7 @@ from dimos.msgs.sensor_msgs.Imu import Imu
 from dimos.msgs.sensor_msgs.JointState import JointState
 from dimos.msgs.sensor_msgs.MotorCommandArray import MotorCommandArray
 from dimos.utils.logging_config import setup_logger
+from dimos.utils.realtime import make_current_thread_periodic
 
 logger = setup_logger()
 
@@ -229,6 +230,7 @@ class Go2FreewalkConnection(Module):
         )
 
     def _run(self) -> None:
+        make_current_thread_periodic(0.02)
         deadline = time.monotonic()
         while not self._stop.is_set():
             before = time.monotonic()

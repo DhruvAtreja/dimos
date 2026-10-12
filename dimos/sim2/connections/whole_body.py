@@ -37,6 +37,7 @@ from dimos.msgs.tf2_msgs.TFMessage import TFMessage
 from dimos.sim2.control.adapters import WholeBodyAdapter
 from dimos.sim2.spec import RobotConfig
 from dimos.utils.logging_config import setup_logger
+from dimos.utils.realtime import make_current_thread_periodic
 
 logger = setup_logger()
 
@@ -93,6 +94,7 @@ class WholeBodyConnection(Module):
         )
 
     def _publish(self) -> None:
+        make_current_thread_periodic(1.0 / self.config.rate_hz)
         try:
             while not self._stop.is_set():
                 before = time.monotonic()

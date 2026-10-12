@@ -41,6 +41,7 @@ from dimos.control.task import (
 )
 from dimos.msgs.sensor_msgs.JointState import JointState
 from dimos.utils.logging_config import setup_logger
+from dimos.utils.realtime import make_current_thread_periodic
 
 if TYPE_CHECKING:
     from collections.abc import Callable
@@ -155,6 +156,7 @@ class TickLoop:
     def _loop(self) -> None:
         """Main control loop - deterministic read → compute → arbitrate → write."""
         period_ns = round(1_000_000_000 / self._tick_rate)
+        make_current_thread_periodic(1.0 / self._tick_rate)
         next_tick_time = time.perf_counter_ns()
 
         while not self._stop_event.is_set():
