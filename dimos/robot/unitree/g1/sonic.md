@@ -40,13 +40,12 @@ dimos --transport zenoh shell
 ```
 
 ```python
-c = app.ControlCoordinator
-c.list_tasks()  # ['sonic_wbc', 'joint_trajectory']
-c.task_invoke("sonic_wbc", "state_snapshot")
-c.task_invoke("sonic_wbc", "set_locomotion_mode", {"mode": "SLOW_WALK"})
-c.task_invoke("sonic_wbc", "list_motion_clips")
-c.task_invoke("sonic_wbc", "play_motion_clip", {"name": "macarena_001__A545"})
-c.task_invoke("sonic_wbc", "stop_motion_clip")
+c = app.G1SonicConnection
+c.status()
+c.set_locomotion_mode("SLOW_WALK")
+c.list_motion_clips()
+c.play_motion_clip("macarena_001__A545")
+c.stop_motion_clip()
 c.set_estop(True)
 ```
 
@@ -62,12 +61,12 @@ Hardware starts unarmed with policy outputs in dry-run.
 After checking startup and feedback, the hardware activation RPCs are:
 
 ```python
-c = app.ControlCoordinator
+c = app.G1SonicConnection
 c.set_dry_run(False)
-c.set_activated(True)
+c.arm()
 ```
 
-The connection/coordinator refactor has not been validated on physical hardware.
+This standalone wiring has not been validated on physical hardware.
 
 Squat and kneeling request zero translation. Centered sticks stop crawling
 while retaining its posture. Face-down mode 7 is unavailable, matching NVIDIA's
@@ -76,21 +75,20 @@ the earlier hardware instability remain open validation issues.
 
 ## Module interface
 
-The blueprint runs both `ControlCoordinator` (the G1-specific `SonicCoordinator`)
-and `G1SonicConnection`. Command flow is:
+The blueprint runs `G1SonicConnection` directly, without ControlCoordinator,
+coordinator tasks or a task-compatibility wrapper. Command flow is:
 
 ```text
-navigation / teleop -> ControlCoordinator -> G1SonicConnection -> SonicController -> motor IO
-                      selects references                       runs SONIC at 50 Hz
+navigation / teleop -> MovementManager -> G1SonicConnection -> SonicController -> motor IO
+                      selects cmd_vel                        runs SONIC at 50 Hz
 ```
 
-The coordinator uses the existing velocity task (`sonic_wbc`, retaining its shell
-name) for walking, and the existing `joint_trajectory` task for arm references.
-Task priority arbitration chooses their outputs. `cmd_vel` enters its
-`twist_command`; named arm targets enter `joint_command` on `/g1/joint_command`.
-Arm trajectories can also use `execute_trajectory()`. These resources describe
-policy inputs, not independent control of the legs or arms. SONIC keeps balancing
-when a reference task finishes or walking input expires.
+`MovementManager` combines `nav_cmd_vel` and `tele_cmd_vel`, with teleoperation
+cancelling the active navigation goal. Its `cmd_vel` output feeds SONIC's
+`base_command`. Applications should use those upstream inputs instead of
+competing publishers on `cmd_vel`. There is no general task-priority scheduler
+or timed arm-trajectory API in this stack. SONIC owns all 29 motor targets;
+arm inputs condition the policy rather than independently controlling motors.
 
 The connection exposes streams and RPCs and delegates to `SonicController` in
 `sonic_controller.py`. That controller owns the 50 Hz loop, pose ramp and fault
@@ -98,10 +96,9 @@ latch; `SonicPipeline` handles model inference. `G1WholeBodyConnection` owns rea
 motor IO and its independent 500 Hz publisher. MuJoCo uses the existing
 shared-memory whole-body adapter. SONIC sends no motor commands before its models load.
 
-- `base_command: In[Twist]`: `linear.x`, `linear.y`, and `angular.z`, on
-  `/g1_base/cmd_vel`. The coordinator publishes its selected walking command
-  here. After one second without fresh upstream input it sends zero velocity;
-  the connection also expires commands if the coordinator stops publishing.
+- `base_command: In[Twist]`: `linear.x`, `linear.y`, and `angular.z`, remapped
+  to `cmd_vel`. After one second without fresh input, SONIC commands zero
+  walking velocity while continuing to balance.
 - `position_command: In[JointState]`: named arm references, on
   `/g1/position_command` in this blueprint. Use the arm names from measured
   `joint_state`, for example `g1/left_shoulder_pitch`. Partial arm updates hold
@@ -114,12 +111,15 @@ shared-memory whole-body adapter. SONIC sends no motor commands before its model
   `low_level_imu` input. Odometry still comes from simulation or localization.
 
 For example, send `JointState(name=["g1/left_shoulder_pitch"], position=[0.2])`
-to the coordinator's `/g1/joint_command` input. Its trajectory task moves the
-reference at its configured rate and forwards only claimed arm joints.
-`c.task_invoke("sonic_wbc", "set_upper_body", {"positions": [...]})` submits
-a complete 14-element arm target in DDS order through that same task.
+to `/g1/position_command`. `c.set_upper_body(positions)` sets a complete
+14-element arm reference in DDS order. These update encoder references
+directly; there is no coordinator trajectory interpolation or speed limiting.
+`c.clear_upper_body()` restores the default arm references.
 `set_vr_3point()` retains its existing wrist/head reference
 contract; a generic Cartesian command stream is not implemented here.
+
+Topic paths above are logical names. Typed Zenoh keys include the `dimos/`
+prefix and message-type suffix, for example `dimos/cmd_vel/geometry_msgs.Twist`.
 
 `arm()`, `disarm()`, `set_dry_run()`, `set_locomotion_mode()`, motion-clip
 commands, `reset_runtime_state()` and `status()` are direct module RPCs.
@@ -127,16 +127,28 @@ commands, `reset_runtime_state()` and `status()` are direct module RPCs.
 running. `set_estop(True)` and `halt_robot()` latch damping. Ordinary zero
 walking commands and command expiry keep balancing and do not clear faults.
 
-The former `task_invoke("sonic_wbc", ...)` commands remain available. Walking
-and arm targets enter coordinator tasks; gait, height, clip and VR settings
-forward to the policy. Coordinator activation/reset discards pending references,
-and coordinator E-stop reaches the connection's fault latch before waiting for
-task locks. Use coordinator inputs in this blueprint; direct connection commands
-bypass task arbitration. The connection can still be composed without a coordinator.
-Stopping just the coordinator stops reference delivery; SONIC returns to zero
-walking velocity and keeps balancing. Stopping the complete stack also stops the
-connection, which latches damping. Use `set_estop(True)` for an immediate damping stop.
+`set_velocity_command(vx, vy, yaw_rate)` is also available for direct shell
+control. It bypasses `MovementManager`, so do not use it alongside active
+navigation/teleoperation. Repeat commands to sustain motion; they expire after
+the same one-second timeout. Zero velocity means stop walking and keep balancing,
+not disarm. Disarming, resetting, and completing the activation ramp clear old
+walking commands; send fresh commands after activation.
 
-This uses the existing `Module` base and the standard port names proposed by
-the ControlCoordinator refactor. The unmerged `ConnectionModule` base and its
-`describe_control()` discovery contract are not dependencies of this branch.
+Stopping the complete stack stops SONIC and latches damping. This uses the
+existing `Module` base and does not depend on the new `ConnectionModule` or
+ControlCoordinator refactor. `task_invoke`, `set_activated`, `execute_trajectory`
+and `/g1/joint_command` are not part of the SONIC interface.
+
+## Focused validation
+
+```bash
+uv run pytest dimos/robot/unitree/g1/test_sonic_connection.py \
+  dimos/robot/unitree/g1/test_wholebody_connection.py dimos/control/sonic \
+  -m 'not mujoco'
+```
+
+These exercise standalone command routing, expiry, re-arm/reset, fault latching,
+motor-publisher safeguards, inference semantics and blueprint composition.
+Models and hardware IO are mocked. The blueprint tests import optional simulation
+dependencies but do not load assets or start hardware. They do not establish
+physical walking stability or hardware safety.

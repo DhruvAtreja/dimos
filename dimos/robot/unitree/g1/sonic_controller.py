@@ -683,9 +683,6 @@ class SonicController:
             self._cached_q_29[:] = self._default_29
             self._cached_dq_29[:] = 0.0
             self._reset_policy_state()
-            with self._cmd_lock:
-                self._cmd[:] = 0.0
-                self._last_cmd_time = 0.0
 
             logger.info(
                 "G1SonicConnection runtime state reset",
@@ -727,6 +724,10 @@ class SonicController:
             return snap
 
     def _reset_policy_state(self) -> None:
+        # Activation must not replay references received before or during the pose ramp.
+        with self._cmd_lock:
+            self._cmd[:] = 0.0
+            self._last_cmd_time = 0.0
         self._policy.reset()
         self._arm_reference = self._default_29[15:].copy()
         self._tick_count = 0

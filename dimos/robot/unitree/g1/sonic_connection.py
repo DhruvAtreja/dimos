@@ -38,8 +38,8 @@ class G1SonicConnection(Module):
     """Walk through Twist commands and condition SONIC with arm references.
 
     SonicController owns the policy loop and activation lifecycle. Hardware
-    motor delivery remains in G1WholeBodyConnection. A ControlCoordinator can
-    arbitrate references upstream; this module also works independently.
+    motor delivery remains in G1WholeBodyConnection. MovementManager selects
+    navigation or teleoperation input before it reaches base_command.
     """
 
     config: G1SonicConnectionConfig
@@ -120,7 +120,7 @@ class G1SonicConnection(Module):
 
     @rpc
     def halt_robot(self) -> bool:
-        """Latch the emergency damping stop, including when called by a coordinator."""
+        """Latch the emergency damping stop; recovery requires restarting the stack."""
         self._controller.set_estop(True)
         return True
 

@@ -12,19 +12,16 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+from pathlib import Path
+import runpy
+
 import numpy as np
 import pytest
+import pytest_asyncio
 
-from dimos.control.components import HardwareComponent, HardwareType, make_twist_base_joints
-from dimos.control.coordinator import TaskConfig
 from dimos.control.sonic.sonic_pipeline import DEFAULT_ANGLES_DDS
 from dimos.control.sonic.sonic_safety import damping_commands
-from dimos.control.tasks.trajectory_task.trajectory_task import joint_trajectory_task
-from dimos.control.tasks.velocity_task.velocity_task import (
-    JointVelocityTask,
-    JointVelocityTaskConfig,
-)
-from dimos.control.tick_loop import TickLoop
+from dimos.core.global_config import global_config
 from dimos.hardware.whole_body.spec import IMUState, MotorState
 from dimos.msgs.geometry_msgs.Quaternion import Quaternion
 from dimos.msgs.geometry_msgs.Twist import Twist
@@ -33,11 +30,10 @@ from dimos.msgs.sensor_msgs.Imu import Imu
 from dimos.msgs.sensor_msgs.JointState import JointState
 from dimos.msgs.std_msgs.String import String
 from dimos.robot.unitree.g1.sonic_connection import G1SonicConnection
-from dimos.robot.unitree.g1.sonic_coordinator import SonicCoordinator
 
 
-@pytest.fixture
-def connection(mocker, tmp_path):
+@pytest_asyncio.fixture
+async def connection(mocker, tmp_path):
     model = tmp_path / "model.onnx"
     model.touch()
     pipeline = mocker.patch("dimos.robot.unitree.g1.sonic_controller.SonicPipeline").return_value
@@ -261,161 +257,80 @@ async def test_standard_inputs_drive_policy_and_publish_measured_state(connectio
     )
 
 
-@pytest.fixture
-def coordinated(connection, mocker):
-    now = mocker.patch("dimos.control.tick_loop.time.perf_counter", return_value=10.0)
-    base = make_twist_base_joints("g1_base")
-    transport = mocker.MagicMock()
-    transport.publish.side_effect = lambda msg: connection.set_velocity_command(
-        msg.linear.x, msg.linear.y, msg.angular.z
-    )
-    c = SonicCoordinator(
-        instance_name="ControlCoordinator",
-        auto_activated=True,
-        hardware=[
-            HardwareComponent(
-                hardware_id="g1_base",
-                hardware_type=HardwareType.BASE,
-                joints=base,
-                adapter_type="transport_lcm",
-                adapter_kwargs={"transport_cls": lambda *_: transport},
-            ),
-            HardwareComponent(
-                hardware_id="g1_arms",
-                hardware_type=HardwareType.MANIPULATOR,
-                joints=connection.config.joint_names[15:],
-                adapter_type="sonic_arm_references",
-            ),
-        ],
-        tasks=[
-            TaskConfig(
-                name="sonic_wbc",
-                type="velocity",
-                joint_names=base,
-                priority=50,
-                params={"timeout": 1.0},
-            ),
-            joint_trajectory_task(connection.config.joint_names[15:]),
-        ],
-        publish_joint_state=False,
-    )
-    mocker.patch.object(c, "_sonic", connection, create=True)
-    # Exercise actual tasks, arbitration and controller; replace clocks and transport IO.
-    mocker.patch.object(TickLoop, "_loop")
-    mocker.patch.object(c, "_auto_bind_handlers")
-    mocker.patch.object(c.twist_command, "subscribe")
-    mocker.patch.object(c.joint_command, "subscribe")
-    feedback = mocker.patch.object(c.sonic_joint_state, "subscribe")
-    mocker.patch.object(
-        c.position_command, "publish", side_effect=connection._controller.set_joint_reference
-    )
-    connection.start()
-    connection.arm(ramp_seconds=0.0)
-    try:
-        c.start()
-        connection.joint_state.publish.side_effect = feedback.call_args.args[0]
-        _step(connection, now.return_value)
-        yield c, connection, now
-    finally:
-        c.stop()
+@pytest.mark.asyncio
+async def test_stream_command_expires_without_an_upstream_task(connection, mocker):
+    _arm(connection)
+    mocker.patch("dimos.robot.unitree.g1.sonic_controller.time.perf_counter", return_value=3.0)
+    await connection.handle_base_command(Twist(linear=Vector3(0.5, 0, 0)))
+    _step(connection, 3.02)
+    connection._controller._policy.set_velocity.assert_called_with(0.5, 0.0, 0.0)
+
+    assert _step(connection, 4.02) == [1.0] * 29
+    connection._controller._policy.set_velocity.assert_called_with(0.0, 0.0, 0.0)
+    assert connection.status()["armed"]
+    assert connection.status()["fault_reason"] is None
 
 
-def test_coordinator_routes_walking_and_preserves_command_expiry(coordinated):
-    c, connection, now = coordinated
-    c._make_stream_cb("twist_command")(
-        Twist(linear=Vector3(0.3, 0.1, 0), angular=Vector3(0, 0, 0.2))
-    )
-    c._tick_loop._tick()
-    _step(connection, now.return_value)
-    assert connection._controller._policy.set_velocity.call_args.args == pytest.approx(
-        (0.3, 0.1, 0.2)
-    )
+@pytest.mark.parametrize("command_while_disarmed", [False, True])
+def test_rearm_does_not_replay_old_walking_commands(connection, command_while_disarmed):
+    _arm(connection)
+    connection.set_velocity_command(0.5, 0.0, 0.0, t_now=3.0)
+    _step(connection, 3.02)
+    connection._controller._policy.set_velocity.assert_called_with(0.5, 0.0, 0.0)
+    assert connection.disarm()
+    if command_while_disarmed:
+        connection.set_velocity_command(0.8, 0.0, 0.0, t_now=3.03)
 
-    now.return_value += 1.01
-    c._tick_loop._tick()
-    _step(connection, now.return_value)
+    assert connection.arm(ramp_seconds=0.0)
+    _step(connection, 3.04)
+    assert _step(connection, 3.06) == [1.0] * 29
     connection._controller._policy.set_velocity.assert_called_with(0.0, 0.0, 0.0)
     assert connection.status()["armed"]
 
-
-def test_coordinator_arbitration_selects_the_walking_task(coordinated):
-    c, connection, now = coordinated
-    c.task_invoke("sonic_wbc", "set_velocity_command", {"vx": 0.5, "vy": 0.0, "yaw_rate": 0.0})
-    override = JointVelocityTask(
-        "override", JointVelocityTaskConfig(make_twist_base_joints("g1_base"), priority=100)
-    )
-    c.add_task(override)
-    override.set_velocities([-0.2, 0.0, 0.0], now.return_value)
-    c._tick_loop._tick()
-    _step(connection, now.return_value)
+    connection.set_velocity_command(-0.2, 0.0, 0.0, t_now=3.07)
+    _step(connection, 3.08)
     assert connection._controller._policy.set_velocity.call_args.args == pytest.approx(
         (-0.2, 0.0, 0.0)
     )
 
-    override.clear()
-    c._tick_loop._tick()
-    _step(connection, now.return_value)
-    connection._controller._policy.set_velocity.assert_called_with(0.5, 0.0, 0.0)
+
+def test_stopping_sonic_latches_damping(connection):
+    _arm(connection)
+    adapter = connection._controller._adapter
+    connection.stop()
+
+    adapter.write_motor_commands.assert_called_with(damping_commands(29))
+    assert connection.status()["fault_reason"] == "SONIC module stopped"
+    assert connection.reset_runtime_state(reactivate=True) is False
 
 
-def test_coordinator_arm_trajectory_preserves_unclaimed_references(coordinated):
-    c, connection, now = coordinated
-    arm = connection.config.joint_names[15]
-    c._make_stream_cb("joint_command")(JointState(name=[arm], position=[0.7]))
-    now.return_value += 0.02
-    c._tick_loop._tick()
-    command = c.position_command.publish.call_args.args[0]
-    assert command.name == [arm]
-    assert command.position == pytest.approx([0.02])
-    expected = DEFAULT_ANGLES_DDS[15:].copy()
-    expected[0] = 0.02
-    np.testing.assert_allclose(
-        connection._controller._policy.set_upper_body.call_args.args[0], expected
+@pytest.mark.self_hosted
+@pytest.mark.parametrize(
+    "simulation, backend", [("", "G1WholeBodyConnection"), ("mujoco", "MujocoSimModule")]
+)
+def test_blueprint_routes_commands_directly_without_coordinator(
+    monkeypatch, mocker, simulation, backend
+):
+    monkeypatch.setattr(global_config, "simulation", simulation)
+    monkeypatch.setattr(global_config, "viewer", "none")
+    monkeypatch.setattr(global_config, "scene_package", None)
+    monkeypatch.setattr(global_config, "transport", "zenoh")
+    mocker.patch("dimos.utils.data.get_data", side_effect=AssertionError("unexpected asset load"))
+    blueprint = runpy.run_path(
+        str(Path(__file__).parent / "blueprints/basic/unitree_g1_sonic_wbc.py")
+    )["unitree_g1_sonic_wbc"]
+
+    modules = {atom.module.__name__ for atom in blueprint.active_blueprints}
+    assert "G1SonicConnection" in modules
+    assert "MovementManager" in modules
+    assert backend in modules
+    assert not {"SonicCoordinator", "ControlCoordinator"} & modules
+    assert blueprint.remapping_map[(G1SonicConnection.name, "base_command")] == "cmd_vel"
+    assert (
+        blueprint.transport_map[("cmd_vel", Twist)].channel == "dimos/cmd_vel/geometry_msgs.Twist"
     )
-
-
-def test_coordinator_lifecycle_and_legacy_shell_commands_reach_connection(coordinated):
-    c, connection, now = coordinated
-    assert c.list_tasks() == ["sonic_wbc", "joint_trajectory"]
-    c.set_dry_run(True)
-    assert c.task_invoke("sonic_wbc", "state_snapshot")["dry_run"]
-    c.set_velocity_command(0.5, 0.0, 0.0)
-    c.set_activated(False)
-    assert not c.get_active_tasks()
-    assert connection.status()["control_state"] == "unarmed"
-    # Input while disarmed must not become a fresh command at the next activation.
-    c._make_stream_cb("twist_command")(Twist(linear=Vector3(0.8, 0, 0)))
-    c.task_invoke("sonic_wbc", "arm", {"ramp_seconds": 0.0})
-    c.set_dry_run(False)
-    c._tick_loop._tick()
-    _step(connection, now.return_value)
-    _step(connection, now.return_value + 0.02)
-    connection._controller._policy.set_velocity.assert_called_with(0.0, 0.0, 0.0)
-    assert c.describe_task("sonic_wbc")["commands"]["set_locomotion_mode"]["params"] == ["mode"]
-
-
-def test_coordinator_estop_reaches_motor_owner_and_cannot_be_released(coordinated):
-    c, connection, now = coordinated
-    c.set_velocity_command(0.5, 0.0, 0.0)
-    c._tick_loop._tick()
-    assert c.set_estop(True)
-    assert not c.get_active_tasks()
-    assert _step(connection, now.return_value) is None
-    connection._controller._adapter.write_motor_commands.assert_called_with(damping_commands(29))
-    assert c.reset_runtime_state(reactivate=True) == {"sonic_wbc": False}
-    with pytest.raises(RuntimeError, match="restart"):
-        c.set_estop(False)
-    with pytest.raises(RuntimeError, match="restart"):
-        c.set_activated(True)
-
-
-def test_stopping_coordinator_stops_walking_but_keeps_sonic_balancing(coordinated):
-    c, connection, now = coordinated
-    c.set_velocity_command(0.5, 0.0, 0.0)
-    c._tick_loop._tick()
-    c.stop()
-    now.return_value += 1.01
-    assert _step(connection, now.return_value) == [1.0] * 29
-    connection._controller._policy.set_velocity.assert_called_with(0.0, 0.0, 0.0)
-    assert connection.status()["armed"]
-    assert connection.status()["fault_reason"] is None
+    assert blueprint.transport_map[("cmd_vel", Twist)].topic.queue_capacity == 1
+    assert blueprint.transport_map[("position_command", JointState)].channel == (
+        "dimos/g1/position_command/sensor_msgs.JointState"
+    )
+    assert ("joint_command", JointState) not in blueprint.transport_map
