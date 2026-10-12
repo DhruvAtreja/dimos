@@ -18,6 +18,8 @@ import pytest
 
 from dimos.core.coordination.blueprints import Blueprint
 from dimos.imitation.collection.blueprint import (
+    DUAL_OPENYAM_COLLECTION_STREAMS,
+    DualOpenYamCollectionRecorder,
     learning_collect_webxr_dual_openyam,
     learning_collect_webxr_piper,
     learning_collect_webxr_xarm7,
@@ -60,7 +62,6 @@ def test_shipped_collection_monitor_configuration_is_valid(blueprint: Blueprint)
     [
         learning_collect_webxr_xarm7,
         learning_collect_webxr_piper,
-        learning_collect_webxr_dual_openyam,
     ],
 )
 def test_collection_streams_are_poseless(blueprint: Blueprint) -> None:
@@ -83,7 +84,7 @@ def test_collection_streams_are_poseless(blueprint: Blueprint) -> None:
     ],
 )
 def test_collection_recorder_stops_after_producers(blueprint: Blueprint) -> None:
-    assert blueprint.active_blueprints[0].module is CollectionRecorder
+    assert issubclass(blueprint.active_blueprints[0].module, CollectionRecorder)
 
 
 @pytest.mark.parametrize(
@@ -137,6 +138,31 @@ def test_recorder_reads_aggregate_joint_state(blueprint: Blueprint) -> None:
 
     # Plain name pairing on both ends, no remap in between. The coordinator
     # atom carries its explicit instance_name (the RPC lookup contract).
-    assert streams[("collectionrecorder", AGGREGATE)] == AGGREGATE
+    recorder = next(
+        atom for atom in blueprint.active_blueprints if issubclass(atom.module, CollectionRecorder)
+    )
+    assert streams[(recorder.name, AGGREGATE)] == AGGREGATE
     assert streams[("ControlCoordinator", AGGREGATE)] == AGGREGATE
     assert not [port for _instance, port in streams if port.endswith("_joints")]
+
+
+def test_dual_openyam_collection_records_wrist_views_and_commands() -> None:
+    recorder = next(
+        atom
+        for atom in learning_collect_webxr_dual_openyam.blueprints
+        if atom.module is DualOpenYamCollectionRecorder
+    )
+    inputs = {stream.name for stream in recorder.streams if stream.direction == "in"}
+
+    assert set(DUAL_OPENYAM_COLLECTION_STREAMS) <= inputs
+    assert recorder.kwargs["poseless_streams"] == DUAL_OPENYAM_COLLECTION_STREAMS
+    assert recorder.kwargs["record_tf"] is False
+    # every recorded stream has a producer in the composed blueprint, after remapping
+    blueprint = learning_collect_webxr_dual_openyam
+    outputs = {
+        blueprint.remapping_map.get((atom.name, stream.name), stream.name)
+        for atom in blueprint.blueprints
+        for stream in atom.streams
+        if stream.direction == "out"
+    }
+    assert set(DUAL_OPENYAM_COLLECTION_STREAMS) <= outputs

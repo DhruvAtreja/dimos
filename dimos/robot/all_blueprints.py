@@ -236,6 +236,7 @@ all_modules = {
     "drone-camera-module": "dimos.robot.drone.camera_module.DroneCameraModule",
     "drone-connection-module": "dimos.robot.drone.connection_module.DroneConnectionModule",
     "drone-tracking-module": "dimos.robot.drone.drone_tracking_module.DroneTrackingModule",
+    "dual-open-yam-collection-recorder": "dimos.imitation.collection.blueprint.DualOpenYamCollectionRecorder",
     "dual-open-yam-coordinator": "dimos.robot.manipulators.dual_openyam.blueprints.basic.DualOpenYamCoordinator",
     "emitter-module": "dimos.utils.demo_image_encoding.EmitterModule",
     "episode-monitor-module": "dimos.imitation.collection.episode_monitor.EpisodeMonitorModule",
