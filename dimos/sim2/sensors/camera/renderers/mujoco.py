@@ -60,7 +60,13 @@ def _serve(model_path: str, width: int, height: int) -> None:
     pickle.dump(None, out)
     out.flush()
     try:
-        while (request := pickle.load(sys.stdin.buffer)) is not None:
+        while True:
+            try:
+                request = pickle.load(sys.stdin.buffer)
+            except EOFError:  # the sensor worker exited without saying goodbye
+                break
+            if request is None:
+                break
             state, camera, depth = request
             mujoco.mj_setState(model, data, state, _STATE)
             mujoco.mj_forward(model, data)
