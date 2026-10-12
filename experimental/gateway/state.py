@@ -32,7 +32,7 @@ from experimental.gateway.skills import Skills
 from experimental.gateway.topic_rates import TopicWatch
 from experimental.gateway.uploads import Uploads
 
-API_VERSION = "2.0.0"
+API_VERSION = "2.1.0"
 INTROSPECT_TTL_S = 600.0
 
 

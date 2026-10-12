@@ -54,13 +54,27 @@ def introspected(state: State, monkeypatch: pytest.MonkeyPatch) -> list[Any]:
     return calls
 
 
-def test_server_routes(client: TestClient, checkout: Path) -> None:
+def test_server_routes(client: TestClient, checkout: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     assert client.get("/healthz").text == "ok"
+    monkeypatch.delenv("DESKTOP_DIMOS_RANGE", raising=False)
     assert client.get("/dimos/info").json() == {
         "dir": str(checkout),
         "found": True,
         "installed": True,
         "version": "0.0.14",
+        "range": "",
+        "inRange": True,
+    }
+    monkeypatch.setenv("DESKTOP_DIMOS_RANGE", ">=0.0.14b1 <0.1")
+    assert client.get("/dimos/info").json()["inRange"] is True
+    monkeypatch.setenv("DESKTOP_DIMOS_RANGE", ">=0.1 <0.2")
+    assert client.get("/dimos/info").json() | {"dir": ""} == {
+        "dir": "",
+        "found": True,
+        "installed": True,
+        "version": "0.0.14",
+        "range": ">=0.1 <0.2",
+        "inRange": False,
     }
     paths = client.get("/dimos/paths").json()
     assert paths["dimosDir"] == str(checkout)

@@ -135,11 +135,26 @@ def checkout_version(dimos_dir: Path) -> tuple[bool, str | None]:
     return True, str(version) if version else None
 
 
+def satisfies(version: str, range_text: str) -> bool:
+    """`>=0.0.14b1 <0.1` (Desktop's space-separated form) or comma-separated; prereleases count."""
+    from packaging.specifiers import InvalidSpecifier, SpecifierSet
+    from packaging.version import InvalidVersion, Version
+
+    try:
+        return Version(version) in SpecifierSet(",".join(range_text.split()), prereleases=True)
+    except (InvalidSpecifier, InvalidVersion):
+        return False
+
+
 def info(dimos_dir: Path) -> dict[str, Any]:
     found, version = checkout_version(dimos_dir)
+    # the dimos range Desktop supports (its DESKTOP_DIMOS_RANGE); Desktop's installer requires both keys
+    range_text = os.environ.get("DESKTOP_DIMOS_RANGE", "")
     return {
         "dir": str(dimos_dir),
         "found": found,
         "installed": found and dimos_bin(dimos_dir).exists(),
         "version": version,
+        "range": range_text,
+        "inRange": version is not None and (not range_text or satisfies(version, range_text)),
     }
