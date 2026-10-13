@@ -49,18 +49,18 @@ def running_tmux_sessions() -> set[str]:
 
 
 def boot_command(startup_script: str, profile: str, running: set[str]) -> list[str] | None:
-    """The vendor boot command, or None when already up or not installed."""
+    """The vendor boot command, or None when the stack is already up."""
     if set(VENDOR_SESSIONS) <= running:
         return None
     script = Path(startup_script).expanduser().resolve()
     if not script.exists():
-        logger.warning("R1 vendor stack not running and %s does not exist", script)
-        return None
+        raise FileNotFoundError(f"R1 vendor stack is not running and {script} does not exist")
     # A relative profile is under the script's directory, e.g. ../sessions.d/ATCStandard/R1PROBody.d/
     profile_dir = script.parent / Path(profile).expanduser()
     if not profile_dir.is_dir():
-        logger.warning("R1 vendor stack not running and profile %s does not exist", profile_dir)
-        return None
+        raise FileNotFoundError(
+            f"R1 vendor stack is not running and profile {profile_dir} does not exist"
+        )
     # The script only takes a path relative to its own directory.
     return ["bash", str(script), "boot", os.path.relpath(profile_dir, script.parent)]
 
