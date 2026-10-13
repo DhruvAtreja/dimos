@@ -54,15 +54,16 @@
           if called ? rootCrate then called.rootCrate.build
           else called.workspaceMembers.${name}.build;
 
-        lintedVariant = builtins.head (builtins.sort builtins.lessThan variants);
+        # Upstream's CPU-fallback SDK for the host CPU; nix cannot see a GPU, so sdk_variant() picks a machine's own variant.
+        hostVariant = { x86_64-linux = "x86_64"; aarch64-linux = "aarch64"; }.${system};
       in {
         packages = nixpkgs.lib.genAttrs variants (v: buildOf (callWith v null)) // {
-          default = buildOf (callWith lintedVariant null);
-          lint = (buildOf (callWith lintedVariant "lint")).override {
+          default = buildOf (callWith hostVariant null);
+          lint = (buildOf (callWith hostVariant "lint")).override {
             runTests = true;
             testCrateFlags = [ "--list" ];
           };
-          tests = (buildOf (callWith lintedVariant "test")).override { runTests = true; };
+          tests = (buildOf (callWith hostVariant "test")).override { runTests = true; };
         };
         checks.lint = self.packages.${system}.lint;
         checks.tests = self.packages.${system}.tests;
