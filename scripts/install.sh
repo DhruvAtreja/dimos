@@ -21,15 +21,13 @@ trap 'exit 143' TERM
 INSTALLER_VERSION="0.3.0"
 
 # ─── package lists (edit these when dependencies change) ──────────────────────
-UBUNTU_PACKAGES="ca-certificates curl git build-essential portaudio19-dev git-lfs libturbojpeg pre-commit libgl1 libegl1 libglib2.0-0 ffmpeg libsndfile1 pkg-config"
-STEAMOS_PACKAGES="gcc glibc linux-api-headers portaudio pkgconf make git-lfs"
+UBUNTU_PACKAGES="ca-certificates curl git g++ portaudio19-dev git-lfs libturbojpeg pre-commit libgl1 libegl1 libglib2.0-0 ffmpeg libsndfile1 pkg-config"
 MACOS_PACKAGES="gnu-sed gcc portaudio git-lfs libjpeg-turbo pre-commit ffmpeg libsndfile pkg-config"
 
 INSTALL_MODE="${DIMOS_INSTALL_MODE:-}"
 EXTRAS="${DIMOS_EXTRAS:-}"
 NON_INTERACTIVE="${DIMOS_NO_PROMPT:-0}"
 GIT_BRANCH="${DIMOS_BRANCH:-main}"
-GIT_COMMIT="${DIMOS_COMMIT:-}"
 NO_CUDA="${DIMOS_NO_CUDA:-0}"
 NO_SYSCTL="${DIMOS_NO_SYSCTL:-0}"
 DRY_RUN="${DIMOS_DRY_RUN:-0}"
@@ -268,7 +266,6 @@ ${BOLD}OPTIONS${RESET}
     --mode library|dev     Install mode (default: interactive prompt)
     --extras <list>        Comma-separated pip extras
     --branch <branch>      Git branch for dev mode (default: main)
-    --commit <commit>      Pin dev checkout to this exact revision (also DIMOS_COMMIT)
     --project-dir <path>   Project directory
     --non-interactive      Accept defaults, no prompts
     --no-cuda              Skip optional CUDA extras and GPU verification
@@ -292,7 +289,7 @@ EOF
 parse_args() {
     while [[ $# -gt 0 ]]; do
         case "$1" in
-            --mode|--extras|--branch|--commit|--project-dir)
+            --mode|--extras|--branch|--project-dir)
                 [[ $# -ge 2 && -n "$2" && "$2" != --* ]] || die "$1 requires a value"
                 ;;
         esac
@@ -300,7 +297,6 @@ parse_args() {
             --mode)            INSTALL_MODE="$2"; shift 2 ;;
             --extras)          EXTRAS="$2"; shift 2 ;;
             --branch)          GIT_BRANCH="$2"; shift 2 ;;
-            --commit)          GIT_COMMIT="$2"; shift 2 ;;
             --project-dir)     PROJECT_DIR="$2"; shift 2 ;;
             --non-interactive) NON_INTERACTIVE=1; shift ;;
             --no-cuda)         NO_CUDA=1; shift ;;
@@ -334,7 +330,6 @@ detect_os() {
     elif [[ "$uname_s" == "Linux" ]]; then
         if grep -qi microsoft /proc/version 2>/dev/null; then DETECTED_OS="wsl"
         elif [[ -f /etc/NIXOS ]] || has_cmd nixos-version; then DETECTED_OS="nixos"
-        elif ( . /etc/os-release 2>/dev/null; [[ "${ID:-}" == steamos ]] ); then DETECTED_OS="steamos"
         elif grep -qEi 'debian|ubuntu' /etc/os-release 2>/dev/null; then DETECTED_OS="ubuntu"
         else DETECTED_OS="linux"; fi
         DETECTED_OS_VERSION="$(. /etc/os-release 2>/dev/null && echo "${VERSION_ID:-unknown}" || echo "unknown")"
@@ -392,7 +387,7 @@ print_sysinfo() {
         macos)  os_display="macOS ${DETECTED_OS_VERSION} (${DETECTED_ARCH})" ;;
         nixos)  os_display="NixOS ${DETECTED_OS_VERSION} (${DETECTED_ARCH})" ;;
         wsl)    os_display="WSL2 / Ubuntu ${DETECTED_OS_VERSION} (${DETECTED_ARCH})" ;;
-        linux|steamos)
+        linux)
             local distro_name
             distro_name="$(. /etc/os-release 2>/dev/null && echo "${PRETTY_NAME:-Linux}" || echo "Linux")"
             os_display="${distro_name} (${DETECTED_ARCH})" ;;
@@ -440,16 +435,30 @@ install_nix() {
         return
     fi
 
-    info "installing Nix via official installer..."
-    if [[ "$DRY_RUN" == "1" ]]; then
-        dim "[dry-run] sh <(curl --proto '=https' --tlsv1.2 -L https://nixos.org/nix/install) --daemon"
-        HAS_NIX=1; return
-    fi
-
-    if [[ "$NON_INTERACTIVE" == 1 ]]; then
-        (cd /tmp && sh <(curl --proto '=https' --tlsv1.2 -fL https://nixos.org/nix/install) --daemon --yes)
+    # SteamOS's read-only, update-replaced system can't hold /nix; Determinate's installer keeps the store under /home
+    if ( . /etc/os-release 2>/dev/null; [[ "${ID:-}" == steamos ]] ); then
+        info "installing Nix via Determinate's installer (SteamOS)..."
+        if [[ "$DRY_RUN" == "1" ]]; then
+            dim "[dry-run] curl -sSfL https://install.determinate.systems/nix | sh -s -- install"
+            HAS_NIX=1; return
+        fi
+        if [[ "$NON_INTERACTIVE" == 1 ]]; then
+            curl --proto '=https' --tlsv1.2 -sSfL https://install.determinate.systems/nix | sh -s -- install --no-confirm
+        else
+            (curl --proto '=https' --tlsv1.2 -sSfL https://install.determinate.systems/nix | sh -s -- install) </dev/tty
+        fi
     else
-        (cd /tmp && sh <(curl --proto '=https' --tlsv1.2 -fL https://nixos.org/nix/install) --daemon) </dev/tty
+        info "installing Nix via official installer..."
+        if [[ "$DRY_RUN" == "1" ]]; then
+            dim "[dry-run] sh <(curl --proto '=https' --tlsv1.2 -L https://nixos.org/nix/install) --daemon"
+            HAS_NIX=1; return
+        fi
+
+        if [[ "$NON_INTERACTIVE" == 1 ]]; then
+            (cd /tmp && sh <(curl --proto '=https' --tlsv1.2 -fL https://nixos.org/nix/install) --daemon --yes)
+        else
+            (cd /tmp && sh <(curl --proto '=https' --tlsv1.2 -fL https://nixos.org/nix/install) --daemon) </dev/tty
+        fi
     fi
 
     [[ -f /nix/var/nix/profiles/default/etc/profile.d/nix-daemon.sh ]] && \
@@ -488,14 +497,14 @@ prompt_setup_method() {
         choice="$PROMPT_RESULT"
     elif [[ "$HAS_NIX" == "1" ]]; then
         prompt_select "How should we set up system dependencies?" \
-            "System packages — apt/brew/pacman (simpler)" \
+            "System packages — apt/brew (simpler)" \
             "Nix — nix develop (reproducible)"
         choice="$PROMPT_RESULT"
     elif [[ "$DETECTED_OS" == "nixos" ]]; then
         die "NixOS detected but 'nix' command not found."
     else
         prompt_select "How should we set up system dependencies?" \
-            "System packages — apt/brew/pacman (recommended)" \
+            "System packages — apt/brew (recommended)" \
             "Install Nix — nix develop (reproducible, installs Nix first)"
         choice="$PROMPT_RESULT"
     fi
@@ -524,82 +533,10 @@ verify_nix_develop() {
     [[ "$INSTALL_PYTHON" == /nix/store/* ]] || die "Nix setup must provide its own Python"
 }
 
-# SteamOS strips development headers, even from packages it reports as installed.
-# Reinstall them with the compiler (and git-lfs, which SteamOS lacks); restore the read-only setting on success or failure.
-install_steamos_deps() (
-    local -a privilege=(/usr/bin/env) packages=()
-    if [[ $(id -u) != 0 ]]; then privilege=(sudo); fi
-    if has_cmd cc && has_cmd g++ && has_cmd make && has_cmd pkg-config && has_cmd git-lfs && \
-            [[ -f /usr/include/stdio.h && -f /usr/include/linux/types.h && -f /usr/include/portaudio.h ]] && \
-            printf '#include <vector>\nint main() { return std::vector<int>{1}.at(0) - 1; }\n' | \
-                g++ -x c++ -c -o /dev/null - >/dev/null 2>&1; then
-        ok "compiler and development headers already installed"
-        return
-    fi
-    read -r -a packages <<< "$STEAMOS_PACKAGES"
-    info "need to install via pacman: ${packages[*]}"
-    prompt_confirm "Install the compiler and development headers via pacman?" yes || \
-        die "compiler and development headers were declined"
-    if [[ "$DRY_RUN" == 1 ]]; then
-        dim "[dry-run] temporarily disable SteamOS read-only protection if enabled, then restore it"
-    elif [[ "$(steamos-readonly status)" == enabled ]]; then
-        "${privilege[@]}" steamos-readonly disable
-        trap '"${privilege[@]}" steamos-readonly enable || { err "could not restore SteamOS read-only protection"; exit 1; }' EXIT
-    fi
-    run_cmd "${privilege[@]}" pacman-key --init
-    run_cmd "${privilege[@]}" pacman-key --populate archlinux holo
-    run_cmd "${privilege[@]}" pacman -S --noconfirm "${packages[@]}"
-)
-
-# A default SDK newer than the linker ("tapi error: unknown architecture") fails every native extension.
-# Build with nixpkgs' clang (own SDK and linker, output links only /usr/lib), else update the Command Line
-# Tools (needs sudo), else build with an older installed SDK that links.
-cxx_links() { c++ -x c++ - -o /dev/null >/dev/null 2>&1 <<< 'int main() { return 0; }'; }
-
-use_nix_compiler() {
-    [[ "$HAS_NIX" == 1 ]] || return 1
-    local clang
-    info "the C++ linker can't use the default macOS SDK; getting nixpkgs' clang..."
-    clang=$(nix --extra-experimental-features 'nix-command flakes' build --no-link --print-out-paths nixpkgs#clang) || return 1
-    PATH="$clang/bin:$PATH" cxx_links || return 1
-    export PATH="$clang/bin:$PATH"
-    warn "building with nixpkgs' clang, since the default macOS SDK doesn't link"
-    dim "  other native builds (e.g. Homebrew's) will fail until the Command Line Tools are updated (softwareupdate --list)"
-}
-
+# A default SDK newer than the linker ("tapi error: unknown architecture") fails every native extension: update the Command Line Tools.
 update_command_line_tools() {
-    local label
-    local -a privilege=(/usr/bin/env)
-    if [[ $(id -u) != 0 ]]; then privilege=(sudo); fi
-    info "the C++ linker can't use the default macOS SDK; checking for a Command Line Tools update..."
-    label=$(softwareupdate --list 2>/dev/null | sed -n 's/^ *\* Label: \(Command Line Tools.*\)$/\1/p' | sort -V | tail -n 1)
-    if [[ -z "$label" ]]; then
-        warn "no Command Line Tools update available"
-        return 1
-    fi
-    prompt_confirm "Install $label (about 1 GB, needs your password)?" yes || return 1
-    run_cmd "${privilege[@]}" softwareupdate --install "$label" --agree-to-license || return 1
-    cxx_links
-}
-
-select_macos_sdk() {
-    has_cmd c++ || return 0
-    cxx_links && return
-    use_nix_compiler && return
-    update_command_line_tools && { ok "Command Line Tools updated"; return; }
-    local sdk developer_dir
-    developer_dir=$(xcode-select -p 2>/dev/null || true)
-    while IFS= read -r sdk; do
-        if SDKROOT="$sdk" cxx_links; then
-            export SDKROOT="$sdk"
-            warn "building with $sdk, since the default macOS SDK doesn't link"
-            dim "  native builds outside this installer will fail until the Command Line Tools are updated (softwareupdate --list)"
-            return
-        fi
-    done < <(find "$developer_dir/SDKs" "$developer_dir/Platforms/MacOSX.platform/Developer/SDKs" \
-        -maxdepth 1 -name 'MacOSX[0-9]*.sdk' 2>/dev/null | sort -rV)
-    { c++ -x c++ - -o /dev/null <<< 'int main() { return 0; }' 2>&1 || true; } | tail -n 5 >&2
-    die "the C++ compiler can't link with any installed macOS SDK; update the Command Line Tools (softwareupdate --list) and re-run"
+    { ! has_cmd c++ || c++ -x c++ - -o /dev/null >/dev/null 2>&1 <<< 'int main() { return 0; }'; } && return
+    run_cmd sudo softwareupdate --install "$(softwareupdate --list 2>/dev/null | sed -n 's/^ *\* Label: \(Command Line Tools.*\)$/\1/p' | sort -V | tail -n 1)" --agree-to-license || die "the C++ linker can't use the macOS SDK; update the Command Line Tools (softwareupdate --list) and re-run"
 }
 
 # ─── system dependencies ─────────────────────────────────────────────────────
@@ -663,9 +600,6 @@ install_system_deps() {
                 die "required system packages were declined; install them before continuing: ${needed[*]}"
             fi
             run_cmd brew install "${needed[@]}"
-            ;;
-        steamos)
-            install_steamos_deps
             ;;
         nixos)
             info "NixOS detected — system deps managed via nix develop"
@@ -858,21 +792,6 @@ do_install_dev() {
         info "using existing checkout at $(git -C "$dir" rev-parse --short HEAD)"
     else
         run_cmd /usr/bin/env GIT_LFS_SKIP_SMUDGE=1 git clone -b "$GIT_BRANCH" https://github.com/dimensionalOS/dimos.git "$dir"
-    fi
-    if [[ -n "$GIT_COMMIT" ]]; then
-        if [[ "$DRY_RUN" == 1 ]]; then
-            run_cmd git -C "$dir" fetch origin "$GIT_COMMIT"
-            run_cmd git -C "$dir" checkout --detach "$GIT_COMMIT"
-        else
-            if ! git -C "$dir" cat-file -e "${GIT_COMMIT}^{commit}" 2>/dev/null; then
-                run_cmd git -C "$dir" fetch origin "$GIT_COMMIT"
-            fi
-            local expected
-            expected=$(git -C "$dir" rev-parse --verify "${GIT_COMMIT}^{commit}")
-            # No reset/force: Git refuses a checkout that would overwrite local changes.
-            run_cmd /usr/bin/env GIT_LFS_SKIP_SMUDGE=1 git -C "$dir" checkout --detach "$expected"
-            [[ "$(git -C "$dir" rev-parse HEAD)" == "$expected" ]] || die "checkout does not match requested commit $GIT_COMMIT"
-        fi
     fi
     if [[ "$USE_NIX" == 1 ]]; then verify_nix_develop; fi
     local -a sync_args=(--locked --python "$INSTALL_PYTHON" --group tests --group lint)
@@ -1078,7 +997,7 @@ main() {
         export UV_PYTHON_PREFERENCE=only-managed
     fi
     if [[ "$SETUP_METHOD" != "nix" ]]; then install_system_deps; fi
-    if [[ "$DETECTED_OS" == "macos" && "$USE_NIX" != 1 && "$DRY_RUN" != 1 ]]; then select_macos_sdk; fi
+    if [[ "$DETECTED_OS" == "macos" && "$USE_NIX" != 1 ]]; then update_command_line_tools; fi
     install_uv
 
     if [[ -z "$DETECTED_PYTHON" ]]; then
