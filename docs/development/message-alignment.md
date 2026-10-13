@@ -1,81 +1,33 @@
-# Keep built-in definitions and generated packages aligned
+# Verify prepared built-in inputs and artifacts
 
-Built-in message definitions live in `dimos/message_codegen/schemas/<package>/msg/*.msg`.
-The distribution version comes from `packages/dimos-generated/pyproject.toml`.
-These are the inputs; installed packages and generated output are never used as
-the definition source for the alignment check.
-
-Python value classes, C++ headers/CMake sources, Rust crate sources, and complete
-schema closures are **checked in** under `packages/dimos-generated/src/`:
-
-```text
-dimos_generated/                         # Python classes and pure CDR runtime
-dimos_generated_schemas/schemas/         # canonical .msg closure
-dimos_generated_schemas/package/cpp/     # C++ header codec and CMake exports
-dimos_generated_schemas/package/rust/    # Cargo manifest and Rust sources
-```
-
-CI packages those sources as Python wheels/sdists and native source artifacts.
-C++ and Rust consumers compile the distributed sources with their normal
-toolchains; they do not regenerate standard messages. Python wheel installation
-does not require a message compiler.
-
-## Check locally
-
-Prepare the pinned formatter explicitly and install only the locked generation
-dependencies, without the runtime or native message toolchains:
+PR1 owns the generic source-package hooks, dependency ownership and pinned source
+preparation. PR2 owns `packages/dimos-generated/custom`, `catalog.json`,
+`schema-sources.json`, package metadata and thin preparation/release entrypoints.
+There is no committed generated snapshot or bulk upstream catalog.
 
 ```sh skip
-rustup toolchain install 1.92.0 --component rustfmt
-uv sync --only-group message-codegen --frozen
-.venv/bin/python -m scripts.generate_builtin_messages --check
+python scripts/prepare_message_parser.py
+python -m scripts.prepare_builtin_sources
+python -m scripts.generate_builtin_messages
+python -m scripts.generate_builtin_messages --check
 ```
 
-Use a prepared uv cache and `--offline` for an offline dependency install. The
-check invokes the already installed Rust 1.92.0 formatter; it does not install
-system packages or download a toolchain. Ruff and Python dependencies resolve
-from `uv.lock`.
+Source preparation checks archive and selected-file hashes. Use `--offline` with
+cached archives. It is an explicit developer/release step, never a pip hook.
+Only the selected message closure plus licenses is materialized into ignored
+`packages/dimos-generated/interfaces`. The release sdist includes those inputs.
 
-Each check generates fresh Python/C++/Rust/schema outputs in a temporary directory
-and compares every relative filename and byte against the checked-in output tree.
-Changed content, missing files, stale deleted types and extra **untracked** files
-all fail. Only Python cache/egg-info metadata is excluded. No incremental cache or
-comparison against another copy of generated output can make stale source pass.
+The artifact check regenerates into temporary storage and compares file names and
+bytes with `packages/dimos-generated/build/message-source/python`. It does not
+repair changed, missing or stale artifacts. CI prepares inputs first, then runs
+both regeneration and mutation checks. Python dependencies and native tools are
+prepared separately; these checks do not install system tools or change hosts.
 
-After editing a definition, generator/template, or distribution version, repair
-the outputs explicitly and review both changed and newly generated files:
+Regression tests cover fields, schemas, package version, explicit root addition,
+deletion/rename, extra files and missing Python/C++/Rust/schema outputs. Cold offline
+source/wheel/sdist/editable tests block native tools and verify type identity,
+complete dependency schemas, field edits and renames. Codec assertions and precise
+strict expected failures remain separate from artifact alignment.
 
-```sh skip
-.venv/bin/python -m scripts.generate_builtin_messages
-.venv/bin/python -m scripts.generate_builtin_messages --check
-git diff -- packages/dimos-generated/src
-git status --short -- packages/dimos-generated/src
-```
-
-Commit definitions and generated changes together. Restart Python processes
-after regeneration; an already imported class does not update in place.
-
-## CI enforcement
-
-The main `ci` workflow runs **Built-in message alignment** on every pull request,
-main push, merge-group run and manual dispatch. Its failed result fails the
-existing `ci-complete` aggregate. It is not an allowed skip. No branch protection
-or ruleset changes are made by this proposal.
-
-The `message-codegen` workflow also runs **Reject checked-in generated source
-drift**. Its relevant input paths include schemas, generator/templates, package
-metadata/output, root `pyproject.toml`, `uv.lock`, and the check/workflow itself.
-Its existing three-language and independent ROS2 wire/schema tests complement
-source alignment; a byte-for-byte check alone does not prove codec correctness.
-
-Regression tests deliberately alter a field, schema text, add/remove a type,
-change generator output and package version, and remove Python/C++/Rust/schema
-outputs or add an untracked output. Each must fail before explicit regeneration
-and pass after repair. Version repair is checked in Python, CMake and Cargo.
-The dedicated CI job requires the pinned formatter and executes every case;
-ordinary runtime test environments without that toolchain report an explicit
-prerequisite skip. The mandatory drift command never skips missing tools.
-
-CI has read-only repository permissions for this check. It fails with the repair
-command; it does not commit generated changes, use a persistent write token, or
-silently replace definitions during packaging.
+The checks retain read-only repository permissions. They do not commit outputs,
+query CI status or prove complete native/runtime/hardware acceptance.

@@ -12,10 +12,17 @@ import shutil
 import subprocess
 import tarfile
 import tomllib
-from dimos.message_codegen.builtin import generate_builtin
+from dimos.message_codegen.source_package import prepare
 output = Path("build/message-codegen/release")
 version = tomllib.loads(Path("packages/dimos-generated/pyproject.toml").read_text())["project"]["version"]
-generate_builtin(output, version)
+prepare(Path("packages/dimos-generated").resolve(), output)
+resources = output / "python/dimos_generated_schemas/package"
+metadata = output / "metadata"
+metadata.mkdir(exist_ok=True)
+for file in resources.iterdir():
+    if file.is_file() and file.name not in {"message-package.json", "schemas.json"}:
+        shutil.copy2(file, metadata / file.name)
+shutil.copytree(metadata, output / "rust/source-metadata", dirs_exist_ok=True)
 subprocess.run(["cargo", "package", "--manifest-path", str(output / "rust/Cargo.toml"), "--allow-dirty", *(["--offline"] if os.environ.get("DIMOS_OFFLINE") == "1" else [])], check=True)
 dist = output / "dist"
 dist.mkdir(exist_ok=True)
@@ -23,7 +30,7 @@ dist.mkdir(exist_ok=True)
 # Ship relocatable source inputs; the shared native preparation core builds them.
 archive = dist / f"dimos-messages-sources-{version}.tar.gz"
 with tarfile.open(archive, "w:gz") as bundle:
-    for name in ["cpp", "schemas", "schemas.json", "message-package.json"]:
+    for name in ["cpp", "schemas", "schemas.json", "message-package.json", "metadata"]:
         bundle.add(output / name, arcname=name)
 shutil.copy2(output / f"rust/target/package/dimos-generated-messages-{version}.crate", dist)
 print(archive.resolve())

@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Compiler-free installation acceptance for checked-in built-in message sources.
+# Compiler-free installation acceptance for explicitly prepared built-in message sources.
 set -euo pipefail
 cd "$(dirname "$0")/.."
 output="$PWD/build/message-codegen/builtin-source"
@@ -21,6 +21,6 @@ uv pip install --python "$output/venv/bin/python" pytest
 # The dependency download is explicit preparation. The acceptance itself is offline.
 "$output/venv/bin/python" -m pip download --only-binary=:all: --dest "$output/dependencies" \
   setuptools wheel "rosbags==0.11.0" "empy==4.2" "lark==1.2.2" "numpy>=1.26.4" "tomli>=2"
-DIMOS_MESSAGE_WHEELHOUSE="$output/dependencies" DIMOS_MESSAGE_INSTALL_REQUIRED=1 \
+DIMOS_BUILTIN_SOURCE_CACHE="$PWD/build/builtin-source-cache" DIMOS_MESSAGE_WHEELHOUSE="$output/dependencies" DIMOS_MESSAGE_INSTALL_REQUIRED=1 \
   "${DIMOS_CODEGEN_PYTHON:-$PWD/.venv/bin/python}" -m pytest --noconftest -o addopts='' -q \
-  dimos/message_codegen/test_builtin_install.py dimos/message_codegen/test_builtin_catalog.py
+  dimos/message_codegen/test_builtin_install.py dimos/message_codegen/test_builtin_catalog.py dimos/message_codegen/test_builtin_preparation.py

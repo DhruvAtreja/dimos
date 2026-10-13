@@ -41,6 +41,7 @@ jobs:
           test ! -d /opt/ros
           uv venv .venv --python 3.12 --seed
           uv run --no-project --with requests python scripts/prepare_message_parser.py
+          uv run --no-project --with requests python -m scripts.prepare_builtin_sources
           uv pip install --python .venv/bin/python "./dimos/message_codegen[native]" ruff==0.14.3 requests types-setuptools types-requests numpy pytest pytest-cov pytest-asyncio pytest-env mypy==1.19.0
           .venv/bin/python -c "import importlib.util; assert importlib.util.find_spec('rclpy') is None"
       - name: Install the built-in source package without nested build isolation

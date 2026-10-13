@@ -12,41 +12,53 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""An explicit catalog preserves dependencies without exporting unrelated sources."""
+"""Explicit product inputs do not expand when unrelated schemas appear."""
 
 import json
+from pathlib import Path
 import shutil
 
 import pytest
 
-from dimos.message_codegen.builtin import generate_builtin, supported_names
-from dimos.message_codegen.definitions import BUNDLED_SCHEMAS
+from dimos.message_codegen.source_package import prepare
 
 
 def test_unlisted_sources_do_not_expand_the_public_catalog(tmp_path):
-    source = tmp_path / "schemas"
-    shutil.copytree(BUNDLED_SCHEMAS, source)
-    shutil.copyfile(BUNDLED_SCHEMAS.parent / "sources.json", tmp_path / "sources.json")
-    extra = source / "extra_msgs/msg/NotExported.msg"
+    project = tmp_path / "project"
+    shutil.copytree(
+        Path(__file__).resolve().parents[2] / "packages/dimos-generated",
+        project,
+        ignore=shutil.ignore_patterns("build", "dist", "*.egg-info", "__pycache__"),
+    )
+    extra = project / "interfaces/extra_msgs/msg/NotExported.msg"
     extra.parent.mkdir(parents=True)
     extra.write_text("std_msgs/Header header\n")
-    output = tmp_path / "output"
-    names = generate_builtin(output, "0.1.0", source)
-    assert "extra_msgs/msg/NotExported" not in names
-    assert not (output / "schemas/extra_msgs/msg/NotExported.msg").exists()
-    assert "builtin_interfaces/msg/Time" in names
-    assert len(names) == 73
+    source = prepare(project)
+    manifest = json.loads(
+        (source / "dimos_generated_schemas/package/message-package.json").read_text()
+    )
+    assert len(manifest["owned"]) == 73
+    assert "extra_msgs/msg/NotExported" not in manifest["owned"]
+    assert "builtin_interfaces/msg/Time" in manifest["owned"]
 
 
 def test_declared_root_requires_a_reason_and_a_resolvable_closure(tmp_path):
-    source = tmp_path / "schemas"
-    shutil.copytree(BUNDLED_SCHEMAS, source)
-    catalog = source / "catalog.json"
+    project = tmp_path / "project"
+    shutil.copytree(
+        Path(__file__).resolve().parents[2] / "packages/dimos-generated",
+        project,
+        ignore=shutil.ignore_patterns("build", "dist", "*.egg-info", "__pycache__"),
+    )
+    catalog = project / "catalog.json"
     catalog.write_text(json.dumps({"format": 1, "roots": {"std_msgs/msg/Header": ""}}))
-    with pytest.raises(ValueError, match="support reason"):
-        supported_names(source)
+    with pytest.raises(ValueError, match="requires a reason"):
+        prepare(project)
     catalog.write_text(json.dumps({"format": 1, "roots": {"std_msgs/msg/Header": "Public API"}}))
-    assert set(supported_names(source)) == {"std_msgs/msg/Header", "builtin_interfaces/msg/Time"}
-    (source / "builtin_interfaces/msg/Time.msg").unlink()
+    source = prepare(project)
+    manifest = json.loads(
+        (source / "dimos_generated_schemas/package/message-package.json").read_text()
+    )
+    assert set(manifest["owned"]) == {"std_msgs/msg/Header", "builtin_interfaces/msg/Time"}
+    (project / "interfaces/builtin_interfaces/msg/Time.msg").unlink()
     with pytest.raises(ValueError, match="unresolved message dependency"):
-        supported_names(source)
+        prepare(project)

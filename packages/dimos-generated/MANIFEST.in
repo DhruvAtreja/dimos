@@ -1,4 +1,3 @@
-include pyproject.toml setup.py _build.py
-graft canonical
+include pyproject.toml setup.py catalog.json schema-sources.json
 prune build
 global-exclude __pycache__ *.pyc

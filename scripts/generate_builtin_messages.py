@@ -21,11 +21,11 @@ import sys
 import tempfile
 
 if sys.version_info >= (3, 11):
-    import tomllib
+    pass
 else:
-    import tomli as tomllib
+    pass
 
-from dimos.message_codegen.builtin import generate_builtin
+from dimos.message_codegen.source_package import prepare
 
 
 def main() -> None:
@@ -33,14 +33,10 @@ def main() -> None:
     parser.add_argument("--check", action="store_true")
     args = parser.parse_args()
     root = Path(__file__).resolve().parents[1]
-    project = tomllib.loads((root / "packages/dimos-generated/pyproject.toml").read_text())[
-        "project"
-    ]
-    version = project["version"]
     target = root / "packages/dimos-generated/build/message-source/python"
     with tempfile.TemporaryDirectory(prefix="dimos-source-") as temporary:
         output = Path(temporary)
-        generate_builtin(output, version)
+        prepare(root / "packages/dimos-generated", output)
         source = output / "python"
         packages = [source / "dimos_generated", source / "dimos_generated_schemas"]
         expected = {

@@ -12,26 +12,24 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""PEP 517/660 uses the same explicit message source build as release packaging."""
+"""Product adapter for generic source-package hooks."""
 
 from pathlib import Path
-import sys
 
-from setuptools import find_packages, setup
+from dimos_message_build.source_package import SourceDistribution, setup_arguments
+from setuptools import setup
 
-try:
-    import tomllib
-except ModuleNotFoundError:
-    import tomli as tomllib
 
-sys.path.insert(0, str(Path(__file__).resolve().parent))
-from _build import SourceDistribution, prepare
+class BuiltinSourceDistribution(SourceDistribution):
+    def make_release_tree(self, base_dir: str, files: list[str]) -> None:
+        super().make_release_tree(base_dir, files)
+        metadata = Path(base_dir) / "pyproject.toml"
+        marker = "# Checkout-only uv source."
+        text = metadata.read_text()
+        if marker in text:
+            metadata.write_text(text.split(marker, 1)[0].rstrip() + "\n")
 
-project = Path(__file__).resolve().parent
-version = tomllib.loads((project / "pyproject.toml").read_text())["project"]["version"]
-source = prepare(project, version)
-setup(
-    packages=find_packages(str(source)),
-    package_dir={"": str(source.relative_to(project))},
-    cmdclass={"sdist": SourceDistribution},
-)
+
+arguments = setup_arguments(Path(__file__).resolve().parent)
+arguments["cmdclass"] = {"sdist": BuiltinSourceDistribution}
+setup(**arguments)

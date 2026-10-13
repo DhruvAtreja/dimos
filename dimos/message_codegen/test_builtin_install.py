@@ -30,7 +30,6 @@ from dimos_generated.builtin_interfaces.msg import Time
 from dimos_generated.std_msgs.msg import Header
 from dimos_generated.geometry_msgs.msg import Point, Pose, PoseStamped, Quaternion
 from dimos_message_build.registry import encode, decode, schema
-from dimos_message_build.builtin import supported_names
 from dimos_generated_schemas.provider import message_types, package_root
 from pathlib import Path
 h = Header(Time(17, 23), 'map')
@@ -40,10 +39,9 @@ assert type(r.header) is Header and r == m
 assert type(pickle.loads(pickle.dumps(m)).header) is Header
 assert 'MSG: std_msgs/Header' in schema(m.__msgtype__)
 assert len(message_types()) == 73
-assert len(supported_names()) == 73
 assert 'visualization_msgs/msg/Marker' not in message_types()
 root = Path(package_root())
-assert (root / 'sources.json').is_file()
+assert (root / 'schema-sources.json').is_file()
 assert (root / 'rust/Cargo.toml').is_file()
 assert (root / 'cpp/CMakeLists.txt').is_file()
 """
@@ -87,12 +85,6 @@ def test_cold_offline_source_sdist_wheel_and_editable(tmp_path):
         project,
         ignore=shutil.ignore_patterns("build", "dist", "*.egg-info", "canonical", "__pycache__"),
     )
-    shutil.copytree(
-        root / "dimos/message_codegen/schemas", checkout / "dimos/message_codegen/schemas"
-    )
-    shutil.copyfile(
-        root / "dimos/message_codegen/sources.json", checkout / "dimos/message_codegen/sources.json"
-    )
     blocked = tmp_path / "blocked"
     blocked.mkdir()
     for tool in ["cc", "c++", "gcc", "g++", "cmake", "cargo", "rustc", "rustup"]:
@@ -113,7 +105,7 @@ def test_cold_offline_source_sdist_wheel_and_editable(tmp_path):
     archive = next((tmp_path / "sdists").glob("*.tar.gz"))
     with tarfile.open(archive) as bundle:
         names = bundle.getnames()
-        assert any(name.endswith("canonical/catalog.json") for name in names)
+        assert any(name.endswith("catalog.json") for name in names)
         assert not any("/build/" in name or "/src/" in name for name in names)
     run([python, "-m", "pip", "install", "--force-reinstall", str(archive)])
     run([python, "-I", "-c", CHECK])
@@ -134,7 +126,7 @@ def test_cold_offline_source_sdist_wheel_and_editable(tmp_path):
     run([python, "-I", "-c", CHECK])
     run([python, "-m", "pip", "install", "-e", str(project)])
     run([python, "-I", "-c", CHECK])
-    stats = checkout / "dimos/message_codegen/schemas/dimos_msgs/msg/VideoStats.msg"
+    stats = project / "interfaces/dimos_msgs/msg/VideoStats.msg"
     stats.write_text(stats.read_text().replace("float64 e2e_latency_ms", "float32 e2e_latency_ms"))
     run([python, "-m", "pip", "install", "-e", str(project)])
     run(
@@ -146,9 +138,9 @@ def test_cold_offline_source_sdist_wheel_and_editable(tmp_path):
         ]
     )
 
-    stats = checkout / "dimos/message_codegen/schemas/dimos_msgs/msg/VideoStats.msg"
+    stats = project / "interfaces/dimos_msgs/msg/VideoStats.msg"
     stats.rename(stats.with_name("RenamedStats.msg"))
-    catalog = checkout / "dimos/message_codegen/schemas/catalog.json"
+    catalog = project / "catalog.json"
     data = json.loads(catalog.read_text())
     data["roots"]["dimos_msgs/msg/RenamedStats"] = data["roots"].pop("dimos_msgs/msg/VideoStats")
     catalog.write_text(json.dumps(data))

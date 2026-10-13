@@ -82,7 +82,7 @@ def run_generation(checkout, *, check):
 def test_independent_regeneration_rejects_and_repairs_drift(aligned_checkout, tmp_path, change):
     checkout = tmp_path / "checkout"
     shutil.copytree(aligned_checkout, checkout)
-    definitions = checkout / "dimos/message_codegen/schemas"
+    definitions = checkout / "packages/dimos-generated/interfaces"
     output = checkout / "packages/dimos-generated/build/message-source/python"
     point = definitions / "geometry_msgs/msg/Point.msg"
     if change == "field":
@@ -94,20 +94,20 @@ def test_independent_regeneration_rejects_and_repairs_drift(aligned_checkout, tm
         (definitions / "alignment_msgs/msg/AlignmentProbe.msg").write_text(
             "std_msgs/Header header\nfloat64 value\n"
         )
-        catalog = definitions / "catalog.json"
+        catalog = checkout / "packages/dimos-generated/catalog.json"
         data = json.loads(catalog.read_text())
         data["roots"]["alignment_msgs/msg/AlignmentProbe"] = "Explicit test contract"
         catalog.write_text(json.dumps(data))
     elif change == "deleted_type":
         (definitions / "std_msgs/msg/Empty.msg").unlink()
-        catalog = definitions / "catalog.json"
+        catalog = checkout / "packages/dimos-generated/catalog.json"
         data = json.loads(catalog.read_text())
         del data["roots"]["std_msgs/msg/Empty"]
         catalog.write_text(json.dumps(data))
     elif change == "renamed_type":
         previous = definitions / "dimos_msgs/msg/VideoStats.msg"
         previous.rename(previous.with_name("RenamedStats.msg"))
-        catalog = definitions / "catalog.json"
+        catalog = checkout / "packages/dimos-generated/catalog.json"
         data = json.loads(catalog.read_text())
         data["roots"]["dimos_msgs/msg/RenamedStats"] = data["roots"].pop(
             "dimos_msgs/msg/VideoStats"
@@ -144,7 +144,7 @@ def test_independent_regeneration_rejects_and_repairs_drift(aligned_checkout, tm
         for path in output.rglob("*")
         if path.is_file()
     }
-    assert after_check == before_check, "--check must not repair or rewrite checked-in output"
+    assert after_check == before_check, "--check must not repair or rewrite build output"
     assert failed.returncode != 0
     assert "Generated source drift" in failed.stderr, failed.stderr
     if change == "field":
