@@ -124,8 +124,9 @@ def deployed(
         )
     try:
         for host_id, fragment in fragments.items():
-            status = clients[host_id].start(fragment)
+            # before start: a Host keeps an accepted run even if its reply never arrives
             started.append((clients[host_id], fragment))
+            status = clients[host_id].start(fragment)
             if status.state != "running":
                 raise RuntimeError(f"Host {names[host_id]} failed to start {run_id}: {status}")
         yield placement
