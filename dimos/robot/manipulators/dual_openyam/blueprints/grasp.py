@@ -81,11 +81,12 @@ DUAL_OPENYAM_GRASP_PINK = PinkKinematicsConfig(
     gain=1.0,
 )
 # Fixed camera on the centre post, in the frame midway between the arm bases
-# (x forward, y toward the left arm, z up). Solved from four 10 cm AprilTags at
-# tape-measured positions, 1.2 px reprojection RMS over 16 corners.
+# (x forward, y toward the left arm, z up). Solved 2026-10-13 from four AprilTags
+# laid by their corners from the J1 line and the X axis (97.5 mm black squares),
+# 0.66 px reprojection RMS over 16 corners; tape to the camera agrees within 1 cm.
 DUAL_OPENYAM_CAMERA_TRANSFORM = Transform(
-    translation=Vector3(x=-0.0163, y=0.0008, z=0.4020),
-    rotation=Quaternion(-0.01366, 0.48119, -0.00881, 0.87647),  # xyzw, pitched 57.6 deg down
+    translation=Vector3(x=-0.0121, y=0.0147, z=0.4069),
+    rotation=Quaternion(-0.01191, 0.48426, -0.01853, 0.87465),  # xyzw, pitched 58.0 deg down
     frame_id="world",
     child_frame_id="camera_link",
 )
