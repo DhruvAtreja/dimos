@@ -31,14 +31,18 @@ dimos run learning-collect-webxr-dual-openyam --left-can-port can0 --right-can-p
 ```
 
 This brings up teleop, a RealSense (real only), the episode monitor, and the
-recorder, all wired together.
+recorder, all wired together. The dual OpenYAM graph also records both wrist
+cameras, the operator's controller poses, gripper commands and button word, and
+binds two parking buttons: **A** plans both arms to the home pose and runs it
+slowly (refused while a grip is held), **X** makes the current pose the home
+pose for the rest of the session.
 
 ### Controls (WebXR)
 
 | Button | Action |
 | --- | --- |
-| **Grip** (middle finger) | **Hold to engage** — the arm tracks the controller only while held. A two-arm task (dual OpenYAM) needs both grips; releasing either stops both arms |
-| **Trigger** (index finger) | **Gripper** — analog close while that hand is engaged |
+| **Grip** (middle finger) | **Hold to engage**: the arm tracks the controller only while held. A two-arm task (dual OpenYAM) needs both grips; releasing either stops both arms |
+| **Trigger** (index finger) | **Gripper**: analog close while that hand is engaged |
 | **B** | **Toggle record** — press to start an episode, press again to save it |
 | **Y** | **Discard** the in-progress episode |
 

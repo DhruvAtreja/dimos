@@ -32,6 +32,7 @@ from dimos.imitation.collection.recorder import CollectionRecorder
 from dimos.robot.manipulators.dual_openyam.blueprints.collection import (
     DUAL_OPENYAM_COLLECTION_STREAMS,
     DualOpenYamCollectionRecorder,
+    DualOpenYamHomeButtonModule,
     dual_openyam_wrist_camera,
     teleop_webxr_dual_openyam_collection,
 )
@@ -107,6 +108,7 @@ learning_collect_webxr_dual_openyam = autoconnect(
         record_tf=False,
     ),
     EpisodeMonitorModule.blueprint(task="Teleoperate the dual OpenYAM"),
+    DualOpenYamHomeButtonModule.blueprint(),
     teleop_webxr_dual_openyam_collection,
     *_dual_openyam_cameras_if_real(),
 )

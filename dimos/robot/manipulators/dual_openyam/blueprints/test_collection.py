@@ -19,22 +19,30 @@ import pytest
 from dimos.control.coordinator import TaskConfig
 from dimos.control.teleop_coordinator import TeleopControlCoordinator
 from dimos.core.coordination.blueprints import Blueprint
+from dimos.manipulation.manipulation_module import ManipulationModule
 from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
 from dimos.robot.manipulators.dual_openyam.blueprints.basic import DualOpenYamCoordinator
 from dimos.robot.manipulators.dual_openyam.blueprints.collection import (
     DUAL_OPENYAM_COLLECTION_BASE_JOINT_SPEED_RAD_S,
+    DUAL_OPENYAM_COLLECTION_HOME_JOINTS,
     DUAL_OPENYAM_COLLECTION_JOINT_SPEED_RAD_S,
     DUAL_OPENYAM_COLLECTION_MOTION_SCALE,
     DUAL_OPENYAM_COLLECTION_STREAMS,
+    DUAL_OPENYAM_PLANNING_GROUPS,
     DUAL_OPENYAM_WRIST_CAMERA_SERIALS,
     DualOpenYamCollectionRecorder,
     DualOpenYamCollectionTeleopModule,
+    DualOpenYamHomeButtonConfig,
+    DualOpenYamHomeButtonModule,
     dual_openyam_collection_teleop_task,
+    dual_openyam_home_targets,
     dual_openyam_wrist_camera,
     scale_controller_pose,
     teleop_webxr_dual_openyam_collection,
 )
 from dimos.robot.manipulators.dual_openyam.blueprints.teleop import teleop_webxr_dual_openyam
+from dimos.robot.manipulators.dual_openyam.config import dual_openyam_model_config
+from dimos.robot.manipulators.dual_openyam.joints import DUAL_OPENYAM_ARM_JOINTS
 from dimos.teleop.webxr.extensions import ArmTeleopModule
 
 
@@ -136,3 +144,48 @@ def test_recorder_declares_every_collection_stream_as_an_input() -> None:
     inputs = {s.name for s in atom.streams if s.direction == "in"}
 
     assert set(DUAL_OPENYAM_COLLECTION_STREAMS) <= inputs
+
+
+def test_home_targets_split_the_pose_per_planning_group() -> None:
+    model = dual_openyam_model_config()
+    assert tuple(g.name for g in model.planning_groups) == DUAL_OPENYAM_PLANNING_GROUPS
+
+    targets = dual_openyam_home_targets(DUAL_OPENYAM_COLLECTION_HOME_JOINTS)
+    assert set(targets) == set(DUAL_OPENYAM_PLANNING_GROUPS)
+    names = [n for g in DUAL_OPENYAM_PLANNING_GROUPS for n in targets[g].name]
+    positions = [p for g in DUAL_OPENYAM_PLANNING_GROUPS for p in targets[g].position]
+    assert names == list(DUAL_OPENYAM_ARM_JOINTS)
+    assert positions == DUAL_OPENYAM_COLLECTION_HOME_JOINTS
+    with pytest.raises(ValueError):
+        dual_openyam_home_targets([0.0] * 6)
+
+
+def test_home_button_config_rejects_bad_inputs() -> None:
+    config = DualOpenYamHomeButtonConfig()
+    assert (config.home_button, config.set_home_button) == ("A", "X")
+    assert 0.0 < config.speed_scale < 1.0
+    assert config.home_joints == DUAL_OPENYAM_COLLECTION_HOME_JOINTS
+    with pytest.raises(ValueError):
+        DualOpenYamHomeButtonConfig(home_button="Z")
+    with pytest.raises(ValueError):
+        DualOpenYamHomeButtonConfig(home_joints=[0.0] * 6)
+    with pytest.raises(ValueError):
+        DualOpenYamHomeButtonConfig(speed_scale=1.5)
+
+
+def test_home_button_module_binds_buttons_and_the_planner() -> None:
+    from dimos.imitation.collection.blueprint import learning_collect_webxr_dual_openyam
+
+    atom = next(
+        a
+        for a in learning_collect_webxr_dual_openyam.blueprints
+        if a.module is DualOpenYamHomeButtonModule
+    )
+    inputs = {s.name for s in atom.streams if s.direction == "in"}
+    assert {"button_pressed", "teleop_buttons", "coordinator_joint_state"} <= inputs
+    assert [(r.name, r.spec) for r in atom.module_refs] == [("_manipulation", ManipulationModule)]
+    # the episode monitor keeps B and Y; parking uses the free face buttons
+    assert {
+        DualOpenYamHomeButtonConfig().home_button,
+        DualOpenYamHomeButtonConfig().set_home_button,
+    } == {"A", "X"}
