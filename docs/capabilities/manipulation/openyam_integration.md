@@ -91,6 +91,29 @@ The bus uses classical CAN at 1 Mbit/s. Opening the gripper decreases motor
 position. The arm and gripper are exposed together as one whole-body hardware
 component.
 
+## Pick-and-place benchmark
+
+The xArm grasp stack on the workcell, one arm per blueprint:
+
+```bash
+dimos run dual-openyam-grasp-right --left-can-port follower_l --right-can-port follower_r
+dimos run dual-openyam-grasp-right-agent --left-can-port follower_l --right-can-port follower_r
+dimos humancli      # second terminal: "scan for a soup can", "pick up the soup can", "put it in the bin"
+```
+
+`dual-openyam-grasp-left` and the `-graspgenx` variants select the other arm
+and the learned grasp provider. The planning model carries both arms, but the
+manipulation module binds one gripper per model, so each blueprint benchmarks
+the arm whose gripper it names while the other arm rests on its support.
+Every run records joint states, the three cameras and TF to sqlite.
+
+What the stack does not have on the workcell, and therefore what the benchmark
+measures as is: the model has no collision geometry, so the planner avoids
+only the table (`floor_z`) and the detected objects; grasps are one top-down
+heuristic candidate per object; a pick executes as soon as it is planned, so
+the operator keeps a hand on the e-stop; grasp success is judged from the jaw
+readback alone.
+
 ## Model assets
 
 Two dual-arm model packages ship as LFS data:
