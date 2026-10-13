@@ -64,3 +64,4 @@ class LocalizePolicy:
     min_camera_range_m: float = 0.28
     fuse_voxel_m: float = 0.01  # union cloud voxel at merge; 0 concatenates
     plane_keyframes: int = 5
+    plane_cell_m: float = 2.0  # XY cell of the support-plane cache

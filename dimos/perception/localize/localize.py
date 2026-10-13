@@ -213,7 +213,8 @@ def localize(
     query, collect what a renderer needs. A ``groups`` dict makes evidence
     cumulative across calls: frames already read for a label under the same
     policy are skipped, a box is lifted in once, and an object stays answerable
-    after it leaves the window.
+    after it leaves the window. A frame counts as read once its sightings are
+    in, so a frame a failed call left behind is read again.
     """
     policy = policy or LocalizePolicy()
     label_traces: list[LocalizeTrace | None] = (
@@ -278,17 +279,22 @@ def localize(
     )
 
     planes: dict[str, SupportPlane | None] = {}
-    if candidate_ids:
-        for frame, keyframes in by_camera.items():
-            plane = rig.plane_cache.get(frame)
-            if plane is None:
-                stride = max(1, len(keyframes) // policy.plane_keyframes)
-                plane = fit_support_plane(rig, keyframes[::stride][: policy.plane_keyframes], frame)
-                if plane is not None:
-                    rig.plane_cache[frame] = plane
-            planes[frame] = plane
+    for frame, keyframes in by_camera.items():
+        if not keyframes:
+            continue
+        stride = max(1, len(keyframes) // policy.plane_keyframes)
+        fit_from = keyframes[::stride][: policy.plane_keyframes]
+        # one plane per camera and area: a moving camera meets other surfaces
+        x, y = np.mean([obs.pose_tuple[:2] for obs in fit_from], axis=0)
+        key = (frame, round(float(x) / policy.plane_cell_m), round(float(y) / policy.plane_cell_m))
+        if key not in rig.plane_cache:
+            plane = fit_support_plane(rig, fit_from, frame)
+            if plane is not None:
+                rig.plane_cache[key] = plane
+        planes[frame] = rig.plane_cache.get(key)
 
     floor = policy.candidate_floor
+    pending: dict[FrameKey, list[int]] = {}
 
     def _detect(upstream: Iterator[Any]) -> Iterator[Any]:
         for obs in upstream:
@@ -298,8 +304,6 @@ def localize(
             ]
             if not active:
                 continue
-            for j in active:
-                state[j].ingested.add((frame_key, policy))
             img = rig.frame_at(obs)
             boxes, rows = detector.query_score_rows(img, queries, threshold=floor)
 
@@ -320,8 +324,12 @@ def localize(
                     )
                     if det.is_valid():
                         detections.append(det)
-            if detections:
-                yield obs.derive(data=ImageDetections2D(image=img, detections=detections))
+            if not detections:
+                for j in active:
+                    state[j].ingested.add((frame_key, policy))
+                continue
+            pending[frame_key] = active
+            yield obs.derive(data=ImageDetections2D(image=img, detections=detections))
 
     def _ingest(upstream: Iterator[Any]) -> Iterator[Any]:
         for obs in upstream:
@@ -339,6 +347,9 @@ def localize(
                     label_trace.detection_frames.append(
                         obs.derive(data=ImageDetections2D(image=frame.image, detections=label_dets))
                     )
+            # read only once its sightings are in, so a frame a call failed on is read again
+            for j in pending.pop(frame_key):
+                state[j].ingested.add((frame_key, policy))
             yield obs
 
     candidates.transform(_detect).map(

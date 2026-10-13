@@ -86,7 +86,7 @@ class Rig:
     tf: TFLookup
     world_frame: str = WORLD_FRAME
     lidar: Any = None
-    plane_cache: dict[str, SupportPlane] = field(default_factory=dict, repr=False)
+    plane_cache: dict[tuple[str, int, int], SupportPlane] = field(default_factory=dict, repr=False)
     _lidar_map: tuple[int, PointCloud2 | None] | None = field(default=None, init=False, repr=False)
 
     @classmethod
