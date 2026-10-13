@@ -168,7 +168,7 @@ robots:
         description: Drive a Go2 carrying a Livox Mid-360 and record the lidar, the robot and its pose.
         recommended_config:
         - global: robot_ip
-      unitree-go2-mls-htc:
+      unitree-go2-hol-path-controller:
         title: Go2 3D navigation (MLS + holonomic)
         description: '3D navigation: a voxel map, MLS planning and a holonomic controller.'
         recommended_config:
@@ -376,9 +376,6 @@ robots:
       unitree-g1-record:
         title: G1 recording
         description: Drive a G1 and record what it sees (needs the Unitree SDK).
-      unitree-g1-shm:
-        title: G1 over shared memory
-        description: G1 perception and memory with images moved over shared memory.
       unitree-g1-teleop:
         title: G1 VR teleop + recording
         description: GR00T whole-body control, WebXR arm teleop, manipulation and episode recording.
