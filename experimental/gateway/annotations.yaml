@@ -5,6 +5,7 @@
 # config values hold. A pick sets several values at once: a `label` and `choices` that each `set:` them, e.g.
 # "Run it on": Robot / Replay / Simulator. On a blueprint, `recommended_config` replaces its robot's defaults; an entry
 # for a key the robot's defaults also name inherits that entry's fields.
+# A setting used more than once is written once with an anchor (`- &name`) and reused as `- *name`.
 
 # Robot types, in the order a launcher groups robots by; each robot's `type` is one of these (or null: not a robot
 # dimos drives, listed last under Other).
@@ -34,7 +35,8 @@ robots:
     - teleop-phone-go2
     defaults:
       recommended_config:
-      - label: Run it on
+      - &robot_replay_or_simulator
+        label: Run it on
         choices:
         - label: Robot
           set:
@@ -83,20 +85,7 @@ robots:
         description: Map and navigation plus an AI agent you can talk to (over MCP), with a memory of what it has seen.
         starter: 3
         recommended_config:
-        - label: Run it on
-          choices:
-          - label: Robot
-            set:
-              replay: false
-              simulation: ''
-          - label: Replay
-            set:
-              replay: true
-              simulation: ''
-          - label: Simulator
-            set:
-              replay: false
-              simulation: mujoco
+        - *robot_replay_or_simulator
         - global: robot_ip
         - global: replay_db
         - global: detection_model
@@ -112,7 +101,7 @@ robots:
         title: Go2 phone driving
         description: Drive a Go2 from a phone's touch controls.
         starter: 6
-        recommended_config:
+        recommended_config: &robot_ip_only
         - global: robot_ip
       unitree-go2-agentic-cockpit:
         title: Go2 agent with a cockpit
@@ -129,13 +118,13 @@ robots:
       unitree-go2-coordinator:
         title: Go2 control coordinator
         description: A Go2 behind dimos's ControlCoordinator (the base for controller experiments).
-        recommended_config:
-        - global: robot_ip
+        recommended_config: *robot_ip_only
       unitree-go2-fleet:
         title: Go2 fleet
         description: 'Several Go2s driven together: every command goes to all of them.'
         recommended_config:
-        - global: robot_ips
+        - &robot_ips
+          global: robot_ips
           label: Robot IPs
           placeholder: 192.168.12.1,192.168.12.2
           required: true
@@ -145,18 +134,15 @@ robots:
         title: Go2 holonomic benchmark
         description: Benchmarks the holonomic full-pose controller on a Go2.
         hidden: true
-        recommended_config:
-        - global: robot_ip
+        recommended_config: *robot_ip_only
       unitree-go2-holonomic-controller:
         title: Go2 holonomic controller
         description: A standalone holonomic full-pose controller for a Go2, with keyboard driving.
-        recommended_config:
-        - global: robot_ip
+        recommended_config: *robot_ip_only
       unitree-go2-keyboard-teleop:
         title: Go2 keyboard driving (DDS)
         description: Drive a Go2 with the keyboard through the ControlCoordinator over DDS (SDK2).
-        recommended_config:
-        - global: robot_ip
+        recommended_config: *robot_ip_only
       unitree-go2-markers:
         title: Go2 with marker detection
         description: Map and navigation plus fiducial marker detection mirrored into TF.
@@ -166,48 +152,35 @@ robots:
       unitree-go2-mid360-record:
         title: Go2 + Mid-360 recording
         description: Drive a Go2 carrying a Livox Mid-360 and record the lidar, the robot and its pose.
-        recommended_config:
-        - global: robot_ip
+        recommended_config: *robot_ip_only
       unitree-go2-hol-path-controller:
         title: Go2 3D navigation (MLS + holonomic)
         description: '3D navigation: a voxel map, MLS planning and a holonomic controller.'
-        recommended_config:
-        - global: robot_ip
+        recommended_config: *robot_ip_only
       unitree-go2-multi:
         title: Several Go2s
         description: Several independent Go2s on one coordinator.
         recommended_config:
-        - global: robot_ips
-          label: Robot IPs
-          placeholder: 192.168.12.1,192.168.12.2
-          required: true
-          docs: https://docs.dimensional.org/platforms/quadruped/go2/setup/#first-time-setup-connecting-to-wifi-finding-robot-ip
+        - *robot_ips
         - global: robot_ip
       unitree-go2-multi-teleop:
         title: Several Go2s, keyboard driving
         description: Several Go2s, with a keyboard driving window per robot.
         recommended_config:
-        - global: robot_ips
-          label: Robot IPs
-          placeholder: 192.168.12.1,192.168.12.2
-          required: true
-          docs: https://docs.dimensional.org/platforms/quadruped/go2/setup/#first-time-setup-connecting-to-wifi-finding-robot-ip
+        - *robot_ips
         - global: robot_ip
       unitree-go2-nav-3d:
         title: Go2 3D navigation (Mid-360)
         description: '3D navigation with a Livox Mid-360 on the Go2: ray-traced voxel map and MLS planning.'
-        recommended_config:
-        - global: robot_ip
+        recommended_config: *robot_ip_only
       unitree-go2-nav-3d-relocalization:
         title: Go2 3D navigation in a saved map
         description: 3D navigation (Mid-360) that relocalizes in a map you made before.
-        recommended_config:
-        - global: robot_ip
+        recommended_config: *robot_ip_only
       unitree-go2-nav-3d-relocalization-replay:
         title: Go2 3D navigation in a saved map (replay)
         description: The relocalized 3D navigation stack driven by a recording instead of a robot.
-        recommended_config:
-        - global: robot_ip
+        recommended_config: *robot_ip_only
       unitree-go2-pgo:
         title: Go2 with loop closure
         description: Map and navigation with live loop closure (pose-graph optimization).
@@ -221,13 +194,11 @@ robots:
         title: Go2 RPP benchmark
         description: Benchmarks the regulated pure pursuit path follower on a Go2.
         hidden: true
-        recommended_config:
-        - global: robot_ip
+        recommended_config: *robot_ip_only
       unitree-go2-rpp-controller:
         title: Go2 RPP controller
         description: A standalone regulated pure pursuit path-following controller for a Go2.
-        recommended_config:
-        - global: robot_ip
+        recommended_config: *robot_ip_only
       unitree-go2-security:
         title: Go2 security patrol
         description: An agent that patrols with the Go2 and watches for people.
@@ -247,34 +218,26 @@ robots:
       unitree-go2-webrtc-rage-keyboard-teleop:
         title: Go2 keyboard driving (rage mode)
         description: Keyboard driving over WebRTC with the Go2's rage mode (faster gaits) on.
-        recommended_config:
-        - global: robot_ip
+        recommended_config: *robot_ip_only
       teleop-webxr-go2:
         title: Go2 VR driving
         description: Drive a Go2 from a VR headset's thumbsticks, with its camera in the headset.
-        recommended_config:
-        - global: robot_ip
+        recommended_config: *robot_ip_only
       teleop-phone-go2-fleet:
         title: Go2 fleet phone driving
         description: 'Drive a fleet of Go2s from a phone: every command goes to all of them.'
         recommended_config:
-        - global: robot_ips
-          label: Robot IPs
-          placeholder: 192.168.12.1,192.168.12.2
-          required: true
-          docs: https://docs.dimensional.org/platforms/quadruped/go2/setup/#first-time-setup-connecting-to-wifi-finding-robot-ip
+        - *robot_ips
         - global: robot_ip
       teleop-hosted-go2-multicam:
         title: Go2 remote driving (two cameras)
         description: Drive a Go2 from anywhere through the hosted (Cloudflare) teleop broker, with a RealSense as a second
           camera.
-        recommended_config:
-        - global: robot_ip
+        recommended_config: *robot_ip_only
       teleop-hosted-go2-transport:
         title: Go2 remote driving
         description: Drive a Go2 from anywhere through the hosted (Cloudflare) teleop broker.
-        recommended_config:
-        - global: robot_ip
+        recommended_config: *robot_ip_only
       go2-localize-live:
         title: Go2 localize (recording)
         description: A Go2 recording looped as a live feed, with localization behind an agent skill.
@@ -352,7 +315,8 @@ robots:
         title: G1 GR00T whole-body control
         description: GR00T whole-body control with a Mid-360, costmap and A* navigation; on the robot or in MuJoCo.
         recommended_config:
-        - label: Run it on
+        - &robot_or_simulator
+          label: Run it on
           choices:
           - label: Robot
             set:
@@ -514,14 +478,7 @@ robots:
     - dimos/robot/manipulators/xarm
     defaults:
       recommended_config:
-      - label: Run it on
-        choices:
-        - label: Robot
-          set:
-            simulation: ''
-        - label: Simulator
-          set:
-            simulation: mujoco
+      - *robot_or_simulator
       - global: xarm7_ip
         label: xArm7 IP
         placeholder: 192.168.1.185
@@ -546,15 +503,9 @@ robots:
         title: xArm6 keyboard driving
         description: Move an xArm6 with this computer's keyboard.
         recommended_config:
-        - label: Run it on
-          choices:
-          - label: Robot
-            set:
-              simulation: ''
-          - label: Simulator
-            set:
-              simulation: mujoco
-        - global: xarm6_ip
+        - *robot_or_simulator
+        - &xarm6_ip
+          global: xarm6_ip
           label: xArm6 IP
           placeholder: 192.168.1.185
           required: false
@@ -564,15 +515,9 @@ robots:
         title: Lite6 keyboard driving
         description: Move a UFactory Lite6 with this computer's keyboard.
         recommended_config:
-        - label: Run it on
-          choices:
-          - label: Robot
-            set:
-              simulation: ''
-          - label: Simulator
-            set:
-              simulation: mujoco
-        - global: lite6_ip
+        - *robot_or_simulator
+        - &lite6_ip
+          global: lite6_ip
           label: Lite6 IP
           placeholder: 192.168.1.185
           required: false
@@ -601,32 +546,13 @@ robots:
         title: Lite6 motion planning
         description: Motion planning and execution for a Lite6.
         recommended_config:
-        - label: Run it on
-          choices:
-          - label: Robot
-            set:
-              simulation: ''
-          - label: Simulator
-            set:
-              simulation: mujoco
-        - global: lite6_ip
-          label: Lite6 IP
-          placeholder: 192.168.1.185
-          required: false
-          when:
-            simulation: ''
+        - *robot_or_simulator
+        - *lite6_ip
       dual-xarm6-planner-coordinator:
         title: Dual xArm6 motion planning
         description: Motion planning for two xArm6 arms.
         recommended_config:
-        - label: Run it on
-          choices:
-          - label: Robot
-            set:
-              simulation: ''
-          - label: Simulator
-            set:
-              simulation: mujoco
+        - *robot_or_simulator
       coordinator-xarm7:
         title: xArm7 coordinator
         description: An xArm7 behind a ControlCoordinator (a building block).
@@ -636,90 +562,35 @@ robots:
         description: An xArm6 behind a ControlCoordinator (a building block).
         hidden: true
         recommended_config:
-        - label: Run it on
-          choices:
-          - label: Robot
-            set:
-              simulation: ''
-          - label: Simulator
-            set:
-              simulation: mujoco
-        - global: xarm6_ip
-          label: xArm6 IP
-          placeholder: 192.168.1.185
-          required: false
-          when:
-            simulation: ''
+        - *robot_or_simulator
+        - *xarm6_ip
       coordinator-lite6:
         title: Lite6 coordinator
         description: A Lite6 behind a ControlCoordinator (a building block).
         hidden: true
         recommended_config:
-        - label: Run it on
-          choices:
-          - label: Robot
-            set:
-              simulation: ''
-          - label: Simulator
-            set:
-              simulation: mujoco
-        - global: lite6_ip
-          label: Lite6 IP
-          placeholder: 192.168.1.185
-          required: false
-          when:
-            simulation: ''
+        - *robot_or_simulator
+        - *lite6_ip
       coordinator-dual-xarm:
         title: Dual xArm coordinator
         description: Two xArms behind one ControlCoordinator (a building block).
         hidden: true
         recommended_config:
-        - label: Run it on
-          choices:
-          - label: Robot
-            set:
-              simulation: ''
-          - label: Simulator
-            set:
-              simulation: mujoco
+        - *robot_or_simulator
       coordinator-combined-xarm6:
         title: xArm6 combined coordinator
         description: xArm6 with trajectory and velocity tasks in one coordinator (a building block).
         hidden: true
         recommended_config:
-        - label: Run it on
-          choices:
-          - label: Robot
-            set:
-              simulation: ''
-          - label: Simulator
-            set:
-              simulation: mujoco
-        - global: xarm6_ip
-          label: xArm6 IP
-          placeholder: 192.168.1.185
-          required: false
-          when:
-            simulation: ''
+        - *robot_or_simulator
+        - *xarm6_ip
       coordinator-teleop-xarm6:
         title: xArm6 teleop coordinator
         description: The xArm6 teleop coordinator (a building block).
         hidden: true
         recommended_config:
-        - label: Run it on
-          choices:
-          - label: Robot
-            set:
-              simulation: ''
-          - label: Simulator
-            set:
-              simulation: mujoco
-        - global: xarm6_ip
-          label: xArm6 IP
-          placeholder: 192.168.1.185
-          required: false
-          when:
-            simulation: ''
+        - *robot_or_simulator
+        - *xarm6_ip
       coordinator-teleop-xarm7:
         title: xArm7 teleop coordinator
         description: The xArm7 teleop coordinator (a building block).
@@ -729,39 +600,15 @@ robots:
         description: xArm6 with a trajectory task (a building block).
         hidden: true
         recommended_config:
-        - label: Run it on
-          choices:
-          - label: Robot
-            set:
-              simulation: ''
-          - label: Simulator
-            set:
-              simulation: mujoco
-        - global: xarm6_ip
-          label: xArm6 IP
-          placeholder: 192.168.1.185
-          required: false
-          when:
-            simulation: ''
+        - *robot_or_simulator
+        - *xarm6_ip
       coordinator-velocity-xarm6:
         title: xArm6 velocity coordinator
         description: xArm6 with a velocity task (a building block).
         hidden: true
         recommended_config:
-        - label: Run it on
-          choices:
-          - label: Robot
-            set:
-              simulation: ''
-          - label: Simulator
-            set:
-              simulation: mujoco
-        - global: xarm6_ip
-          label: xArm6 IP
-          placeholder: 192.168.1.185
-          required: false
-          when:
-            simulation: ''
+        - *robot_or_simulator
+        - *xarm6_ip
       teleop-webxr-xarm7:
         title: xArm7 VR teleop
         description: Move an xArm7 with a VR headset's right controller (simulated with the simulator).
@@ -769,20 +616,8 @@ robots:
         title: xArm6 VR teleop
         description: Move an xArm6 with a VR headset's right controller (simulated with the simulator).
         recommended_config:
-        - label: Run it on
-          choices:
-          - label: Robot
-            set:
-              simulation: ''
-          - label: Simulator
-            set:
-              simulation: mujoco
-        - global: xarm6_ip
-          label: xArm6 IP
-          placeholder: 192.168.1.185
-          required: false
-          when:
-            simulation: ''
+        - *robot_or_simulator
+        - *xarm6_ip
       teleop-webxr-hand-xarm7:
         title: xArm7 VR hand teleop
         description: 'Move an xArm7 with your hand in VR: pinch to start and stop tracking.'
@@ -793,7 +628,8 @@ robots:
         title: xArm6 remote teleop
         description: Move an xArm6 from anywhere through the hosted (Cloudflare) teleop broker.
         recommended_config:
-        - global: xarm6_ip
+        - &xarm6_ip_anywhere
+          global: xarm6_ip
           label: xArm6 IP
           placeholder: 192.168.1.185
           required: false
@@ -819,10 +655,7 @@ robots:
         title: xArm6 world belief
         description: xArm6 with a RealSense building a world belief (what is where) for an agent.
         recommended_config:
-        - global: xarm6_ip
-          label: xArm6 IP
-          placeholder: 192.168.1.185
-          required: false
+        - *xarm6_ip_anywhere
       xarm-sim:
         title: 'xArm7 in simulation (robot only)'
         description: 'A simulated xArm7: control and sensors as plain zenoh topics, for agents without dimOS. Needs MuJoCo.'
@@ -835,15 +668,9 @@ robots:
     - dimos/robot/manipulators/piper
     defaults:
       recommended_config:
-      - label: Run it on
-        choices:
-        - label: Robot
-          set:
-            simulation: ''
-        - label: Simulator
-          set:
-            simulation: mujoco
-      - global: can_port
+      - *robot_or_simulator
+      - &can_port
+        global: can_port
         label: CAN port
         placeholder: can0
         when:
@@ -886,19 +713,8 @@ robots:
     - dimos/robot/manipulators/openyam
     defaults:
       recommended_config:
-      - label: Run it on
-        choices:
-        - label: Robot
-          set:
-            simulation: ''
-        - label: Simulator
-          set:
-            simulation: mujoco
-      - global: can_port
-        label: CAN port
-        placeholder: can0
-        when:
-          simulation: ''
+      - *robot_or_simulator
+      - *can_port
     blueprints:
       keyboard-teleop-openyam:
         title: OpenYAM keyboard driving
@@ -961,19 +777,8 @@ robots:
     - dimos/robot/manipulators/a1z
     defaults:
       recommended_config:
-      - label: Run it on
-        choices:
-        - label: Robot
-          set:
-            simulation: ''
-        - label: Simulator
-          set:
-            simulation: mujoco
-      - global: can_port
-        label: CAN port
-        placeholder: can0
-        when:
-          simulation: ''
+      - *robot_or_simulator
+      - *can_port
     blueprints:
       keyboard-teleop-a1z:
         title: A1Z keyboard driving
@@ -1021,72 +826,24 @@ robots:
         description: A Piper and an xArm6 behind one coordinator.
         hidden: true
         recommended_config:
-        - label: Run it on
-          choices:
-          - label: Robot
-            set:
-              simulation: ''
-          - label: Simulator
-            set:
-              simulation: mujoco
-        - global: xarm6_ip
-          label: xArm6 IP
-          placeholder: 192.168.1.185
-          required: false
-          when:
-            simulation: ''
-        - global: can_port
-          label: CAN port
-          placeholder: can0
-          when:
-            simulation: ''
+        - *robot_or_simulator
+        - *xarm6_ip
+        - *can_port
       coordinator-teleop-dual:
         title: Dual-arm teleop coordinator
         description: Teleop coordinator for a Piper and an xArm6 together (a building block).
         hidden: true
         recommended_config:
-        - label: Run it on
-          choices:
-          - label: Robot
-            set:
-              simulation: ''
-          - label: Simulator
-            set:
-              simulation: mujoco
-        - global: xarm6_ip
-          label: xArm6 IP
-          placeholder: 192.168.1.185
-          required: false
-          when:
-            simulation: ''
-        - global: can_port
-          label: CAN port
-          placeholder: can0
-          when:
-            simulation: ''
+        - *robot_or_simulator
+        - *xarm6_ip
+        - *can_port
       teleop-webxr-dual:
         title: Piper + xArm6 VR teleop
         description: 'VR teleop of two arms: right controller to a Piper, left to an xArm6.'
         recommended_config:
-        - label: Run it on
-          choices:
-          - label: Robot
-            set:
-              simulation: ''
-          - label: Simulator
-            set:
-              simulation: mujoco
-        - global: xarm6_ip
-          label: xArm6 IP
-          placeholder: 192.168.1.185
-          required: false
-          when:
-            simulation: ''
-        - global: can_port
-          label: CAN port
-          placeholder: can0
-          when:
-            simulation: ''
+        - *robot_or_simulator
+        - *xarm6_ip
+        - *can_port
       coordinator-mock:
         title: Mock arm coordinator
         description: 'A ControlCoordinator on a mock arm: no robot needed.'
@@ -1174,7 +931,8 @@ robots:
         title: Mid-360 relocalization (recording)
         description: Relocalization against a saved map, driven by a recording instead of a robot.
         recommended_config:
-        - global: replay_db
+        - &recording
+          global: replay_db
           label: Recording
           kind: recording
       demo-dim-slam-realsense:
@@ -1249,9 +1007,7 @@ robots:
         title: Replay a recording
         description: Plays every stream of a dimos recording back onto the bus, with the viewer.
         recommended_config:
-        - global: replay_db
-          label: Recording
-          kind: recording
+        - *recording
       demo-mcp-stress-test:
         title: MCP stress test
         description: Stresses the MCP server with a test module.

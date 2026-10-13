@@ -149,8 +149,10 @@ def test_annotations_name_registered_blueprints_and_real_fields() -> None:
     for robot_id, robot in source["robots"].items():
         for name, blueprint in robot["blueprints"].items():
             assert name in all_blueprints, f"{robot_id} lists {name}, which isn't registered"
-            settings = blueprint.get("recommended_config", [])
-            settings += robot.get("defaults", {}).get("recommended_config", [])
+            settings = [
+                *blueprint.get("recommended_config", []),
+                *robot.get("defaults", {}).get("recommended_config", []),
+            ]
             for setting in settings:
                 if "global" in setting:
                     assert setting["global"] in GlobalConfig.model_fields
