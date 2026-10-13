@@ -57,11 +57,6 @@ TF_ROOT_WINDOW = 2.5  # s - tf read either side of a recording's middle to find 
 LIDAR_FILTERS = [raycast(), range_cluster(), statistical(nb_neighbors=12, std_ratio=2.0)]
 
 
-def _rate(stream: Any) -> float:
-    t0, t1 = stream.get_time_range()
-    return float(stream.count()) / max(float(t1 - t0), 1e-6)
-
-
 def _tf_root(store: Any, camera: str) -> str:
     """The top of ``camera``'s tf chain in the middle of the recording, the frame its
     poses are taken in; an edge tf only stamps at the ends of a run does not count."""
@@ -141,9 +136,9 @@ class Rig:
                 kind = "color"
             else:
                 continue
-            # a derived copy, such as an embedding index, runs slower than its feed
+            # a derived copy, such as an embedding index, holds at most its feed's frames
             held = images[kind].get(image.frame_id)
-            if held is None or _rate(store.stream(name)) > _rate(store.stream(held)):
+            if held is None or store.stream(name).count() > store.stream(held).count():
                 images[kind][image.frame_id] = name
 
         color, depth = images["color"], images["depth"]
