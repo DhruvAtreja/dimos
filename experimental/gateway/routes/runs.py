@@ -15,9 +15,6 @@
 from __future__ import annotations
 
 import asyncio
-from contextlib import closing
-from pathlib import Path
-import sqlite3
 from typing import Annotated, Any
 
 from fastapi import APIRouter, Path as PathParam
@@ -140,39 +137,3 @@ async def run_log(
     return await asyncio.to_thread(
         logs.read, file, run_id, after, limit or 1000, q or None, level or None
     )
-
-
-def replay(path: Path) -> dict[str, Any]:
-    stat = path.stat()
-    entry: dict[str, Any] = {
-        "name": path.stem,
-        "path": str(path),
-        "size": stat.st_size,
-        "modified": stat.st_mtime,
-        "streams": [],
-        "duration": None,
-        "error": None,
-    }
-    if stat.st_size < 1024 and path.read_bytes().startswith(b"version https://git-lfs"):
-        return {**entry, "error": "not downloaded yet (a git LFS pointer): run `git lfs pull`"}
-    try:
-        with closing(sqlite3.connect(f"file:{path}?mode=ro", uri=True)) as db:
-            names = [row[0] for row in db.execute("SELECT name FROM _streams ORDER BY name")]
-            clock = next((n for n in ("go2_odom", "odom") if n in names), None)
-            span = (
-                db.execute(f'SELECT max(ts) - min(ts) FROM "{clock}"').fetchone() if clock else None
-            )
-    except sqlite3.Error as error:
-        return {**entry, "error": f"not a dimos recording: {error}"}
-    return {**entry, "streams": names, "duration": span[0] if span else None}
-
-
-@router.get("/dimos/replays", response_model=responses.Replays)
-async def replays(state: GatewayState) -> dict[str, Any]:
-    folder = state.dimos_dir / "data"
-    samples = (
-        sorted(p for p in folder.glob("*.db") if not p.name.startswith("."))
-        if folder.is_dir()
-        else []
-    )
-    return {"replays": await asyncio.to_thread(lambda: [replay(p) for p in samples])}

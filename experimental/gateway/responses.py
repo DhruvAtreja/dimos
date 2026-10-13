@@ -427,22 +427,6 @@ class RunLog(Body):
     loggers: list[str]
 
 
-class Replay(Body):
-    name: str
-    path: str
-    size: int
-    modified: float
-    streams: list[str]
-    duration: float | None
-    error: str | None
-
-
-class Replays(Body):
-    """The recordings in the checkout's data/ that a blueprint can replay."""
-
-    replays: list[Replay]
-
-
 class Account(Body):
     """Whether this machine is logged in to Dimensional cloud, and as whom."""
 

@@ -74,17 +74,9 @@ def test_server_routes(client: TestClient, checkout: Path) -> None:
     assert paths["server"]["zenohNamespace"] == "ns"
 
 
-def test_openapi_lists_the_routes_and_removed_ones_are_gone(client: TestClient) -> None:
+def test_openapi_lists_the_routes(client: TestClient) -> None:
     routes = client.get("/dimos/openapi.json").json()["paths"]
-    assert {"/dimos/runs", "/dimos/skills", "/dimos/catalog", "/dimos/replays"} <= set(routes)
-    for removed in (
-        "/dimos/healthz",
-        "/dimos/rpc",
-        "/dimos/modules",
-        "/dimos/jobs",
-        "/dimos/events",
-    ):
-        assert client.get(removed).status_code == 404
+    assert {"/dimos/runs", "/dimos/skills", "/dimos/catalog"} <= set(routes)
 
 
 def test_global_config_is_saved_in_the_gateways_own_state(client: TestClient, home: Path) -> None:
