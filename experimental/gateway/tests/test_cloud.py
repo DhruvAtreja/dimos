@@ -82,6 +82,7 @@ def test_an_upload_goes_through_the_queue(
     assert done["uploadId"] == "cloud-1" and done["bytesDone"] == 100
     assert client.get(f"/dimos/uploads/uploaded?path={recording}").json()["uploadId"] == "cloud-1"
     assert any(key == "ns/dimos/events/upload" for key, _ in sent)
+    assert client.app.state.gateway.uploads.queue.rates == {}  # type: ignore[attr-defined]
     assert client.delete("/dimos/uploads").json()["uploads"] == []
 
 
