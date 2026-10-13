@@ -80,9 +80,7 @@ def _parse_family_max_share(entries: list[str] | None) -> dict[str, float] | Non
     shares: dict[str, float] = {}
     for entry in entries:
         if "=" not in entry:
-            raise ValueError(
-                f"family-max-share must be name=share, got {entry!r}"
-            )
+            raise ValueError(f"family-max-share must be name=share, got {entry!r}")
         name, raw_share = entry.split("=", 1)
         name = name.strip()
         if not name:
@@ -90,9 +88,7 @@ def _parse_family_max_share(entries: list[str] | None) -> dict[str, float] | Non
         try:
             share = float(raw_share.strip())
         except ValueError as exc:
-            raise ValueError(
-                f"family-max-share share must be a float in {entry!r}"
-            ) from exc
+            raise ValueError(f"family-max-share share must be a float in {entry!r}") from exc
         shares[name] = share
     return shares
 

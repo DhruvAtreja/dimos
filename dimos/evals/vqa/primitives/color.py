@@ -78,9 +78,7 @@ def object_name_mentions_color(object_name: str) -> bool:
     return _COLOR_NAME_PATTERN.search(object_name) is not None
 
 
-def dominant_color_in_mask(
-    image: Image, object_name: str, mask: np.ndarray
-) -> ObjectColorEvidence:
+def dominant_color_in_mask(image: Image, object_name: str, mask: np.ndarray) -> ObjectColorEvidence:
     """Map the largest HSV bucket inside a boolean mask to a fixed color choice."""
     import cv2
 
@@ -93,8 +91,7 @@ def dominant_color_in_mask(
     mask_pixel_count = int(selected.sum())
     if mask_pixel_count < _MIN_MASK_PIXELS:
         raise InsufficientEvidenceError(
-            f"object color requires at least {_MIN_MASK_PIXELS} mask pixels, "
-            f"got {mask_pixel_count}"
+            f"object color requires at least {_MIN_MASK_PIXELS} mask pixels, got {mask_pixel_count}"
         )
 
     rgb = np.asarray(image.to_rgb().data[:, :, :3], dtype=np.uint8)
@@ -135,7 +132,9 @@ def dominant_color_in_mask(
     )
 
 
-def _hsv_to_bucket_indices(hue: np.ndarray, saturation: np.ndarray, value: np.ndarray) -> np.ndarray:
+def _hsv_to_bucket_indices(
+    hue: np.ndarray, saturation: np.ndarray, value: np.ndarray
+) -> np.ndarray:
     """Vectorized OpenCV-HSV (H in 0..179) → COLOR_CHOICES index."""
     # Neutrals first so black/white/gray are counted rather than discarded.
     # Brown uses the orange hue band with lower brightness; magenta/pink maps to purple.

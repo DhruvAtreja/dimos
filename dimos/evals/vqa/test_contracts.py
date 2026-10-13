@@ -1002,8 +1002,7 @@ def test_families_within_share_clips_and_keeps_fallback() -> None:
     # If every capped family is over share and nothing else remains, keep the full menu.
     only_presence = (PRESENCE_FAMILY,)
     assert (
-        _families_within_share(only_presence, {"presence": 0.25}, {"presence": 10})
-        == only_presence
+        _families_within_share(only_presence, {"presence": 0.25}, {"presence": 10}) == only_presence
     )
 
 
@@ -1470,7 +1469,9 @@ def test_generation_clips_overrepresented_families_from_author_menu(tmp_path: Pa
     seen_menus: list[tuple[str, ...]] = []
 
     class _MenuRecordingAuthor:
-        def propose(self, image: Image, families: Sequence[FamilySpec]) -> Sequence[QuestionProposal]:
+        def propose(
+            self, image: Image, families: Sequence[FamilySpec]
+        ) -> Sequence[QuestionProposal]:
             seen_menus.append(tuple(family.name for family in families))
             # Prefer presence when offered; otherwise first offered family.
             offered = tuple(family.name for family in families)

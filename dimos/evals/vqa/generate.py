@@ -114,9 +114,7 @@ class VqaGenerationConfig(BaseModel):
             if name not in known:
                 raise ValueError(f"unknown family in family_max_share: {name!r}")
             if not 0 < share <= 1:
-                raise ValueError(
-                    f"family_max_share[{name!r}] must be in (0, 1], got {share}"
-                )
+                raise ValueError(f"family_max_share[{name!r}] must be in (0, 1], got {share}")
         return self
 
 
@@ -419,8 +417,7 @@ def _families_within_share(
     clipped = tuple(
         family
         for family in capable
-        if family.name not in shares
-        or counts.get(family.name, 0) / total < shares[family.name]
+        if family.name not in shares or counts.get(family.name, 0) / total < shares[family.name]
     )
     return clipped if clipped else tuple(capable)
 

@@ -103,9 +103,7 @@ def test_vqa_generate_cli_runs_generation(monkeypatch: pytest.MonkeyPatch, tmp_p
 
     assert result.exit_code == 0
     assert len(seen) == 1
-    assert seen[0][0] == GenerationRequest(
-        dataset="recording.db", image_index=3, output=tmp_path
-    )
+    assert seen[0][0] == GenerationRequest(dataset="recording.db", image_index=3, output=tmp_path)
     assert seen[0][1] == VqaGenerationConfig()
     assert "Generated 1 VQA case" in result.stdout
 
