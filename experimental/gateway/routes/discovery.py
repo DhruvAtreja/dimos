@@ -26,10 +26,6 @@ from experimental.gateway.state import ApiError, GatewayState, State
 router = APIRouter()
 
 
-class RefreshRequest(BaseModel):
-    full: bool = False
-
-
 class ExtrasInstall(BaseModel):
     extras: list[str] = Field(min_length=1)
     app: str | None = None
@@ -47,7 +43,7 @@ async def status(state: GatewayState) -> dict[str, Any]:
 
 
 @router.post("/dimos/discovery/refresh", response_model=responses.DiscoveryStatus)
-async def refresh(state: GatewayState, request: RefreshRequest | None = None) -> dict[str, Any]:
+async def refresh(state: GatewayState) -> dict[str, Any]:
     """Scan the blueprints and modules again."""
     state.scanner.refresh("requested")
     return state.scanner.snapshot()

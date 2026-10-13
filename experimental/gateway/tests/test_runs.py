@@ -16,7 +16,6 @@ from collections.abc import Callable
 import json
 import os
 from pathlib import Path
-import sqlite3
 import time
 from typing import Any
 
@@ -130,17 +129,3 @@ def test_run_log_pages_and_tails(client: TestClient, home: Path) -> None:
         handle.write(json.dumps({"level": "info", "event": "later"}) + "\n")
     tail = client.get(f"/dimos/runs/latest/log?after={page['offset']}").json()
     assert [r["event"] for r in tail["records"]] == ["later"]
-
-
-def test_replays_lists_sample_recordings(client: TestClient, checkout: Path) -> None:
-    (checkout / "data").mkdir()
-    with sqlite3.connect(checkout / "data" / "go2_short.db") as db:
-        db.execute("CREATE TABLE _streams (name TEXT)")
-        db.executemany("INSERT INTO _streams VALUES (?)", [("odom",), ("lidar",)])
-        db.execute("CREATE TABLE odom (ts REAL)")
-        db.executemany("INSERT INTO odom VALUES (?)", [(1.0,), (3.5,)])
-    (checkout / "data" / "pointer.db").write_text("version https://git-lfs.github.com/spec/v1\n")
-    replays = {r["name"]: r for r in client.get("/dimos/replays").json()["replays"]}
-    assert replays["go2_short"]["streams"] == ["lidar", "odom"]
-    assert replays["go2_short"]["duration"] == 2.5
-    assert "LFS" in replays["pointer"]["error"]

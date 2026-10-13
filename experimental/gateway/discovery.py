@@ -86,7 +86,6 @@ class Scanner:
             "started_at": None,
             "finished_at": None,
             "current": None,
-            "cached_from": None,
         }
 
     def snapshot(self) -> dict[str, Any]:
@@ -96,9 +95,6 @@ class Scanner:
             "blueprints_total": len(self.names["blueprints"]) or len(self.blueprints),
             "blueprints_done": len(self.blueprints),
             "importable": importable,
-            "not_importable": len(self.blueprints) - importable,
-            "modules_total": len(self.names["modules"]),
-            "modules_done": len(self.finished_modules & set(self.names["modules"])),
             "errors": self.errors[-MAX_ERRORS:],
         }
 
@@ -295,7 +291,6 @@ def failed_record(name: str, problem: str) -> dict[str, Any]:
         "importable": False,
         "optional_dependency": False,
         "import_error": problem,
-        "import_traceback": None,
         "missing_module": None,
         "modules": [],
     }

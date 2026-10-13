@@ -19,6 +19,7 @@ import copy
 import enum
 import json
 from pathlib import Path
+import re
 import types
 import typing
 from typing import Any
@@ -26,6 +27,8 @@ from typing import Any
 import yaml
 
 SOURCE_FILE = Path(__file__).parent / "annotations.yaml"
+# a blueprint with no `hidden:` of its own is hidden when its name says it's a coordinator, test or benchmark
+HIDDEN_NAME = re.compile(r"^coordinator-|test|benchmark")
 
 
 def load(path: Path = SOURCE_FILE) -> dict[str, Any]:
@@ -192,11 +195,9 @@ def resolved(source: dict[str, Any], registry: Collection[str]) -> dict[str, Any
     doc = generate(source)
     out = copy.deepcopy(doc)
     out["about"] = None
-    listed = set()
     for robot_id, robot in out["robots"].items():
         original = doc["robots"][robot_id]
         for name, blueprint in robot["blueprints"].items():
-            listed.add(name)
             own = original["blueprints"][name]
             settings = own.get("recommended_config")
             if settings is None:
@@ -206,9 +207,8 @@ def resolved(source: dict[str, Any], registry: Collection[str]) -> dict[str, Any
                 _resolved_setting(index, setting) for index, setting in enumerate(settings)
             ]
             blueprint.setdefault("starter", None)
-            blueprint.setdefault("hidden", False)
+            blueprint.setdefault("hidden", HIDDEN_NAME.search(name) is not None)
             blueprint["registered"] = name in registry
         robot.pop("defaults", None)
         robot.setdefault("recommended", [])
-    out["unlisted"] = sorted(set(registry) - listed)
     return out

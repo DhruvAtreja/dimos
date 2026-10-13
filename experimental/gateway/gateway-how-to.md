@@ -134,7 +134,7 @@ robots.go2.blueprints["unitree-go2"] // { title, description, starter, recommend
 ## How do I get dimos's python?
 
 ```js
-const { python, env, example } = await (await fetch("../../dimos/python")).json() // run `${python} -c '...'` with env set
+const { python } = await (await fetch("../../dimos/python")).json() // run `${python} -c 'import dimos'`
 ```
 
 `- GET /python`

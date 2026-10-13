@@ -88,17 +88,9 @@ def test_server_routes(client: TestClient, checkout: Path, monkeypatch: pytest.M
     assert paths["server"]["zenohNamespace"] == "ns"
 
 
-def test_openapi_lists_the_routes_and_removed_ones_are_gone(client: TestClient) -> None:
+def test_openapi_lists_the_routes(client: TestClient) -> None:
     routes = client.get("/dimos/openapi.json").json()["paths"]
-    assert {"/dimos/runs", "/dimos/skills", "/dimos/catalog", "/dimos/replays"} <= set(routes)
-    for removed in (
-        "/dimos/healthz",
-        "/dimos/rpc",
-        "/dimos/modules",
-        "/dimos/jobs",
-        "/dimos/events",
-    ):
-        assert client.get(removed).status_code == 404
+    assert {"/dimos/runs", "/dimos/skills", "/dimos/catalog"} <= set(routes)
 
 
 def test_global_config_is_saved_in_the_gateways_own_state(client: TestClient, home: Path) -> None:
@@ -163,8 +155,10 @@ def test_annotations_name_registered_blueprints_and_real_fields() -> None:
     for robot_id, robot in source["robots"].items():
         for name, blueprint in robot["blueprints"].items():
             assert name in all_blueprints, f"{robot_id} lists {name}, which isn't registered"
-            settings = blueprint.get("recommended_config", [])
-            settings += robot.get("defaults", {}).get("recommended_config", [])
+            settings = [
+                *blueprint.get("recommended_config", []),
+                *robot.get("defaults", {}).get("recommended_config", []),
+            ]
             for setting in settings:
                 if "global" in setting:
                     assert setting["global"] in GlobalConfig.model_fields

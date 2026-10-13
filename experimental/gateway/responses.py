@@ -64,15 +64,9 @@ class Stopping(Body):
 
 
 class Python(Body):
-    """A python that imports this dimos checkout, and how to run it."""
+    """The python that runs this dimos checkout."""
 
     python: str
-    command: list[str]
-    dimosDir: str
-    version: str
-    dimosVersion: str | None
-    env: dict[str, str]
-    example: str
 
 
 class BlueprintEntry(Body):
@@ -213,8 +207,6 @@ class Robots(Body):
     about: None
     types: dict[str, dict[str, Any]]
     robots: dict[str, Robot]
-    excluded: NotRequired[dict[str, str]]
-    unlisted: list[str]
 
 
 ScannedModule = TypedDict(
@@ -230,7 +222,6 @@ class DiscoveredBlueprint(Body):
     importable: bool
     optional_dependency: bool
     import_error: str | None
-    import_traceback: str | None
     missing_module: str | None
     modules: list[ScannedModule]
     robot: str | None
@@ -254,13 +245,9 @@ class DiscoveryStatus(Body):
     started_at: str | None
     finished_at: str | None
     current: str | None
-    cached_from: str | None
     blueprints_total: int
     blueprints_done: int
     importable: int
-    not_importable: int
-    modules_total: int
-    modules_done: int
     errors: list[str]
 
 
@@ -435,22 +422,6 @@ class RunLog(Body):
     records: list[LogRecord]
     offset: int
     loggers: list[str]
-
-
-class Replay(Body):
-    name: str
-    path: str
-    size: int
-    modified: float
-    streams: list[str]
-    duration: float | None
-    error: str | None
-
-
-class Replays(Body):
-    """The recordings in the checkout's data/ that a blueprint can replay."""
-
-    replays: list[Replay]
 
 
 class Account(Body):
