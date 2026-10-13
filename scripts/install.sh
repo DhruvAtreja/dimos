@@ -21,7 +21,7 @@ trap 'exit 143' TERM
 INSTALLER_VERSION="0.3.0"
 
 # ─── package lists (edit these when dependencies change) ──────────────────────
-UBUNTU_PACKAGES="ca-certificates curl git build-essential portaudio19-dev git-lfs libturbojpeg pre-commit libgl1 libegl1 libglib2.0-0 ffmpeg libsndfile1 pkg-config"
+UBUNTU_PACKAGES="ca-certificates curl git g++ portaudio19-dev git-lfs libturbojpeg pre-commit libgl1 libegl1 libglib2.0-0 ffmpeg libsndfile1 pkg-config"
 MACOS_PACKAGES="gnu-sed gcc portaudio git-lfs libjpeg-turbo pre-commit ffmpeg libsndfile pkg-config"
 
 INSTALL_MODE="${DIMOS_INSTALL_MODE:-}"
@@ -842,19 +842,9 @@ do_install_dev() {
         run_cmd /usr/bin/env GIT_LFS_SKIP_SMUDGE=1 git clone -b "$GIT_BRANCH" https://github.com/dimensionalOS/dimos.git "$dir"
     fi
     if [[ -n "$GIT_COMMIT" ]]; then
-        if [[ "$DRY_RUN" == 1 ]]; then
-            run_cmd git -C "$dir" fetch origin "$GIT_COMMIT"
-            run_cmd git -C "$dir" checkout --detach "$GIT_COMMIT"
-        else
-            if ! git -C "$dir" cat-file -e "${GIT_COMMIT}^{commit}" 2>/dev/null; then
-                run_cmd git -C "$dir" fetch origin "$GIT_COMMIT"
-            fi
-            local expected
-            expected=$(git -C "$dir" rev-parse --verify "${GIT_COMMIT}^{commit}")
-            # No reset/force: Git refuses a checkout that would overwrite local changes.
-            run_cmd /usr/bin/env GIT_LFS_SKIP_SMUDGE=1 git -C "$dir" checkout --detach "$expected"
-            [[ "$(git -C "$dir" rev-parse HEAD)" == "$expected" ]] || die "checkout does not match requested commit $GIT_COMMIT"
-        fi
+        git -C "$dir" cat-file -e "${GIT_COMMIT}^{commit}" 2>/dev/null || run_cmd git -C "$dir" fetch origin "$GIT_COMMIT"
+        # no reset/force: git refuses a checkout that would overwrite local changes
+        run_cmd /usr/bin/env GIT_LFS_SKIP_SMUDGE=1 git -C "$dir" checkout --detach "$GIT_COMMIT"
     fi
     if [[ "$USE_NIX" == 1 ]]; then verify_nix_develop; fi
     local -a sync_args=(--locked --python "$INSTALL_PYTHON" --group tests --group lint)
