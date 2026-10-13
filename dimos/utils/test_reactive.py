@@ -182,8 +182,7 @@ def test_getter_streaming_blocking() -> None:
 
 @pytest.mark.skipif_macos_bug
 def test_getter_streaming_blocking_timeout() -> None:
-    # The first value is 10x the timeout away, so a slow runner can't deliver it in time.
-    source = dispose_spy(rx.interval(1.0).pipe(ops.take(50)))
+    source = dispose_spy(rx.interval(0.2).pipe(ops.take(50)))
     with pytest.raises(Exception):
         getter = getter_streaming(source, timeout=0.1)
         getter.dispose()

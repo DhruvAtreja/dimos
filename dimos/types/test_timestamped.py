@@ -307,8 +307,7 @@ def test_timestamp_alignment(test_scheduler) -> None:
             "unitree_office_walk/video", autocast=lambda x: Image.from_numpy(x).to_rgb()
         )
         .stream(speed)
-        # Long enough for several processed frames: with only ~2, losing the last one to completion fails >= 2.
-        .pipe(ops.take(150))
+        .pipe(ops.take(30))
     )
 
     processed_frames = []
@@ -324,14 +323,9 @@ def test_timestamp_alignment(test_scheduler) -> None:
         video_raw.pipe(ops.map(spy)), scheduler=test_scheduler
     ).pipe(ops.map(process_video_frame))
 
-    tolerance = 0.1
-    aligned_frames = (
-        align_timestamped(fake_video_processor, video_raw, match_tolerance=tolerance)
-        .pipe(ops.to_list())
-        .run()
-    )
+    aligned_frames = align_timestamped(fake_video_processor, video_raw).pipe(ops.to_list()).run()
 
-    assert len(raw_frames) == 150
+    assert len(raw_frames) == 30
     assert len(processed_frames) >= 2
     assert len(aligned_frames) >= 2
 
@@ -344,8 +338,7 @@ def test_timestamp_alignment(test_scheduler) -> None:
         print(
             f"Aligned pair: primary={primary.ts:.6f}, secondary={secondary.ts:.6f}, diff={diff:.6f}s"
         )
-        # The two replays are separate streams, so a pair is only promised within the match tolerance.
-        assert diff <= tolerance
+        assert diff <= 0.05
 
     assert len(aligned_frames) >= 2
 
