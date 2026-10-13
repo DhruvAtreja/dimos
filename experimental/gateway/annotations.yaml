@@ -6,6 +6,7 @@
 # "Run it on": Robot / Replay / Simulator. On a blueprint, `recommended_config` replaces its robot's defaults; an entry
 # for a key the robot's defaults also name inherits that entry's fields.
 # A setting used more than once is written once with an anchor (`- &name`) and reused as `- *name`.
+# A blueprint named coordinator-*, *test* or *benchmark* is hidden unless it says `hidden: false`.
 
 # Robot types, in the order a launcher groups robots by; each robot's `type` is one of these (or null: not a robot
 # dimos drives, listed last under Other).
@@ -133,7 +134,6 @@ robots:
       unitree-go2-holonomic-benchmark:
         title: Go2 holonomic benchmark
         description: Benchmarks the holonomic full-pose controller on a Go2.
-        hidden: true
         recommended_config: *robot_ip_only
       unitree-go2-holonomic-controller:
         title: Go2 holonomic controller
@@ -193,7 +193,6 @@ robots:
       unitree-go2-rpp-benchmark:
         title: Go2 RPP benchmark
         description: Benchmarks the regulated pure pursuit path follower on a Go2.
-        hidden: true
         recommended_config: *robot_ip_only
       unitree-go2-rpp-controller:
         title: Go2 RPP controller
@@ -214,7 +213,6 @@ robots:
       unitree-go2-vlm-stream-test:
         title: Go2 VLM stream test
         description: Tests a vision-language model on the Go2's camera stream.
-        hidden: true
       unitree-go2-webrtc-rage-keyboard-teleop:
         title: Go2 keyboard driving (rage mode)
         description: Keyboard driving over WebRTC with the Go2's rage mode (faster gaits) on.
@@ -556,56 +554,47 @@ robots:
       coordinator-xarm7:
         title: xArm7 coordinator
         description: An xArm7 behind a ControlCoordinator (a building block).
-        hidden: true
       coordinator-xarm6:
         title: xArm6 coordinator
         description: An xArm6 behind a ControlCoordinator (a building block).
-        hidden: true
         recommended_config:
         - *robot_or_simulator
         - *xarm6_ip
       coordinator-lite6:
         title: Lite6 coordinator
         description: A Lite6 behind a ControlCoordinator (a building block).
-        hidden: true
         recommended_config:
         - *robot_or_simulator
         - *lite6_ip
       coordinator-dual-xarm:
         title: Dual xArm coordinator
         description: Two xArms behind one ControlCoordinator (a building block).
-        hidden: true
         recommended_config:
         - *robot_or_simulator
       coordinator-combined-xarm6:
         title: xArm6 combined coordinator
         description: xArm6 with trajectory and velocity tasks in one coordinator (a building block).
-        hidden: true
         recommended_config:
         - *robot_or_simulator
         - *xarm6_ip
       coordinator-teleop-xarm6:
         title: xArm6 teleop coordinator
         description: The xArm6 teleop coordinator (a building block).
-        hidden: true
         recommended_config:
         - *robot_or_simulator
         - *xarm6_ip
       coordinator-teleop-xarm7:
         title: xArm7 teleop coordinator
         description: The xArm7 teleop coordinator (a building block).
-        hidden: true
       coordinator-trajectory-xarm6:
         title: xArm6 trajectory coordinator
         description: xArm6 with a trajectory task (a building block).
-        hidden: true
         recommended_config:
         - *robot_or_simulator
         - *xarm6_ip
       coordinator-velocity-xarm6:
         title: xArm6 velocity coordinator
         description: xArm6 with a velocity task (a building block).
-        hidden: true
         recommended_config:
         - *robot_or_simulator
         - *xarm6_ip
@@ -682,19 +671,15 @@ robots:
       coordinator-piper:
         title: Piper coordinator
         description: A Piper behind a ControlCoordinator (a building block).
-        hidden: true
       coordinator-teleop-piper:
         title: Piper teleop coordinator
         description: The Piper teleop coordinator (a building block).
-        hidden: true
       coordinator-cartesian-ik-piper:
         title: Piper Cartesian IK
         description: Cartesian pose control of a Piper through IK.
-        hidden: true
       coordinator-cartesian-ik-mock:
         title: Cartesian IK (mock arm)
         description: 'Cartesian IK on a mock Piper: no robot needed.'
-        hidden: true
         recommended_config: []
       teleop-webxr-piper:
         title: Piper VR teleop
@@ -728,7 +713,6 @@ robots:
       coordinator-openyam:
         title: OpenYAM coordinator
         description: An OpenYAM arm behind a ControlCoordinator (a building block).
-        hidden: true
       teleop-webxr-openyam:
         title: OpenYAM VR teleop
         description: Move an OpenYAM arm with a VR headset's right controller.
@@ -746,7 +730,6 @@ robots:
       coordinator-dual-openyam:
         title: Dual OpenYAM coordinator
         description: Both OpenYAM arms behind one coordinator (a building block).
-        hidden: true
       teleop-webxr-dual-openyam:
         title: Dual OpenYAM VR teleop
         description: Coupled VR teleoperation of both OpenYAM arms.
@@ -764,7 +747,6 @@ robots:
       coordinator-openarm:
         title: OpenArm coordinator
         description: The OpenArm behind a ControlCoordinator (a building block).
-        hidden: true
       teleop-webxr-openarm:
         title: OpenArm VR teleop
         description: Both VR controllers drive the bimanual OpenArm (in-memory hardware unless both CAN ports are set).
@@ -789,11 +771,9 @@ robots:
       coordinator-a1z:
         title: A1Z coordinator
         description: An A1Z behind a ControlCoordinator (a building block).
-        hidden: true
       coordinator-teleop-a1z:
         title: A1Z teleop coordinator
         description: The A1Z teleop coordinator (a building block).
-        hidden: true
       teleop-webxr-a1z:
         title: A1Z VR teleop
         description: Move an A1Z with a VR headset's left controller.
@@ -824,7 +804,6 @@ robots:
       coordinator-piper-xarm:
         title: Piper + xArm6 coordinator
         description: A Piper and an xArm6 behind one coordinator.
-        hidden: true
         recommended_config:
         - *robot_or_simulator
         - *xarm6_ip
@@ -832,7 +811,6 @@ robots:
       coordinator-teleop-dual:
         title: Dual-arm teleop coordinator
         description: Teleop coordinator for a Piper and an xArm6 together (a building block).
-        hidden: true
         recommended_config:
         - *robot_or_simulator
         - *xarm6_ip
@@ -847,29 +825,26 @@ robots:
       coordinator-mock:
         title: Mock arm coordinator
         description: 'A ControlCoordinator on a mock arm: no robot needed.'
-        hidden: true
       coordinator-dual-mock:
         title: Dual mock arm coordinator
         description: 'Two mock arms behind one coordinator: no robot needed.'
-        hidden: true
       coordinator-basic:
         title: Basic coordinator
         description: A bare ControlCoordinator with no hardware.
-        hidden: true
       coordinator-mock-twist-base:
         title: Mock mobile base coordinator
         description: A ControlCoordinator on a mock holonomic base.
-        hidden: true
       coordinator-mobile-manip-mock:
         title: Mock mobile manipulator
         description: A ControlCoordinator on a mock base with an arm.
-        hidden: true
       coordinator-flowbase:
         title: FlowBase coordinator
         description: A FlowBase holonomic base (vx, vy, wz) over Portal RPC, behind a ControlCoordinator.
+        hidden: false
       coordinator-flowbase-keyboard-teleop:
         title: FlowBase keyboard driving
         description: Drive a FlowBase holonomic base with this computer's keyboard.
+        hidden: false
   sensors:
     name: Sensors
     description: 'Sensors on their own: Livox Mid-360 lidars, RealSense and other cameras, and the rigs that carry them.'
@@ -1011,7 +986,6 @@ robots:
       demo-mcp-stress-test:
         title: MCP stress test
         description: Stresses the MCP server with a test module.
-        hidden: true
       demo-error-on-name-conflicts:
         title: Name conflict error demo
         description: Shows the error dimos gives when two modules' streams collide.
