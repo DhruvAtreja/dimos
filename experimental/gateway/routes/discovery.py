@@ -20,7 +20,7 @@ from typing import Any
 from fastapi import APIRouter
 from pydantic import BaseModel, Field
 
-from experimental.gateway import discovery, store
+from experimental.gateway import discovery, responses, store
 from experimental.gateway.state import ApiError, GatewayState, State
 
 router = APIRouter()
@@ -40,25 +40,26 @@ async def probe(state: State) -> dict[str, Any]:
     return answer
 
 
-@router.get("/dimos/discovery")
+@router.get("/dimos/discovery", response_model=responses.DiscoveryStatus)
 async def status(state: GatewayState) -> dict[str, Any]:
     state.scanner.ensure("startup")
     return state.scanner.snapshot()
 
 
-@router.post("/dimos/discovery/refresh")
+@router.post("/dimos/discovery/refresh", response_model=responses.DiscoveryStatus)
 async def refresh(state: GatewayState, request: RefreshRequest | None = None) -> dict[str, Any]:
+    """Scan the blueprints and modules again."""
     state.scanner.refresh("requested")
     return state.scanner.snapshot()
 
 
-@router.get("/dimos/discovery/blueprints")
+@router.get("/dimos/discovery/blueprints", response_model=responses.Discovered)
 async def discovered(state: GatewayState) -> dict[str, Any]:
     state.scanner.ensure("startup")
     return await asyncio.to_thread(state.scanner.discovered)
 
 
-@router.get("/dimos/extras")
+@router.get("/dimos/extras", response_model=responses.Extras)
 async def extras(state: GatewayState) -> dict[str, Any]:
     found = await probe(state)
     listed = await asyncio.to_thread(discovery.extras_status, state.dimos_dir, found)
@@ -66,8 +67,9 @@ async def extras(state: GatewayState) -> dict[str, Any]:
     return {"mode": mode, "python": found["python"], "extras": listed}
 
 
-@router.post("/dimos/extras/install")
+@router.post("/dimos/extras/install", response_model=responses.JobStarted)
 async def install_extras(state: GatewayState, request: ExtrasInstall) -> dict[str, Any]:
+    """Install dimos extras with uv, as a job."""
     probed = await probe(state)
     declared = discovery.declared(state.dimos_dir, probed)
     unknown = [name for name in request.extras if name not in declared]
@@ -100,7 +102,7 @@ async def install_extras(state: GatewayState, request: ExtrasInstall) -> dict[st
     return {"shell": None, "job": job.id, "command": command}
 
 
-@router.get("/dimos/jobs/{job}/log")
+@router.get("/dimos/jobs/{job}/log", response_model=responses.JobLog)
 async def job_log(state: GatewayState, job: str, after: int = 0) -> dict[str, Any]:
     try:
         return state.jobs.get(job).log(after)
@@ -108,7 +110,7 @@ async def job_log(state: GatewayState, job: str, after: int = 0) -> dict[str, An
         raise ApiError(404, error.args[0])
 
 
-@router.get("/dimos/docs/custom-robot")
+@router.get("/dimos/docs/custom-robot", response_model=responses.CustomRobotGuide)
 async def custom_robot(state: GatewayState) -> dict[str, Any]:
     answer = await asyncio.to_thread(discovery.custom_robot, state.dimos_dir)
     if answer is None:
