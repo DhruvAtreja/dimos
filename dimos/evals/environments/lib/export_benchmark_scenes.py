@@ -25,13 +25,15 @@ import os
 from pathlib import Path
 import shutil
 from typing import Any
+import xml.etree.ElementTree as ET
 
 from dimos.evals.environments.lib.benchmark_scenes import write_manifest
-from dimos.utils.data import get_data_dir
+from dimos.utils.data import get_data, get_data_dir
 
 # Three free bodies so included xarm7.xml home keyframe nq still matches.
+# Attribute values are filled via ElementTree (not str.format).
 _SCENE = """\
-<mujoco model="{model}">
+<mujoco>
   <include file="xarm7.xml"/>
   <statistic center="0.3 0 0.4" extent=".65"/>
   <visual>
@@ -41,12 +43,12 @@ _SCENE = """\
   </visual>
   <asset>
     <texture type="skybox" builtin="gradient" rgb1="0.3 0.5 0.7" rgb2="0 0 0" width="512" height="3072"/>
-    <texture type="2d" name="floor_tex" file="textures/{floor}"/>
-    <texture type="2d" name="table_tex" file="textures/{table}"/>
+    <texture type="2d" name="floor_tex" file=""/>
+    <texture type="2d" name="table_tex" file=""/>
     <material name="groundplane" texture="floor_tex" texuniform="true" texrepeat="5 5" reflectance="0"/>
     <material name="table_top" texture="table_tex" texuniform="true" texrepeat="2 2" reflectance="0.1"/>
     <material name="table_leg" rgba="0.4 0.35 0.3 1"/>
-    <material name="object" rgba="{rgba}"/>
+    <material name="object" rgba="1 1 1 1"/>
   </asset>
   <worldbody>
     <light pos="0 0 1.5" dir="0 0 -1" directional="true"/>
@@ -58,9 +60,9 @@ _SCENE = """\
     <geom name="table_leg2" type="cylinder" size="0.02 0.055" pos="0.58 -0.18 0.055" material="table_leg"/>
     <geom name="table_leg3" type="cylinder" size="0.02 0.055" pos="0.32  0.18 0.055" material="table_leg"/>
     <geom name="table_leg4" type="cylinder" size="0.02 0.055" pos="0.58  0.18 0.055" material="table_leg"/>
-    <body name="{body}" pos="{body_pos}">
+    <body name="object" pos="0 0 0">
       <freejoint/>
-      <geom type="{geom}" size="{size}" material="object" mass="0.15"/>
+      <geom type="sphere" size="0.04" material="object" mass="0.15"/>
     </body>
     <body name="filler_a" pos="0.40 0.10 0.16">
       <freejoint/>
@@ -80,10 +82,17 @@ def _copy(src: Path, dest: Path) -> None:
     shutil.copy2(src, dest)
 
 
-def _link_xarm(pack: Path, data_dir: Path) -> None:
-    xarm = data_dir / "xarm7"
-    if not xarm.is_dir():
-        raise FileNotFoundError(f"missing {xarm}")
+def _xarm_root(data_dir: Path | None) -> Path:
+    if data_dir is not None:
+        xarm = data_dir / "xarm7"
+        if not xarm.is_dir():
+            raise FileNotFoundError(f"missing {xarm}")
+        return xarm
+    return get_data("xarm7")
+
+
+def _link_xarm(pack: Path, data_dir: Path | None) -> None:
+    xarm = _xarm_root(data_dir)
     for name in ("xarm7.xml", "assets"):
         dest = pack / name
         if dest.exists() or dest.is_symlink():
@@ -102,10 +111,46 @@ def _find_png(root: Path, names: list[str]) -> Path:
     return pngs[0]
 
 
+def _require(elem: ET.Element | None, path: str) -> ET.Element:
+    if elem is None:
+        raise ValueError(f"scene template missing {path}")
+    return elem
+
+
+def _write_scene(
+    pack: Path,
+    *,
+    model: str,
+    floor_name: str,
+    table_name: str,
+    body: str,
+    body_pos: str,
+    geom: str,
+    size: str,
+    rgba: str,
+) -> None:
+    root = ET.fromstring(_SCENE)
+    root.set("model", model)
+    _require(root.find("asset/texture[@name='floor_tex']"), "floor_tex").set(
+        "file", f"textures/{floor_name}"
+    )
+    _require(root.find("asset/texture[@name='table_tex']"), "table_tex").set(
+        "file", f"textures/{table_name}"
+    )
+    _require(root.find("asset/material[@name='object']"), "object material").set("rgba", rgba)
+    body_el = _require(root.find("worldbody/body[@name='object']"), "object body")
+    body_el.set("name", body)
+    body_el.set("pos", body_pos)
+    geom_el = _require(body_el.find("geom"), "object geom")
+    geom_el.set("type", geom)
+    geom_el.set("size", size)
+    (pack / "scene.xml").write_text(ET.tostring(root, encoding="unicode") + "\n")
+
+
 def _write_pack(
     out_root: Path,
     *,
-    data_dir: Path,
+    data_dir: Path | None,
     model: str,
     floor_src: Path,
     table_src: Path,
@@ -125,17 +170,16 @@ def _write_pack(
     _link_xarm(pack, data_dir)
     _copy(floor_src, pack / "textures" / floor_name)
     _copy(table_src, pack / "textures" / table_name)
-    (pack / "scene.xml").write_text(
-        _SCENE.format(
-            model=model,
-            floor=floor_name,
-            table=table_name,
-            body=body,
-            body_pos=body_pos,
-            geom=geom,
-            size=size,
-            rgba=rgba,
-        )
+    _write_scene(
+        pack,
+        model=model,
+        floor_name=floor_name,
+        table_name=table_name,
+        body=body,
+        body_pos=body_pos,
+        geom=geom,
+        size=size,
+        rgba=rgba,
     )
     write_manifest(
         out_root / "manifest.json",
@@ -145,7 +189,6 @@ def _write_pack(
 
 
 def export_libero_pro(source: Path, out_root: Path, *, data_dir: Path | None = None) -> Path:
-    data_dir = data_dir or get_data_dir()
     textures = source / "libero" / "libero" / "assets" / "textures"
     if not textures.is_dir():
         raise FileNotFoundError(textures)
@@ -181,7 +224,6 @@ def export_libero_pro(source: Path, out_root: Path, *, data_dir: Path | None = N
 
 
 def export_robocasa(source: Path, out_root: Path, *, data_dir: Path | None = None) -> Path:
-    data_dir = data_dir or get_data_dir()
     assets = source / "robocasa" / "models" / "assets"
     table = _find_png(assets, ["marble.png", "light_wood.png", "wood.png", "ceramic.png"])
     # Reuse one texture for floor + counter in the smoke pack.
@@ -215,7 +257,7 @@ def export_robocasa(source: Path, out_root: Path, *, data_dir: Path | None = Non
 
 
 def main(argv: list[str] | None = None) -> int:
-    # Always write under project data/ — smoke suites load via get_data_dir().
+    # Always write under project data/ — smoke suites load via get_data().
     p = argparse.ArgumentParser(description=__doc__)
     p.add_argument("--libero-pro", type=Path)
     p.add_argument("--robocasa", type=Path)
@@ -224,9 +266,9 @@ def main(argv: list[str] | None = None) -> int:
         p.error("pass --libero-pro and/or --robocasa")
     data = get_data_dir()
     if args.libero_pro:
-        print("wrote", export_libero_pro(args.libero_pro, data / "libero_pro", data_dir=data))
+        print("wrote", export_libero_pro(args.libero_pro, data / "libero_pro"))
     if args.robocasa:
-        print("wrote", export_robocasa(args.robocasa, data / "robocasa", data_dir=data))
+        print("wrote", export_robocasa(args.robocasa, data / "robocasa"))
     return 0
 
 

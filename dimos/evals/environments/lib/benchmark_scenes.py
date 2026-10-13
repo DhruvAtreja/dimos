@@ -26,7 +26,7 @@ from pydantic import BaseModel, Field
 from dimos.evals.environments.lib.recorded_poses import first_body_transform, last_body_transform
 from dimos.evals.environments.mujoco_sim import MujocoEnvironment
 from dimos.evals.types import EvalCase, Outcome, Suite, recording
-from dimos.utils.data import get_data_dir
+from dimos.utils.data import get_data
 
 GradeKind = Literal["lifted"]
 
@@ -42,7 +42,7 @@ XARM_EVAL_DISABLE = (
 class GradeSpec(BaseModel):
     type: GradeKind
     body: str
-    by_m: float = 0.05
+    by_m: float = Field(default=0.05, gt=0, allow_inf_nan=False)
 
 
 class BenchmarkCase(BaseModel):
@@ -62,12 +62,20 @@ class BenchmarkManifest(BaseModel):
 
 
 def load_manifest(root: str) -> BenchmarkManifest:
-    path = get_data_dir() / root / "manifest.json"
+    path = get_data(f"{root}/manifest.json")
     return BenchmarkManifest.model_validate(json.loads(path.read_text()))
 
 
 def scene_path(root: str, relative: str) -> Path:
-    return (get_data_dir() / root / relative).resolve()
+    return get_data(f"{root}/{relative}").resolve()
+
+
+def tracked_bodies_for_case(case: BenchmarkCase) -> tuple[str, ...]:
+    """Ensure the graded body is recorded on ``tf`` even if the manifest omits it."""
+    bodies = list(case.tracked_bodies)
+    if case.grade.body not in bodies:
+        bodies.append(case.grade.body)
+    return tuple(bodies)
 
 
 def xarm_table_env(scene: Path, tracked_bodies: tuple[str, ...] = ()) -> MujocoEnvironment:
@@ -102,7 +110,7 @@ def cases_from_manifest(
     extra_tags: Sequence[str] = (),
 ) -> Suite:
     make_env = environment_factory or (
-        lambda case, scene: xarm_table_env(scene, case.tracked_bodies)
+        lambda case, scene: xarm_table_env(scene, tracked_bodies_for_case(case))
     )
     suite: list[EvalCase] = []
     for case in manifest.cases:
