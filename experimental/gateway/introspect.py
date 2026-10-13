@@ -49,32 +49,27 @@ class IntrospectError(Exception):
 
 
 class Cache:
+    """One shared computation per key, kept for `ttl` seconds from its start; a failure isn't kept."""
+
     def __init__(self) -> None:
-        self.values: dict[str, tuple[float, Any]] = {}
-        self.locks: dict[str, tuple[asyncio.Lock, int]] = {}
+        self.entries: dict[str, tuple[float, asyncio.Future[Any]]] = {}
 
     def forget(self, key: str) -> None:
-        self.values.pop(key, None)
+        self.entries.pop(key, None)
 
     async def get(self, key: str, ttl: float, compute: Callable[[], Awaitable[Any]]) -> Any:
-        # keys include request args, so drop expired values and idle locks or they pile up for days
-        lock, users = self.locks.get(key) or (asyncio.Lock(), 0)
-        self.locks[key] = (lock, users + 1)
+        # keys include request args, so expired entries go or they pile up for days
+        now = time.monotonic()
+        self.entries = {k: entry for k, entry in self.entries.items() if entry[0] > now}
+        if key not in self.entries:
+            self.entries[key] = (now + ttl, asyncio.ensure_future(compute()))
+        task = self.entries[key][1]
         try:
-            async with lock:
-                now = time.monotonic()
-                self.values = {k: hit for k, hit in self.values.items() if hit[0] > now}
-                if key in self.values:
-                    return self.values[key][1]
-                value = await compute()
-                self.values[key] = (time.monotonic() + ttl, value)
-                return value
-        finally:
-            users = self.locks[key][1] - 1
-            if users:
-                self.locks[key] = (lock, users)
-            else:
-                del self.locks[key]
+            return await asyncio.shield(task)
+        except Exception:
+            if key in self.entries and self.entries[key][1] is task:
+                del self.entries[key]
+            raise
 
 
 async def run_child(
