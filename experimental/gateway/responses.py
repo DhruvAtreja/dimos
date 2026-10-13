@@ -210,8 +210,6 @@ class Robots(Body):
     about: None
     types: dict[str, dict[str, Any]]
     robots: dict[str, Robot]
-    excluded: NotRequired[dict[str, str]]
-    unlisted: list[str]
 
 
 ScannedModule = TypedDict(
@@ -227,7 +225,6 @@ class DiscoveredBlueprint(Body):
     importable: bool
     optional_dependency: bool
     import_error: str | None
-    import_traceback: str | None
     missing_module: str | None
     modules: list[ScannedModule]
     robot: str | None
@@ -251,13 +248,9 @@ class DiscoveryStatus(Body):
     started_at: str | None
     finished_at: str | None
     current: str | None
-    cached_from: str | None
     blueprints_total: int
     blueprints_done: int
     importable: int
-    not_importable: int
-    modules_total: int
-    modules_done: int
     errors: list[str]
 
 

@@ -195,11 +195,9 @@ def resolved(source: dict[str, Any], registry: Collection[str]) -> dict[str, Any
     doc = generate(source)
     out = copy.deepcopy(doc)
     out["about"] = None
-    listed = set()
     for robot_id, robot in out["robots"].items():
         original = doc["robots"][robot_id]
         for name, blueprint in robot["blueprints"].items():
-            listed.add(name)
             own = original["blueprints"][name]
             settings = own.get("recommended_config")
             if settings is None:
@@ -213,5 +211,4 @@ def resolved(source: dict[str, Any], registry: Collection[str]) -> dict[str, Any
             blueprint["registered"] = name in registry
         robot.pop("defaults", None)
         robot.setdefault("recommended", [])
-    out["unlisted"] = sorted(set(registry) - listed)
     return out

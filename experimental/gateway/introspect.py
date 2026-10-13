@@ -30,7 +30,6 @@ import re
 import signal
 import sys
 import time
-import traceback
 import typing
 from typing import Any
 
@@ -614,7 +613,6 @@ def scan(request: Any) -> dict[str, Any]:
                     "importable": True,
                     "optional_dependency": False,
                     "import_error": None,
-                    "import_traceback": None,
                     "missing_module": None,
                     "modules": modules,
                     "doc": doc,
@@ -623,14 +621,12 @@ def scan(request: Any) -> dict[str, Any]:
             for atom in bp.active_blueprints:
                 seen(registry_names.get(class_key(atom.module), atom.module.__name__), atom.module)
         except BaseException as error:
-            lines = traceback.format_exception(type(error), error, error.__traceback__)
             emit(
                 {
                     **record,
                     "importable": False,
                     "optional_dependency": isinstance(error, OptionalDependencyError),
                     "import_error": f"{type(error).__name__}: {error}",
-                    "import_traceback": "".join(lines)[-4000:],
                     "missing_module": missing_module(error),
                     "modules": [],
                     "doc": "",

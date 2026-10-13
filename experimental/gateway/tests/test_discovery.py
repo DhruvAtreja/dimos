@@ -40,7 +40,7 @@ for name in names:
     ok = name == "good"
     emit({{"kind": "blueprint", "name": name, "ref": "dimos.robot.unitree.go2.x:" + name, "builtin": True,
           "importable": ok, "optional_dependency": False, "import_error": None if ok else "ModuleNotFoundError: x",
-          "import_traceback": None, "missing_module": None if ok else "unitree_sdk2py", "doc": "",
+          "missing_module": None if ok else "unitree_sdk2py", "doc": "",
           "modules": [{{"name": "cam", "class": "x.Cam", "module": "cam", "streams": []}}] if ok else []}})
 for name in request.get("modules", ["cam"]):
     emit({{"kind": "start", "name": "module:" + name}})
@@ -73,7 +73,7 @@ def test_discovery_scans_on_demand_and_survives_a_crash(client: TestClient, scan
     client.get("/dimos/discovery")
     until(lambda: client.get("/dimos/discovery").json()["state"] == "done")
     status = client.get("/dimos/discovery").json()
-    assert (status["blueprints_done"], status["importable"], status["not_importable"]) == (3, 1, 2)
+    assert (status["blueprints_done"], status["importable"]) == (3, 1)
     found = {b["name"]: b for b in client.get("/dimos/discovery/blueprints").json()["blueprints"]}
     assert found["good"]["robot"] == "go2"
     assert "crashed" in found["crashes"]["import_error"]

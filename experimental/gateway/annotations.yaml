@@ -994,11 +994,3 @@ robots:
         title: Object scene registration demo
         description: Registers objects into a scene from a ZED camera (needs the ZED SDK).
         hidden: true
-# Directories under dimos/robot that are not robots, each with the reason.
-excluded:
-  dimos/robot/assets: robot model assets and their loaders (URDF/xacro), shared by every robot
-  dimos/robot/unitree/b1: 'the Unitree B1''s connection code: no blueprint yet'
-  dimos/robot/unitree/params: parameter files shared by the Unitree robots
-  dimos/robot/unitree/testing: test tools for the Unitree robots
-  dimos/robot/unitree/type: message types shared by the Unitree robots
-  dimos/robot/unitree_webrtc: legacy Unitree WebRTC types, kept for old imports
