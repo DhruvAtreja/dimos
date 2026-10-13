@@ -38,9 +38,12 @@ from dimos.teleop.webxr.controller_types import Buttons
 
 DUAL_OPENYAM_SIDES = ("left", "right")
 
-# Teleop tuning for collection: the teleop-webxr-a1z task on main (default Pink
-# solver and costs, 5 Hz command filter), with the shared 2 rad/s joint limit.
-# The stock teleop-webxr-dual-openyam task runs a stiffer, unfiltered tuning.
+# Alternative teleop tuning kept for comparison runs: the teleop-webxr-a1z task on
+# main (default Pink solver, equal position and orientation costs, 5 Hz command
+# filter, 2 rad/s). Measured on 2026-10-13: with this tuning the OpenYAM base and
+# wrist joints chase orientation (|j1| > 0.8 rad half the time) and the gripper moves
+# a fraction of the hand. The collection blueprint therefore runs the stock
+# teleop-webxr-dual-openyam graph; this task is a one-line swap for a ladder step.
 DUAL_OPENYAM_COLLECTION_TELEOP_PARAMS: dict[str, Any] = {"max_joint_velocity_rad_s": 2.0}
 
 _collection_hardware = dual_openyam_hardware()
