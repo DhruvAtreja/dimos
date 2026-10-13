@@ -170,6 +170,9 @@ class DualOpenYamHomeButtonConfig(ModuleConfig):
     home_button: str = "A"
     set_home_button: str = "X"
     speed_scale: float = Field(default=0.2, gt=0.0, le=1.0)
+    # Below this joint distance the arms count as home: a zero-length path makes
+    # the trajectory parametrization fail, so it is skipped instead.
+    at_home_tolerance_rad: float = Field(default=0.02, gt=0.0)
     home_joints: list[float] = Field(
         default_factory=lambda: list(DUAL_OPENYAM_COLLECTION_HOME_JOINTS)
     )
@@ -271,11 +274,27 @@ class DualOpenYamHomeButtonModule(Module):
             if self._worker is not None and self._worker.is_alive():
                 logger.warning("home: a parking move is already running")
                 return
+            distance = self._distance_to_home_locked()
+            if distance is not None and distance < self.config.at_home_tolerance_rad:
+                logger.info("home: already there", distance_rad=round(distance, 3))
+                return
             targets = dual_openyam_home_targets(self._home_joints)
             self._worker = threading.Thread(
                 target=self._plan_and_execute, args=(targets,), daemon=True, name="openyam-home"
             )
             self._worker.start()
+
+    def _distance_to_home_locked(self) -> float | None:
+        """Largest joint error to the home pose, or None without a joint state."""
+        if self._latest_joints is None:
+            return None
+        by_name = dict(zip(self._latest_joints.name, self._latest_joints.position, strict=False))
+        if any(n not in by_name for n in DUAL_OPENYAM_ARM_JOINTS):
+            return None
+        return max(
+            abs(float(by_name[n]) - h)
+            for n, h in zip(DUAL_OPENYAM_ARM_JOINTS, self._home_joints, strict=True)
+        )
 
     def _plan_and_execute(self, targets: dict[str, JointState]) -> None:
         # RPCs block, so they run off the subscriber thread.

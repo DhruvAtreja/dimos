@@ -21,6 +21,7 @@ from dimos.control.teleop_coordinator import TeleopControlCoordinator
 from dimos.core.coordination.blueprints import Blueprint
 from dimos.manipulation.manipulation_module import ManipulationModule
 from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
+from dimos.msgs.sensor_msgs.JointState import JointState
 from dimos.robot.manipulators.dual_openyam.blueprints.basic import DualOpenYamCoordinator
 from dimos.robot.manipulators.dual_openyam.blueprints.collection import (
     DUAL_OPENYAM_COLLECTION_BASE_JOINT_SPEED_RAD_S,
@@ -189,3 +190,26 @@ def test_home_button_module_binds_buttons_and_the_planner() -> None:
         DualOpenYamHomeButtonConfig().home_button,
         DualOpenYamHomeButtonConfig().set_home_button,
     } == {"A", "X"}
+
+
+def test_home_button_skips_the_move_when_already_home() -> None:
+    module = DualOpenYamHomeButtonModule.__new__(DualOpenYamHomeButtonModule)
+    module.config = DualOpenYamHomeButtonConfig()
+    module._lock = __import__("threading").Lock()
+    module._grip_held = False
+    module._worker = None
+    module._home_joints = list(DUAL_OPENYAM_COLLECTION_HOME_JOINTS)
+    module._latest_joints = JointState(
+        name=[*DUAL_OPENYAM_ARM_JOINTS, "left_arm/gripper", "right_arm/gripper"],
+        position=[*(v + 0.01 for v in DUAL_OPENYAM_COLLECTION_HOME_JOINTS), 1.0, 1.0],
+    )
+    module._manipulation = None  # must not be touched when already home
+
+    module._go_home()
+    assert module._worker is None
+
+    with module._lock:
+        assert module._distance_to_home_locked() == pytest.approx(0.01)
+    module._latest_joints = None
+    with module._lock:
+        assert module._distance_to_home_locked() is None
