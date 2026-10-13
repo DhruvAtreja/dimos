@@ -32,11 +32,13 @@ from dimos.robot.manipulators.dual_openyam.blueprints.agentic import (
 from dimos.robot.manipulators.dual_openyam.blueprints.basic import DualOpenYamCoordinator
 from dimos.robot.manipulators.dual_openyam.blueprints.grasp import (
     DUAL_OPENYAM_RECORD_TOPICS,
+    DUAL_OPENYAM_VIEW_TOPICS,
     dual_openyam_grasp_blueprint,
     dual_openyam_grasp_left,
     dual_openyam_grasp_model_config,
     dual_openyam_grasp_right,
 )
+from dimos.visualization.rerun.bridge import RerunBridgeModule
 
 
 def _atom(blueprint: Blueprint, module: type[ModuleBase]) -> BlueprintAtom:
@@ -96,6 +98,10 @@ def test_stack_is_the_xarm_grasp_stack_with_the_workcell_rig() -> None:
         30,
     )
     assert dual_openyam_grasp_right.global_config_overrides["record"] == "sqlite"
+    bridge = _atom(dual_openyam_grasp_right, RerunBridgeModule).kwargs
+    assert bridge["topics"] == DUAL_OPENYAM_VIEW_TOPICS
+    assert bridge["rerun_open"] == "none"
+    assert bridge["blueprint"]() is not None
 
 
 def test_graspgen_flag_swaps_the_grasp_provider() -> None:
