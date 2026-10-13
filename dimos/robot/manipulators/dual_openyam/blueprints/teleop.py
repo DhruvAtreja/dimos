@@ -14,6 +14,8 @@
 
 """Coupled WebXR teleoperation for the complete Dual OpenYAM entity."""
 
+from dataclasses import replace
+
 from dimos.control.coordinator import TaskConfig
 from dimos.core.coordination.blueprints import Blueprint, autoconnect
 from dimos.manipulation.manipulation_module import ManipulationModule
@@ -76,6 +78,17 @@ _dual_openyam_webxr_task = teleop_ik_task(
         "joint_command_filter_cutoff_hz": 30.0,
     },
 )
+
+
+def dual_openyam_webxr_task(*, max_joint_velocity_rad_s: float = 2.0) -> TaskConfig:
+    """The stock dual-arm teleop task with the joint-speed ceiling as its one knob."""
+    return replace(
+        _dual_openyam_webxr_task,
+        params={
+            **_dual_openyam_webxr_task.params,
+            "max_joint_velocity_rad_s": max_joint_velocity_rad_s,
+        },
+    )
 
 
 def build_dual_openyam_webxr(

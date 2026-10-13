@@ -14,8 +14,6 @@
 
 """What a dual OpenYAM collection runs and records: teleop tuning, cameras, recorder."""
 
-from typing import Any
-
 from dimos.control.coordinator import TaskConfig
 from dimos.core.coordination.blueprints import Blueprint, autoconnect
 from dimos.core.stream import In
@@ -24,49 +22,28 @@ from dimos.imitation.collection.recorder import CollectionRecorder
 from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
 from dimos.msgs.sensor_msgs.Image import Image
 from dimos.msgs.std_msgs.Float32 import Float32
-from dimos.robot.manipulators.common.blueprints import teleop_ik_task
 from dimos.robot.manipulators.dual_openyam.blueprints.teleop import (
-    DUAL_OPENYAM_WEBXR_TASK_NAME,
     build_dual_openyam_webxr,
+    dual_openyam_webxr_task,
 )
-from dimos.robot.manipulators.dual_openyam.config import (
-    dual_openyam_hardware,
-    dual_openyam_model_config,
-)
-from dimos.robot.manipulators.dual_openyam.joints import DUAL_OPENYAM_ARM_JOINTS
 from dimos.teleop.webxr.controller_types import Buttons
 
 DUAL_OPENYAM_SIDES = ("left", "right")
 
-# Alternative teleop tuning kept for comparison runs: the teleop-webxr-a1z task on
-# main (default Pink solver, equal position and orientation costs, 5 Hz command
-# filter, 2 rad/s). Measured on 2026-10-13: with this tuning the OpenYAM base and
-# wrist joints chase orientation (|j1| > 0.8 rad half the time) and the gripper moves
-# a fraction of the hand. The collection blueprint therefore runs the stock
-# teleop-webxr-dual-openyam graph; this task is a one-line swap for a ladder step.
-DUAL_OPENYAM_COLLECTION_TELEOP_PARAMS: dict[str, Any] = {"max_joint_velocity_rad_s": 2.0}
-
-_collection_hardware = dual_openyam_hardware()
-_collection_model = dual_openyam_model_config()
+# Joint-speed ceiling for collection teleop. The stock task allows 2.0 rad/s; on
+# the benchmark rig the operator asked for a calmer arm (2026-10-13 session: 90th
+# percentile joint speed 1.06 rad/s, 1.2 rad/s clips 6.5 percent of the samples).
+DUAL_OPENYAM_COLLECTION_JOINT_SPEED_RAD_S = 1.2
 
 
 def dual_openyam_collection_teleop_task() -> TaskConfig:
-    """Both arms under one grip deadman, tuned like the A1Z WebXR task."""
-    return teleop_ik_task(
-        _collection_hardware,
-        robot_model=_collection_model,
-        name=DUAL_OPENYAM_WEBXR_TASK_NAME,
-        joint_names=DUAL_OPENYAM_ARM_JOINTS,
-        priority=20,
-        bindings=[
-            {"hand": "left", "target_frame": "left_grasp_frame"},
-            {"hand": "right", "target_frame": "right_grasp_frame"},
-        ],
-        params=dict(DUAL_OPENYAM_COLLECTION_TELEOP_PARAMS),
+    """The stock dual-arm teleop task at the collection speed ceiling."""
+    return dual_openyam_webxr_task(
+        max_joint_velocity_rad_s=DUAL_OPENYAM_COLLECTION_JOINT_SPEED_RAD_S
     )
 
 
-# The stock dual OpenYAM WebXR graph with the collection teleop tuning.
+# The stock dual OpenYAM WebXR graph at the collection speed ceiling.
 teleop_webxr_dual_openyam_collection = autoconnect(
     build_dual_openyam_webxr(teleop_task=dual_openyam_collection_teleop_task())
 )
