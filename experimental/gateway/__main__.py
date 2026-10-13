@@ -83,8 +83,8 @@ def serve(
     state.exit = exit_now
     if zenoh:
         connect = events.resolve_connect(zenoh_connect)
+        # it subscribes on the first GET /dimos/topics/rates, not at boot: every sample on the bus costs CPU
         state.topics = TopicWatch(lambda: events.zenoh_session(connect))
-        state.topics.start()
     server = uvicorn.Server(
         uvicorn.Config(create_app(state), log_level="warning", timeout_graceful_shutdown=2)
     )

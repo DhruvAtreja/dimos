@@ -23,6 +23,8 @@ import time
 from typing import Any
 
 WINDOW_S = 2.0
+# the subscription (every sample on the bus, payloads too) stops this long after the last request
+IDLE_S = 60.0
 LIVELINESS_EVERY_S = 5.0
 KIND = re.compile(r"[A-Za-z0-9_]+\.[A-Za-z0-9_]+")
 
@@ -58,6 +60,7 @@ class TopicWatch:
         self.session: Any = None
         self.subscriber: Any = None
         self.liveliness_at = 0.0
+        self.requested_at = 0.0
         self.error: str | None = None
 
     def heard(self, key: str, size: int) -> None:
@@ -71,6 +74,9 @@ class TopicWatch:
             entry.bytes += size
             entry.last = now
             entry.window.append((now, size))
+            # trimmed here, not only in snapshot(): unread, it kept every sample (4 GB in 12 h on the R1)
+            while now - entry.window[0][0] > WINDOW_S:
+                entry.window.popleft()
 
     def declared(self, key: str) -> None:
         parsed = parse_key(key.split("/@adv/", 1)[0])
@@ -81,6 +87,7 @@ class TopicWatch:
     def start(self) -> None:
         if self.subscriber is not None:
             return
+        self.requested_at = self.clock()
         try:
             self.session = self.session or self.open_session()
             self.subscriber = self.session.declare_subscriber(
@@ -89,6 +96,25 @@ class TopicWatch:
             self.error = None
         except Exception as error:
             self.error = f"can't listen to the bus: {error}"
+            return
+        threading.Thread(target=self._stop_when_idle, name="topic-rates-idle", daemon=True).start()
+
+    def stop_if_idle(self) -> bool:
+        """Drops the subscription when nobody asked for IDLE_S; True if it stopped."""
+        if self.subscriber is None or self.clock() - self.requested_at <= IDLE_S:
+            return False
+        subscriber, self.subscriber = self.subscriber, None
+        try:
+            subscriber.undeclare()
+        except Exception:
+            pass
+        with self.lock:
+            self.topics.clear()
+        return True
+
+    def _stop_when_idle(self) -> None:
+        while self.subscriber is not None and not self.stop_if_idle():
+            time.sleep(5.0)
 
     def _ask_liveliness(self) -> None:
         if self.session is None:
@@ -103,6 +129,7 @@ class TopicWatch:
 
     def snapshot(self) -> dict[str, Any]:
         now = self.clock()
+        self.requested_at = now
         self.start()
         if now - self.liveliness_at > LIVELINESS_EVERY_S:
             self.liveliness_at = now

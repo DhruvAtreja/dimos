@@ -83,6 +83,32 @@ def test_topic_rates_count_what_is_heard(client: TestClient, state: State) -> No
     assert client.get("/dimos/topics/rates").json()["topics"][0]["hz"] == 0
 
 
+def test_topic_rates_keep_only_their_window_and_stop_when_unread() -> None:
+    now = [100.0]
+    callbacks: list[Any] = []
+    undeclared: list[bool] = []
+    subscriber = SimpleNamespace(undeclare=lambda: undeclared.append(True))
+
+    def declare_subscriber(key: str, callback: Any) -> Any:
+        callbacks.append(callback)
+        return subscriber
+
+    watch = TopicWatch(
+        lambda: SimpleNamespace(declare_subscriber=declare_subscriber), clock=lambda: now[0]
+    )
+    watch.start()
+    for _ in range(10_000):
+        now[0] += 0.01
+        callbacks[0](SimpleNamespace(key_expr="dimos/imu/sensor_msgs.Imu", payload=b"x"))
+    (entry,) = watch.topics.values()
+    assert len(entry.window) <= 201, "unread, it keeps only its window"
+    assert entry.messages == 10_000
+    watch.snapshot()
+    assert not watch.stop_if_idle(), "just asked"
+    now[0] += 61
+    assert watch.stop_if_idle() and undeclared == [True] and watch.subscriber is None
+
+
 def test_login_page(client: TestClient) -> None:
     assert "<html" in client.get("/dimos/cloud/login/page").text.lower()
 
