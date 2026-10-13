@@ -3,7 +3,7 @@
 
   inputs = {
     nix-filter.url = "github:numtide/nix-filter";
-    livox-sdk2.url = "github:jeff-hykin/livox-sdk2";
+    livox-sdk2.url = "github:dimensionalOS/livox-sdk2";
     zenoh.url = "github:jeff-hykin/zenoh_flake";
     zenoh.inputs.nixpkgs.follows = "nixpkgs";
     zenoh.inputs.flake-utils.follows = "flake-utils";

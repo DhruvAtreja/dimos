@@ -151,13 +151,13 @@
       "locked": {
         "lastModified": 1789610908,
         "narHash": "sha256-KhsxhhM8lsGRwGR9KYChcTP7IDkomkXO8NyMnWYkj2U=",
-        "owner": "jeff-hykin",
+        "owner": "dimensionalOS",
         "repo": "livox-sdk2",
         "rev": "efc2c87e78a0819c044b6a31a9d81428d522c1f6",
         "type": "github"
       },
       "original": {
-        "owner": "jeff-hykin",
+        "owner": "dimensionalOS",
         "repo": "livox-sdk2",
         "type": "github"
       }

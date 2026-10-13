@@ -15,7 +15,7 @@
 """Default Livox SDK2 network port constants.
 
 These match the defaults in ``livox_common/livox_sdk_config.hpp`` (``SdkPorts``)
-in github:jeff-hykin/livox-sdk2, which the C++ modules take through their flakes.
+in github:dimensionalOS/livox-sdk2, which the C++ modules take through their flakes.
 Both the Mid-360 driver and FAST-LIO2 modules reference this single source
 so port numbers are defined in one place on the Python side.
 """
