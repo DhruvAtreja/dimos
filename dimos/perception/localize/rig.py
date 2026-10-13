@@ -52,8 +52,31 @@ DEPTH_TOLERANCE = 0.06  # s - temporal join color->depth
 LIDAR_CELL = 0.05  # m - the merged lidar map keeps one point per cell
 FRAME_TOLERANCE = 0.02  # s - an index timestamp back to its own color frame
 EMBED_HZ = 1.0  # index density for a camera parked over a workspace
+TF_ROOT_WINDOW = 2.5  # s - tf read either side of a recording's middle to find its root
 # a lidar map holds what the camera cannot see: keep the visible, split off the background, trim
 LIDAR_FILTERS = [raycast(), range_cluster(), statistical(nb_neighbors=12, std_ratio=2.0)]
+
+
+def _rate(stream: Any) -> float:
+    t0, t1 = stream.get_time_range()
+    return float(stream.count()) / max(float(t1 - t0), 1e-6)
+
+
+def _tf_root(store: Any, camera: str) -> str:
+    """The top of ``camera``'s tf chain in the middle of the recording, the frame its
+    poses are taken in; an edge tf only stamps at the ends of a run does not count."""
+    stream = store.stream("tf")
+    t0, t1 = stream.get_time_range()
+    middle = (t0 + t1) / 2
+    parent = {
+        t.child_frame_id: t.frame_id
+        for obs in stream.after(middle - TF_ROOT_WINDOW).before(middle + TF_ROOT_WINDOW)
+        for t in obs.data.transforms
+    }
+    chain = [camera]
+    while chain[-1] in parent and parent[chain[-1]] not in chain:
+        chain.append(parent[chain[-1]])
+    return chain[-1] if len(chain) > 1 else WORLD_FRAME
 
 
 def window_tf(store: Any, t0: float, t1: float) -> MultiTBuffer:
@@ -92,7 +115,8 @@ class Rig:
     @classmethod
     def from_store(cls, store: Any) -> Rig:
         """Every calibrated optical frame that records colour, with aligned depth or
-        beside the store's one point cloud stream, is a camera."""
+        beside the store's one point cloud stream, is a camera, posed in the root of
+        its tf chain."""
         from dimos.msgs.sensor_msgs.CameraInfo import CameraInfo as CameraInfoMsg
         from dimos.msgs.sensor_msgs.Image import Image as ImageMsg
         from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2 as PointCloudMsg
@@ -117,9 +141,10 @@ class Rig:
                 kind = "color"
             else:
                 continue
-            held = images[kind].setdefault(image.frame_id, name)
-            if held != name:
-                raise ValueError(f"several {kind} streams in {image.frame_id!r}: {held}, {name}")
+            # a derived copy, such as an embedding index, runs slower than its feed
+            held = images[kind].get(image.frame_id)
+            if held is None or _rate(store.stream(name)) > _rate(store.stream(held)):
+                images[kind][image.frame_id] = name
 
         color, depth = images["color"], images["depth"]
         clouds = [n for n in names if types[n] is PointCloudMsg and store.stream(n).count()]
@@ -144,8 +169,14 @@ class Rig:
             raise ValueError(f"no tf stream among {names}")
         if all(camera.depth is not None for camera in cameras.values()):
             lidar = None
-        logger.info(f"rig: cameras={list(cameras)} lidar={lidar!r} world={WORLD_FRAME!r}")
-        return cls(cameras=cameras, tf=tf, lidar=store.stream(lidar) if lidar else None)
+        world = _tf_root(store, next(iter(cameras)))
+        logger.info(f"rig: cameras={list(cameras)} lidar={lidar!r} world={world!r}")
+        return cls(
+            cameras=cameras,
+            tf=tf,
+            world_frame=world,
+            lidar=store.stream(lidar) if lidar else None,
+        )
 
     def time_range(self) -> tuple[float, float]:
         """Earliest and latest colour stamp over every camera."""
