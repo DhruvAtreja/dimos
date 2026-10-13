@@ -528,9 +528,12 @@ class Jobs:
         self.jobs: dict[str, Job] = {}
         self.ids = itertools.count(1)
 
-    def get(self, job_id: str) -> Job:
+    def prune(self) -> None:
         cutoff = time.monotonic() - JOB_KEEP_S
         self.jobs = {k: j for k, j in self.jobs.items() if j.ended is None or j.ended >= cutoff}
+
+    def get(self, job_id: str) -> Job:
+        self.prune()
         if job_id not in self.jobs:
             raise KeyError(f"no job {job_id}")
         return self.jobs[job_id]
@@ -548,6 +551,7 @@ class Jobs:
         then: Callable[[], None],
         prepare: Prepare | None = None,
     ) -> Job:
+        self.prune()
         job = Job(f"{kind}-{next(self.ids)}-{int(time.time())}", title, kind, command)
         self.jobs[job.id] = job
         asyncio.get_running_loop().create_task(self.run(job, cwd, env, then, prepare))

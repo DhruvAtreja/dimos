@@ -179,6 +179,8 @@ class Queue:
         if upload is None:
             return None
         upload.update(change)
+        if upload["state"] != "uploading":
+            self.rates.pop(id, None)
         return dict(upload)
 
     def enqueue(

@@ -12,10 +12,12 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+import asyncio
+
 from dimos.core.transport import LCMTransport, ZenohTransport
 from dimos.msgs.geometry_msgs.Twist import Twist
 from dimos.protocol.pubsub.impl.zenohpubsub import Topic as ZenohTopic
-from experimental.gateway.introspect import blueprint, spec_topic
+from experimental.gateway.introspect import Cache, blueprint, spec_topic
 
 
 def test_spec_topic_reads_lcm_and_zenoh_specs() -> None:
@@ -33,3 +35,21 @@ def test_remapped_streams_show_their_wired_topic() -> None:
     left = streams["headleftcamera", "jpeg_out"]
     assert (left["wire"], left["topic"]) == ("head_left_color", "/head_left_color")
     assert streams["headrightcamera", "jpeg_out"]["topic"] == "/head_right_color"
+
+
+def test_the_cache_drops_expired_values_and_idle_locks() -> None:
+    cache, computed = Cache(), []
+
+    async def compute() -> int:
+        computed.append(1)
+        await asyncio.sleep(0.01)
+        return len(computed)
+
+    async def scenario() -> None:
+        assert await asyncio.gather(*(cache.get("a", 60, compute) for _ in range(3))) == [1, 1, 1]
+        await cache.get("b", 0, compute)
+        await cache.get("c", 60, compute)
+
+    asyncio.run(scenario())
+    assert len(computed) == 3
+    assert set(cache.values) == {"a", "c"} and cache.locks == {}
