@@ -23,6 +23,10 @@ body {
 button {
     font-family: inherit;
 }
+/* an element styled display: flex or grid stays hidden while it has the hidden attribute */
+[hidden] {
+    display: none !important;
+}
 #app {
     flex: 1;
     min-height: 0;
@@ -659,9 +663,6 @@ button.tb-file:hover {
     border-radius: var(--radius-sm);
     pointer-events: none;
 }
-.type-tip[hidden] {
-    display: none;
-}
 .rates .num {
     color: var(--fg);
     text-align: right;
@@ -744,9 +745,6 @@ button.tb-file:hover {
     box-shadow: var(--shadow-lg);
     font: 11.5px var(--mono);
     pointer-events: none;
-}
-#flyout[hidden] {
-    display: none;
 }
 #flyout .sec + .sec {
     margin-top: 9px;
@@ -1008,9 +1006,6 @@ svg.graph.panning {
     color: var(--ok);
     font: 10px/16px var(--mono);
 }
-.graph-head .live[hidden] {
-    display: none;
-}
 .edge {
     fill: none;
     stroke: color-mix(in srgb, var(--muted-fg) 88%, var(--fg));
@@ -1126,9 +1121,6 @@ svg.spot .edge:not(.lit) {
     font: 11px var(--mono);
     color: var(--muted-fg);
 }
-#extras[hidden] {
-    display: none;
-}
 #extras summary {
     cursor: pointer;
 }
@@ -1202,9 +1194,6 @@ svg.spot .edge:not(.lit) {
     background: var(--bv-code-bg);
     color: var(--code-fg, var(--fg));
 }
-#code[hidden] {
-    display: none;
-}
 .code-head {
     display: flex;
     align-items: center;
@@ -1238,10 +1227,6 @@ svg.spot .edge:not(.lit) {
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
-}
-#code .opened[hidden],
-.modal.logs .opened[hidden] {
-    display: none;
 }
 #code .opened.failed,
 .modal.logs .opened.failed {
