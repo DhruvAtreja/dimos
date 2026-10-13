@@ -288,8 +288,6 @@ def r1pro_control(
     )
 
 
-# n_workers keeps the 100 Hz coordinator tick loop out of the interpreter
-# that runs the connection's sensor threads.
 def r1pro_lidar_odometry() -> Blueprint:
     """Our Mid-360 driver (per-point times, its own IMU) into Point-LIO, plus the mount tf."""
     lidar_frame = R1ProLioConfig.model_fields["lidar_frame"].default
@@ -312,6 +310,7 @@ def r1pro_lidar_odometry() -> Blueprint:
     )
 
 
+# n_workers keeps the 100 Hz coordinator tick loop out of the interpreter running the connection's sensor threads.
 r1pro_coordinator = autoconnect(
     r1pro_visualization(),
     # Off, so base_link has exactly one parent: Point-LIO's, through the mount.
