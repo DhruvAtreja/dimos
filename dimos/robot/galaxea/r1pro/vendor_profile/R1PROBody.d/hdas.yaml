@@ -6,6 +6,7 @@ windows:
   layout: even-horizontal
   panes:
   - shell_command:
+      # extremely cursed sleeps - straight out of the galaxea stock profile though
       - sleep 1
       - ./start_hdas_r1pro.sh
   - shell_command:
