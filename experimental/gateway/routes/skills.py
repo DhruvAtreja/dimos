@@ -21,6 +21,7 @@ from fastapi import APIRouter, Body
 from fastapi.responses import JSONResponse, Response
 from pydantic import BaseModel, JsonValue
 
+from experimental.gateway import responses
 from experimental.gateway.skills import MCP_PROTOCOL, MCP_TOOLS, SkillError, mcp_tool
 from experimental.gateway.state import API_VERSION, ApiError, GatewayState
 
@@ -34,13 +35,14 @@ class SkillCallRequest(BaseModel):
     runId: str | None = None
 
 
-@router.get("/dimos/skills")
+@router.get("/dimos/skills", response_model=responses.Skills)
 async def skill_list(state: GatewayState) -> dict[str, Any]:
     return await asyncio.to_thread(state.skills.listed)
 
 
-@router.post("/dimos/skills/call")
+@router.post("/dimos/skills/call", response_model=responses.SkillResult)
 async def skill_call(state: GatewayState, request: SkillCallRequest) -> dict[str, Any]:
+    """Call one of the running blueprint's skills, through its MCP server or over RPC."""
     try:
         return await asyncio.to_thread(
             state.skills.call, request.skill, request.args, request.module, request.runId

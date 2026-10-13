@@ -26,7 +26,7 @@ from typing import Any
 from fastapi import APIRouter
 from fastapi.responses import PlainTextResponse
 
-from experimental.gateway import logs, store
+from experimental.gateway import logs, responses, store
 from experimental.gateway.state import ApiError, GatewayState
 
 router = APIRouter()
@@ -40,12 +40,12 @@ async def healthz() -> str:
     return "ok"
 
 
-@router.get("/dimos/info")
+@router.get("/dimos/info", response_model=responses.Info)
 async def info(state: GatewayState) -> dict[str, Any]:
     return store.info(state.dimos_dir)
 
 
-@router.get("/dimos/paths")
+@router.get("/dimos/paths", response_model=responses.Paths)
 async def paths(state: GatewayState) -> dict[str, Any]:
     from dimos.core.run_registry import REGISTRY_DIR
 
@@ -68,8 +68,9 @@ async def paths(state: GatewayState) -> dict[str, Any]:
     }
 
 
-@router.post("/dimos/server/stop")
+@router.post("/dimos/server/stop", response_model=responses.Stopping)
 async def stop_server(state: GatewayState) -> dict[str, Any]:
+    """Stop this gateway (a running blueprint keeps running)."""
     state.uploads.shutdown()
     asyncio.get_running_loop().call_later(0.2, state.exit)
     return {"stopping": True}
@@ -113,7 +114,7 @@ def find_python(dimos_dir: Path) -> dict[str, Any]:
     raise ApiError(500, f"no python imports dimos from {dimos_dir}")
 
 
-@router.get("/dimos/python")
+@router.get("/dimos/python", response_model=responses.Python)
 async def python(state: GatewayState) -> dict[str, Any]:
     async def compute() -> dict[str, Any]:
         return await asyncio.to_thread(find_python, state.dimos_dir)

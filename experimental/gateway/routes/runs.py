@@ -23,7 +23,7 @@ from typing import Annotated, Any
 from fastapi import APIRouter, Path as PathParam
 from pydantic import BaseModel, JsonValue
 
-from experimental.gateway import launches, logs, overrides as ov, store
+from experimental.gateway import launches, logs, overrides as ov, responses, store
 from experimental.gateway.launches import LaunchConfig
 from experimental.gateway.routes.blueprints import refused_args
 from experimental.gateway.state import ApiError, GatewayState, State
@@ -71,7 +71,7 @@ async def launch_config(state: State, request: LaunchRequest) -> LaunchConfig:
     return with_saved(request.blueprint, one_off, args)
 
 
-@router.get("/dimos/runs")
+@router.get("/dimos/runs", response_model=responses.Runs)
 async def run_list() -> dict[str, Any]:
     return {
         "runs": await asyncio.to_thread(launches.registry_runs),
@@ -79,8 +79,9 @@ async def run_list() -> dict[str, Any]:
     }
 
 
-@router.post("/dimos/runs")
+@router.post("/dimos/runs", response_model=responses.Launch)
 async def launch(state: GatewayState, request: LaunchRequest) -> dict[str, Any]:
+    """Launch a blueprint with Desktop's saved config plus this launch's overrides and args."""
     if not request.blueprint or request.blueprint.startswith("-"):
         raise ApiError(400, "bad blueprint name")
     config = await launch_config(state, request)
@@ -96,8 +97,9 @@ async def launch(state: GatewayState, request: LaunchRequest) -> dict[str, Any]:
     return started
 
 
-@router.post("/dimos/runs/stop")
+@router.post("/dimos/runs/stop", response_model=responses.Stopped)
 async def stop(state: GatewayState, request: StopRequest | None = None) -> dict[str, Any]:
+    """Stop the blueprint this gateway launched, or the run `runId`."""
     try:
         return {"output": await launches.stop(request.runId if request else None)}
     except launches.RunError as error:
@@ -106,8 +108,9 @@ async def stop(state: GatewayState, request: StopRequest | None = None) -> dict[
         state.bus.launch(await asyncio.to_thread(launches.current_launch))
 
 
-@router.post("/dimos/runs/restart")
+@router.post("/dimos/runs/restart", response_model=responses.Launch)
 async def restart(state: GatewayState) -> dict[str, Any]:
+    """Stop the last launch if it still runs, and launch it again with the config saved now."""
     last = launches.last_launch_args()
     if last is None:
         raise ApiError(400, "the dimos gateway hasn't launched anything yet")
@@ -124,7 +127,7 @@ async def restart(state: GatewayState) -> dict[str, Any]:
     return started
 
 
-@router.get("/dimos/runs/{runId}/log")
+@router.get("/dimos/runs/{runId}/log", response_model=responses.RunLog)
 async def run_log(
     state: GatewayState,
     run_id: Annotated[str, PathParam(alias="runId")],
@@ -164,7 +167,7 @@ def replay(path: Path) -> dict[str, Any]:
     return {**entry, "streams": names, "duration": span[0] if span else None}
 
 
-@router.get("/dimos/replays")
+@router.get("/dimos/replays", response_model=responses.Replays)
 async def replays(state: GatewayState) -> dict[str, Any]:
     folder = state.dimos_dir / "data"
     samples = (

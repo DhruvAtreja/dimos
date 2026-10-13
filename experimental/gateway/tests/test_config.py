@@ -24,6 +24,13 @@ from dimos.robot.all_blueprints import all_blueprints
 from experimental.gateway import overrides as ov, robots, store
 from experimental.gateway.state import State
 
+ARG = {
+    "default": None,
+    "description": None,
+    "required": False,
+    "base": False,
+    "json_compatible": True,
+}
 CONFIG = {
     "name": "demo",
     "modules": [
@@ -31,8 +38,8 @@ CONFIG = {
             "module": "camera",
             "class": "x.Camera",
             "args": [
-                {"name": "fps", "type": "int", "value": 10},
-                {"name": "api_key", "type": "str", "value": "real"},
+                {**ARG, "name": "fps", "type": "int", "default": 30, "value": 10},
+                {**ARG, "name": "api_key", "type": "str", "value": "real"},
             ],
         }
     ],
