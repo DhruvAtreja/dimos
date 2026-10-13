@@ -108,11 +108,11 @@ the arm whose gripper it names while the other arm rests on its support.
 Every run records joint states, the three cameras and TF to sqlite.
 
 What the stack does not have on the workcell, and therefore what the benchmark
-measures as is: the model has no collision geometry, so the planner avoids
-only the table (`floor_z`) and the detected objects; grasps are one top-down
-heuristic candidate per object; a pick executes as soon as it is planned, so
-the operator keeps a hand on the e-stop; grasp success is judged from the jaw
-readback alone.
+measures as is: grasps are one top-down heuristic candidate per object; a pick
+executes as soon as it is planned, so the operator keeps a hand on the e-stop;
+grasp success is judged from the jaw readback alone. The planner knows the
+arms, the wrist cameras, the table, the post and the overhead camera from the
+workcell model; the bin is added per scene with the `add_obstacle` RPC.
 
 ## Model assets
 

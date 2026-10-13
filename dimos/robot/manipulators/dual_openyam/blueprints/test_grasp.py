@@ -32,7 +32,6 @@ from dimos.robot.manipulators.dual_openyam.blueprints.agentic import (
 from dimos.robot.manipulators.dual_openyam.blueprints.basic import DualOpenYamCoordinator
 from dimos.robot.manipulators.dual_openyam.blueprints.grasp import (
     DUAL_OPENYAM_RECORD_TOPICS,
-    DUAL_OPENYAM_TABLE_TOP_Z,
     dual_openyam_grasp_blueprint,
     dual_openyam_grasp_left,
     dual_openyam_grasp_model_config,
@@ -83,7 +82,7 @@ def test_each_side_names_its_own_gripper_and_shares_the_tasks() -> None:
 def test_stack_is_the_xarm_grasp_stack_with_the_workcell_rig() -> None:
     manipulation = _atom(dual_openyam_grasp_right, ManipulationModule).kwargs
     assert manipulation["world_frame"] == "world"
-    assert manipulation["floor_z"] == DUAL_OPENYAM_TABLE_TOP_Z
+    assert "floor_z" not in manipulation
     assert manipulation["static_transforms"][0].child_frame_id == "camera_link"
     assert _atom(dual_openyam_grasp_right, PickAndPlaceModule).kwargs == {"planning_frame": "world"}
     overhead = next(

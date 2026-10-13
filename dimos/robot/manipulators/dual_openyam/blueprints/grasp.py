@@ -24,8 +24,9 @@ benchmarks one arm and names that arm's gripper; the other arm rests on its
 support under gravity compensation. Everything else is the stack as it exists:
 pick_object and place_at from the pick-and-place module, one top-down heuristic
 grasp or GraspGenX, scene registration from the overhead D405, the planner with
-the table as its floor. The model has no collision geometry, so no self filter
-or voxel map is composed.
+the table, post and overhead camera as collision geometry in the workcell
+model. No self filter or voxel map: the planner's obstacles are the detected
+objects and the bin added per scene.
 """
 
 from __future__ import annotations
@@ -59,7 +60,9 @@ from dimos.robot.manipulators.dual_openyam.config import (
 from dimos.robot.manipulators.dual_openyam.joints import DUAL_OPENYAM_GRIPPER_JOINTS
 from dimos.visualization.rerun.bridge import RerunBridgeModule
 
-# Table top below the arm mounting plates (tape, 2026-10-08). The planner's floor.
+# Table top below the arm mounting plates (tape, 2026-10-08). The workcell model
+# carries the slab 1 cm lower so objects resting on the table do not count as
+# in collision with it; no separate planner floor, it would overlap the slab.
 DUAL_OPENYAM_TABLE_TOP_Z = -0.045
 # {side}_grasp_frame sits 10 cm below the gripper link on its axis; the finger
 # pads of the URDF meet 3.7 cm further out. The printed fingers on the rig are
@@ -168,6 +171,14 @@ def dual_openyam_grasp_model_config(side: str) -> RobotModelConfig:
         for group in config.planning_groups
     ]
     config.gripper_hardware_id = f"{side}_arm"
+    # The pads meet at the URDF's closed zero position, so the two fingertip
+    # hulls always touch, and the wrist assembly nests inside the gripper body
+    # so their hulls overlap at every pose. Adjacent links are filtered already.
+    config.collision_exclusion_pairs = [
+        *config.collision_exclusion_pairs,
+        *((f"{arm}_tip_left", f"{arm}_tip_right") for arm in DUAL_OPENYAM_SIDES),
+        *((f"{arm}_link4", f"{arm}_gripper") for arm in DUAL_OPENYAM_SIDES),
+    ]
     return config
 
 
@@ -212,7 +223,6 @@ def dual_openyam_grasp_modules(side: str, *, graspgen: bool) -> tuple[Blueprint,
             kinematics=DUAL_OPENYAM_GRASP_PINK,
             default_speed_scale=0.25,
             static_transforms=[DUAL_OPENYAM_CAMERA_TRANSFORM],
-            floor_z=DUAL_OPENYAM_TABLE_TOP_Z,
             visualization={"backend": "viser"},
             world_frame="world",
         ),
