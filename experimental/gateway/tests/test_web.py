@@ -101,7 +101,7 @@ def test_topic_rates_keep_only_their_window_and_stop_when_unread() -> None:
         now[0] += 0.01
         callbacks[0](SimpleNamespace(key_expr="dimos/imu/sensor_msgs.Imu", payload=b"x"))
     (entry,) = watch.topics.values()
-    assert len(entry.window) <= 201, "unread, it keeps only its window"
+    assert len(entry.window) <= 9, "unread, it keeps a few counters for its window, not each sample"
     assert entry.messages == 10_000
     watch.snapshot()
     assert not watch.stop_if_idle(), "just asked"

@@ -23,6 +23,8 @@ import time
 from typing import Any
 
 WINDOW_S = 2.0
+# samples are counted into buckets this long, so a topic keeps a few counters, not a record per sample
+BUCKET_S = 0.25
 # the subscription (every sample on the bus, payloads too) stops this long after the last request
 IDLE_S = 60.0
 LIVELINESS_EVERY_S = 5.0
@@ -46,7 +48,12 @@ class Topic:
     bytes: int = 0
     last: float | None = None
     declared: bool = False
-    window: deque[tuple[float, int]] = field(default_factory=deque)
+    # [bucket start, samples, bytes], oldest first, covering at most the last WINDOW_S
+    window: deque[list[float]] = field(default_factory=deque)
+
+    def trim(self, now: float) -> None:
+        while self.window and now - self.window[0][0] > WINDOW_S:
+            self.window.popleft()
 
 
 class TopicWatch:
@@ -73,10 +80,14 @@ class TopicWatch:
             entry.messages += 1
             entry.bytes += size
             entry.last = now
-            entry.window.append((now, size))
-            # trimmed here, not only in snapshot(): unread, it kept every sample (4 GB in 12 h on the R1)
-            while now - entry.window[0][0] > WINDOW_S:
-                entry.window.popleft()
+            start = now - now % BUCKET_S
+            if entry.window and entry.window[-1][0] == start:
+                entry.window[-1][1] += 1
+                entry.window[-1][2] += size
+            else:
+                entry.window.append([start, 1, size])
+                # trimmed here, not only in snapshot(): unread, it kept every sample (4 GB in 12 h on the R1)
+                entry.trim(now)
 
     def declared(self, key: str) -> None:
         parsed = parse_key(key.split("/@adv/", 1)[0])
@@ -137,15 +148,14 @@ class TopicWatch:
         rows: list[dict[str, Any]] = []
         with self.lock:
             for entry in self.topics.values():
-                while entry.window and now - entry.window[0][0] > WINDOW_S:
-                    entry.window.popleft()
-                count = len(entry.window)
+                entry.trim(now)
+                count = sum(bucket[1] for bucket in entry.window)
                 rows.append(
                     {
                         "topic": entry.topic,
                         "type": entry.type,
                         "hz": round(count / WINDOW_S, 2),
-                        "bps": round(sum(size for _, size in entry.window) / WINDOW_S, 1),
+                        "bps": round(sum(bucket[2] for bucket in entry.window) / WINDOW_S, 1),
                         "messages": entry.messages,
                         "lastSeen": None if entry.last is None else round(now - entry.last, 1),
                         "declared": entry.declared,
