@@ -1,0 +1,3 @@
+from . import Surface
+
+def smoothscale(surface: Surface, size: tuple[int, int]) -> Surface: ...
