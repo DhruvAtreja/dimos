@@ -984,6 +984,7 @@ svg.graph {
     height: 100%;
     cursor: grab;
     user-select: none;
+    touch-action: none;
 }
 svg.graph.panning {
     cursor: grabbing;

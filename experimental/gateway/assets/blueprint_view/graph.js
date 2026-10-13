@@ -281,11 +281,36 @@ export class Graph {
             const box = this.pane.getBoundingClientRect()
             this.zoom(Math.exp(-event.deltaY * 0.0016), event.clientX - box.left, event.clientY - box.top)
         }, { passive: false })
+        // touches: one finger pans, two pinch-zoom the graph (touch-action: none keeps the browser's own zoom off it)
+        const touches = new Map()
         let drag = null
+        let pinch = null
+        const twoFingers = () => {
+            const [a, b] = [...touches.values()]
+            const box = this.pane.getBoundingClientRect()
+            return { gap: Math.hypot(a.x - b.x, a.y - b.y), x: (a.x + b.x) / 2 - box.left, y: (a.y + b.y) / 2 - box.top }
+        }
         this.svg.addEventListener("pointerdown", (event) => {
-            drag = { x: event.clientX, y: event.clientY, at: { ...this.at }, far: false }
+            touches.set(event.pointerId, { x: event.clientX, y: event.clientY })
+            if (touches.size === 2) {
+                pinch = { ...twoFingers(), at: { ...this.at } }
+                drag = null
+            } else if (touches.size === 1) {
+                drag = { x: event.clientX, y: event.clientY, at: { ...this.at }, far: false }
+            }
         })
         addEventListener("pointermove", (event) => {
+            if (touches.has(event.pointerId)) {
+                touches.set(event.pointerId, { x: event.clientX, y: event.clientY })
+            }
+            if (pinch && touches.size === 2) {
+                const now = twoFingers()
+                const k = Math.max(0.1, Math.min(4, pinch.at.k * now.gap / pinch.gap))
+                this.at = { k, x: now.x - ((pinch.x - pinch.at.x) * k) / pinch.at.k, y: now.y - ((pinch.y - pinch.at.y) * k) / pinch.at.k }
+                this.moved = true
+                this.applyView()
+                return
+            }
             if (!drag) {
                 return
             }
@@ -300,7 +325,18 @@ export class Graph {
             this.moved = true
             this.applyView()
         })
+        addEventListener("pointercancel", (event) => {
+            touches.delete(event.pointerId)
+            pinch = null
+            drag = null
+            this.svg.classList.remove("panning")
+        })
         addEventListener("pointerup", (event) => {
+            touches.delete(event.pointerId)
+            if (pinch) {
+                pinch = touches.size ? pinch : null
+                return
+            }
             const was = drag
             drag = null
             this.svg.classList.remove("panning")
