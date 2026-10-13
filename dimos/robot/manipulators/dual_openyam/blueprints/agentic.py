@@ -53,8 +53,8 @@ Skills:
 
 World frame (meters): origin on the table midway between the arm bases,
 X forward (away from the arms), Y toward the left arm, Z up. The table top is
-at Z=-0.045. The yellow bin spans X 0.40 to 0.69 and Y -0.11 to +0.11, rim at
-Z=0.065; "put it in the bin" means place_at {drop_x} {drop_y} {drop_z}.
+at Z=-0.042. The yellow bin spans X 0.40 to 0.69 and Y -0.11 to +0.11, rim at
+Z=0.068; "put it in the bin" means place_at {drop_x} {drop_y} {drop_z}.
 
 Rules:
 1. scan_objects first, then pick_object with the exact ID, then place_at.

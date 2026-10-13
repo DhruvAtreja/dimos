@@ -64,7 +64,7 @@ from dimos.visualization.rerun.bridge import RerunBridgeModule
 # Table top below the arm mounting plates (tape, 2026-10-08). The workcell model
 # carries the slab 1 cm lower so objects resting on the table do not count as
 # in collision with it; no separate planner floor, it would overlap the slab.
-DUAL_OPENYAM_TABLE_TOP_Z = -0.045
+DUAL_OPENYAM_TABLE_TOP_Z = -0.042
 # {side}_grasp_frame sits 10 cm below the gripper link on its axis; the finger
 # pads of the URDF meet 3.7 cm further out. The printed fingers on the rig are
 # longer than the URDF's by this much per arm (tool height check, 2026-10-09).
