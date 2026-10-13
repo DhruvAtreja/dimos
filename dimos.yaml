@@ -2,4 +2,4 @@
 name: dimos
 version: "0.0.14"
 install: |
-  set -o pipefail; curl -fsSL "https://raw.githubusercontent.com/dimensionalOS/dimos/$COMMIT/scripts/install.sh" | DIMOS_COMMIT="$COMMIT" bash -s -- --mode dev --branch "$REF" --project-dir "$DIMOS_DIR" --skip-tests ${NON_INTERACTIVE:+--non-interactive}
+  set -o pipefail; curl -fsSL "https://raw.githubusercontent.com/dimensionalOS/dimos/$REF/scripts/install.sh" | bash -s -- --mode dev --branch "$REF" --project-dir "$DIMOS_DIR" --skip-tests ${NON_INTERACTIVE:+--non-interactive}

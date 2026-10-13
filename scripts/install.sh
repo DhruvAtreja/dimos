@@ -28,7 +28,6 @@ INSTALL_MODE="${DIMOS_INSTALL_MODE:-}"
 EXTRAS="${DIMOS_EXTRAS:-}"
 NON_INTERACTIVE="${DIMOS_NO_PROMPT:-0}"
 GIT_BRANCH="${DIMOS_BRANCH:-main}"
-GIT_COMMIT="${DIMOS_COMMIT:-}"
 NO_CUDA="${DIMOS_NO_CUDA:-0}"
 NO_SYSCTL="${DIMOS_NO_SYSCTL:-0}"
 DRY_RUN="${DIMOS_DRY_RUN:-0}"
@@ -267,7 +266,6 @@ ${BOLD}OPTIONS${RESET}
     --mode library|dev     Install mode (default: interactive prompt)
     --extras <list>        Comma-separated pip extras
     --branch <branch>      Git branch for dev mode (default: main)
-    --commit <commit>      Pin dev checkout to this exact revision (also DIMOS_COMMIT)
     --project-dir <path>   Project directory
     --non-interactive      Accept defaults, no prompts
     --no-cuda              Skip optional CUDA extras and GPU verification
@@ -291,7 +289,7 @@ EOF
 parse_args() {
     while [[ $# -gt 0 ]]; do
         case "$1" in
-            --mode|--extras|--branch|--commit|--project-dir)
+            --mode|--extras|--branch|--project-dir)
                 [[ $# -ge 2 && -n "$2" && "$2" != --* ]] || die "$1 requires a value"
                 ;;
         esac
@@ -299,7 +297,6 @@ parse_args() {
             --mode)            INSTALL_MODE="$2"; shift 2 ;;
             --extras)          EXTRAS="$2"; shift 2 ;;
             --branch)          GIT_BRANCH="$2"; shift 2 ;;
-            --commit)          GIT_COMMIT="$2"; shift 2 ;;
             --project-dir)     PROJECT_DIR="$2"; shift 2 ;;
             --non-interactive) NON_INTERACTIVE=1; shift ;;
             --no-cuda)         NO_CUDA=1; shift ;;
@@ -795,11 +792,6 @@ do_install_dev() {
         info "using existing checkout at $(git -C "$dir" rev-parse --short HEAD)"
     else
         run_cmd /usr/bin/env GIT_LFS_SKIP_SMUDGE=1 git clone -b "$GIT_BRANCH" https://github.com/dimensionalOS/dimos.git "$dir"
-    fi
-    if [[ -n "$GIT_COMMIT" ]]; then
-        git -C "$dir" cat-file -e "${GIT_COMMIT}^{commit}" 2>/dev/null || run_cmd git -C "$dir" fetch origin "$GIT_COMMIT"
-        # no reset/force: git refuses a checkout that would overwrite local changes
-        run_cmd /usr/bin/env GIT_LFS_SKIP_SMUDGE=1 git -C "$dir" checkout --detach "$GIT_COMMIT"
     fi
     if [[ "$USE_NIX" == 1 ]]; then verify_nix_develop; fi
     local -a sync_args=(--locked --python "$INSTALL_PYTHON" --group tests --group lint)
