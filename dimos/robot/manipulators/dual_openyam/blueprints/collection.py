@@ -26,26 +26,65 @@ from dimos.robot.manipulators.dual_openyam.blueprints.teleop import (
     build_dual_openyam_webxr,
     dual_openyam_webxr_task,
 )
-from dimos.teleop.webxr.controller_types import Buttons
+from dimos.robot.manipulators.dual_openyam.joints import (
+    DUAL_OPENYAM_LEFT_ARM_JOINTS,
+    DUAL_OPENYAM_RIGHT_ARM_JOINTS,
+)
+from dimos.teleop.webxr.controller_types import Buttons, Hand
+from dimos.teleop.webxr.extensions import ArmTeleopModule
 
 DUAL_OPENYAM_SIDES = ("left", "right")
 
-# Joint-speed ceiling for collection teleop. The stock task allows 2.0 rad/s; on
-# the benchmark rig the operator asked for a calmer arm (2026-10-13 session: 90th
-# percentile joint speed 1.06 rad/s, 1.2 rad/s clips 6.5 percent of the samples).
+# Collection teleop pacing, chosen on the benchmark rig (2026-10-13 sessions).
+# Joint-speed ceiling: the stock task allows 2.0 rad/s; the operator asked for a
+# calmer arm (90th percentile joint speed 1.06 rad/s, 1.2 clips 6.5 percent).
 DUAL_OPENYAM_COLLECTION_JOINT_SPEED_RAD_S = 1.2
+# Joint 1 swings the whole arm sideways toward the camera post between the arms
+# with the least hand motion, so it gets its own, lower ceiling.
+DUAL_OPENYAM_COLLECTION_BASE_JOINT_SPEED_RAD_S = 0.6
+# The gripper travels this fraction of the hand's distance. The task derives arm
+# targets from differences between published controller poses, so scaling the
+# published position scales the motion without touching the control task.
+DUAL_OPENYAM_COLLECTION_MOTION_SCALE = 0.75
 
 
-def dual_openyam_collection_teleop_task() -> TaskConfig:
-    """The stock dual-arm teleop task at the collection speed ceiling."""
-    return dual_openyam_webxr_task(
-        max_joint_velocity_rad_s=DUAL_OPENYAM_COLLECTION_JOINT_SPEED_RAD_S
+def scale_controller_pose(pose: PoseStamped, scale: float) -> PoseStamped:
+    """The same pose with its position scaled about the headset origin."""
+    return PoseStamped(
+        position=pose.position * scale,
+        orientation=pose.orientation,
+        ts=pose.ts,
+        frame_id=pose.frame_id,
     )
 
 
-# The stock dual OpenYAM WebXR graph at the collection speed ceiling.
+class DualOpenYamCollectionTeleopModule(ArmTeleopModule):
+    """ArmTeleopModule whose controller positions are scaled for a slower arm."""
+
+    def _get_output_pose(self, hand: Hand) -> PoseStamped | None:
+        pose = super()._get_output_pose(hand)
+        if pose is None:
+            return None
+        return scale_controller_pose(pose, DUAL_OPENYAM_COLLECTION_MOTION_SCALE)
+
+
+def dual_openyam_collection_teleop_task() -> TaskConfig:
+    """The stock dual-arm teleop task at the collection speed ceilings."""
+    return dual_openyam_webxr_task(
+        max_joint_velocity_rad_s=DUAL_OPENYAM_COLLECTION_JOINT_SPEED_RAD_S,
+        joint_velocity_limits_rad_s={
+            DUAL_OPENYAM_LEFT_ARM_JOINTS[0]: DUAL_OPENYAM_COLLECTION_BASE_JOINT_SPEED_RAD_S,
+            DUAL_OPENYAM_RIGHT_ARM_JOINTS[0]: DUAL_OPENYAM_COLLECTION_BASE_JOINT_SPEED_RAD_S,
+        },
+    )
+
+
+# The stock dual OpenYAM WebXR graph at the collection pacing.
 teleop_webxr_dual_openyam_collection = autoconnect(
-    build_dual_openyam_webxr(teleop_task=dual_openyam_collection_teleop_task())
+    build_dual_openyam_webxr(
+        teleop_task=dual_openyam_collection_teleop_task(),
+        teleop_module=DualOpenYamCollectionTeleopModule,
+    )
 )
 
 # The benchmark rig's wrist D405s. Override with --left-wrist-camera.serial-number

@@ -19,17 +19,23 @@ import pytest
 from dimos.control.coordinator import TaskConfig
 from dimos.control.teleop_coordinator import TeleopControlCoordinator
 from dimos.core.coordination.blueprints import Blueprint
+from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
 from dimos.robot.manipulators.dual_openyam.blueprints.basic import DualOpenYamCoordinator
 from dimos.robot.manipulators.dual_openyam.blueprints.collection import (
+    DUAL_OPENYAM_COLLECTION_BASE_JOINT_SPEED_RAD_S,
     DUAL_OPENYAM_COLLECTION_JOINT_SPEED_RAD_S,
+    DUAL_OPENYAM_COLLECTION_MOTION_SCALE,
     DUAL_OPENYAM_COLLECTION_STREAMS,
     DUAL_OPENYAM_WRIST_CAMERA_SERIALS,
     DualOpenYamCollectionRecorder,
+    DualOpenYamCollectionTeleopModule,
     dual_openyam_collection_teleop_task,
     dual_openyam_wrist_camera,
+    scale_controller_pose,
     teleop_webxr_dual_openyam_collection,
 )
 from dimos.robot.manipulators.dual_openyam.blueprints.teleop import teleop_webxr_dual_openyam
+from dimos.teleop.webxr.extensions import ArmTeleopModule
 
 
 def _tasks(blueprint: Blueprint) -> list[TaskConfig]:
@@ -47,10 +53,18 @@ def test_collection_teleop_is_the_stock_task_at_the_collection_speed() -> None:
     ours = dual_openyam_collection_teleop_task()
     stock = _teleop_task(teleop_webxr_dual_openyam)
 
+    speed_keys = {"max_joint_velocity_rad_s", "joint_velocity_limits_rad_s"}
     assert ours.params["max_joint_velocity_rad_s"] == DUAL_OPENYAM_COLLECTION_JOINT_SPEED_RAD_S
     assert ours.params["max_joint_velocity_rad_s"] < stock.params["max_joint_velocity_rad_s"]
-    assert {k: v for k, v in ours.params.items() if k != "max_joint_velocity_rad_s"} == {
-        k: v for k, v in stock.params.items() if k != "max_joint_velocity_rad_s"
+    assert ours.params["joint_velocity_limits_rad_s"] == {
+        "left_joint1": DUAL_OPENYAM_COLLECTION_BASE_JOINT_SPEED_RAD_S,
+        "right_joint1": DUAL_OPENYAM_COLLECTION_BASE_JOINT_SPEED_RAD_S,
+    }
+    assert (
+        DUAL_OPENYAM_COLLECTION_BASE_JOINT_SPEED_RAD_S < DUAL_OPENYAM_COLLECTION_JOINT_SPEED_RAD_S
+    )
+    assert {k: v for k, v in ours.params.items() if k not in speed_keys} == {
+        k: v for k, v in stock.params.items() if k not in speed_keys
     }
     assert (ours.name, ours.priority, ours.joint_names) == (
         stock.name,
@@ -59,12 +73,30 @@ def test_collection_teleop_is_the_stock_task_at_the_collection_speed() -> None:
     )
 
 
-def test_collection_graph_only_swaps_the_teleop_task() -> None:
+def test_controller_pose_scale_keeps_orientation_and_stamp() -> None:
+    pose = PoseStamped(
+        position=[0.4, -0.2, 0.8], orientation=[0.0, 0.0, 0.7071, 0.7071], ts=12.5, frame_id="right"
+    )
+    scaled = scale_controller_pose(pose, 0.5)
+
+    assert (scaled.position.x, scaled.position.y, scaled.position.z) == (0.2, -0.1, 0.4)
+    assert scaled.orientation == pose.orientation
+    assert (scaled.ts, scaled.frame_id) == (12.5, "right")
+    assert 0.0 < DUAL_OPENYAM_COLLECTION_MOTION_SCALE <= 1.0
+    assert issubclass(DualOpenYamCollectionTeleopModule, ArmTeleopModule)
+
+
+def test_collection_graph_only_swaps_the_teleop_task_and_module() -> None:
     stock = teleop_webxr_dual_openyam
     ours = teleop_webxr_dual_openyam_collection
 
-    assert ours.remapping_map == stock.remapping_map
-    assert [atom.module for atom in ours.blueprints] == [atom.module for atom in stock.blueprints]
+    # same wiring, the teleop module slot holds the scaling subclass
+    assert sorted(ours.remapping_map.values()) == sorted(stock.remapping_map.values())
+    ours_modules = [atom.module for atom in ours.blueprints]
+    stock_modules = [atom.module for atom in stock.blueprints]
+    assert len(ours_modules) == len(stock_modules)
+    for a, b in zip(ours_modules, stock_modules, strict=True):
+        assert a is b or (b is ArmTeleopModule and a is DualOpenYamCollectionTeleopModule)
     stock_task, our_task = _teleop_task(stock), _teleop_task(ours)
     assert our_task.name == stock_task.name
     assert our_task.joint_names == stock_task.joint_names
@@ -74,6 +106,7 @@ def test_collection_graph_only_swaps_the_teleop_task() -> None:
     for a, b in zip(ours.blueprints, stock.blueprints, strict=True):
         if a.module is not DualOpenYamCoordinator:
             assert a.kwargs == b.kwargs
+            assert a.module is b.module or issubclass(a.module, b.module)
     assert [t for t in _tasks(ours) if t.type != "teleop_ik"] == [
         t for t in _tasks(stock) if t.type != "teleop_ik"
     ]
