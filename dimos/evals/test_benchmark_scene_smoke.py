@@ -34,11 +34,10 @@ from dimos.evals.environments.lib.benchmark_scenes import (
 )
 from dimos.evals.environments.lib.export_benchmark_scenes import export_libero_pro, export_robocasa
 from dimos.evals.environments.mujoco_sim import MujocoEnvironment
-from dimos.utils.data import get_data
 
 
 def _write_png(path: Path) -> None:
-    """Write a tiny valid 1×1 RGB PNG."""
+    """Write a tiny valid 1x1 RGB PNG."""
     path.parent.mkdir(parents=True, exist_ok=True)
     raw = b"\x00\xff\x00\x00"  # filter byte + RGB
     compressed = zlib.compress(raw)
@@ -59,6 +58,22 @@ def _write_png(path: Path) -> None:
     )
 
 
+def _fake_xarm7(root: Path) -> Path:
+    """Minimal xarm pack so export/load tests never pull LFS."""
+    xarm = root / "xarm7"
+    (xarm / "assets").mkdir(parents=True)
+    (xarm / "xarm7.xml").write_text(
+        '<mujoco model="xarm7">\n'
+        "  <worldbody>\n"
+        '    <body name="link_base" pos="0 0 0.12">\n'
+        '      <geom type="cylinder" size="0.05 0.05" rgba="0.8 0.8 0.8 1"/>\n'
+        "    </body>\n"
+        "  </worldbody>\n"
+        "</mujoco>\n"
+    )
+    return xarm
+
+
 def _fake_libero(root: Path) -> Path:
     textures = root / "libero" / "libero" / "assets" / "textures"
     _write_png(textures / "tile_grigia_caldera_porcelain_floor.png")
@@ -73,8 +88,7 @@ def _fake_robocasa(root: Path) -> Path:
 
 @pytest.fixture
 def data_root(tmp_path: Path) -> Path:
-    xarm = get_data("xarm7")
-    (tmp_path / "xarm7").symlink_to(xarm)
+    _fake_xarm7(tmp_path)
     return tmp_path
 
 
