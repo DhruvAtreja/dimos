@@ -96,7 +96,7 @@ component.
 Two dual-arm model packages ship as LFS data:
 
 - `dual_openyam_workcell_v1` is the default, `DUAL_OPENYAM_MODEL`. It describes
-  the physical workcell: arm bases 0.43 m apart (tape, 2026-10-08) and joint 1
+  the physical workcell: arm bases 0.43 m apart (tape, 2026-10-08), the table top 42 mm below the motor bases (tape, 2026-10-13) and joint 1
   limits of -225 to +90 deg, inside the stops measured when the motors were
   zeroed with Anvil's `damiao-set-zero-limit` on 2026-10-12. Its zero
   configuration is the folded rest pose on the supports. Every link carries a
