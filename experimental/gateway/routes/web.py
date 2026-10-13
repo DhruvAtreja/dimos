@@ -23,7 +23,7 @@ from typing import Any, Literal
 from fastapi import APIRouter, Request
 from fastapi.responses import HTMLResponse, Response
 
-from experimental.gateway import msgs, store
+from experimental.gateway import msgs, responses, store
 from experimental.gateway.routes.blueprints import blueprint_list, check_name
 from experimental.gateway.state import ApiError, GatewayState
 
@@ -62,7 +62,7 @@ async def blueprint_view_file(file: str) -> Response:
     )
 
 
-@router.get("/dimos/source")
+@router.get("/dimos/source", response_model=responses.SourceFile)
 async def source(state: GatewayState, file: str) -> dict[str, Any]:
     root = state.dimos_dir.resolve()
     path = (root / file).resolve()
@@ -73,7 +73,7 @@ async def source(state: GatewayState, file: str) -> dict[str, Any]:
     return {"file": file, "text": await asyncio.to_thread(path.read_text, "utf-8", "replace")}
 
 
-@router.get("/dimos/topics/rates")
+@router.get("/dimos/topics/rates", response_model=responses.TopicRates)
 async def topic_rates(state: GatewayState) -> dict[str, Any]:
     if state.topics is None:
         return {"up": False, "error": "this gateway isn't listening to the bus", "topics": []}

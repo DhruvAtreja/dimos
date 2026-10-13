@@ -37,6 +37,8 @@ class Info(Body):
     found: bool
     installed: bool
     version: str | None
+    range: str
+    inRange: bool
 
 
 class ServerInfo(Body):
@@ -104,6 +106,7 @@ class Stream(Body):
     name: str
     type: str
     direction: str
+    wire: str | None
     topic: str | None
 
 
@@ -570,3 +573,28 @@ class SkillResult(Body):
     ok: bool
     text: str
     content: list[dict[str, Any]]
+
+
+class SourceFile(Body):
+    """A .py file of the dimos checkout."""
+
+    file: str
+    text: str
+
+
+class TopicRate(Body):
+    topic: str
+    type: str
+    hz: float
+    bps: float
+    messages: int
+    lastSeen: float | None
+    declared: bool
+
+
+class TopicRates(Body):
+    """Each topic's message rate and bandwidth over the last 2 s, busiest first."""
+
+    up: bool
+    error: str | None
+    topics: list[TopicRate]
