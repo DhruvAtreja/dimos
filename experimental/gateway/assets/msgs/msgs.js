@@ -1575,6 +1575,7 @@ var MISSING = {
   "sensor_msgs.JointCommand": "hand-written, no dimos_lcm.sensor_msgs.JointCommand class [dimos/msgs/sensor_msgs/JointCommand.py:JointCommand]",
   "sensor_msgs.MotorCommandArray": "hand-written, no dimos_lcm.sensor_msgs.MotorCommandArray class [dimos/msgs/sensor_msgs/MotorCommandArray.py:MotorCommandArray]",
   "sensor_msgs.RobotState": "hand-written, no dimos_lcm.sensor_msgs.RobotState class [dimos/msgs/sensor_msgs/RobotState.py:RobotState]",
+  "shape_msgs.TriangleMesh": "hand-written, no dimos_lcm.shape_msgs.TriangleMesh class [dimos/msgs/shape_msgs/TriangleMesh.py:TriangleMesh]",
   "sim_msgs.Contacts": "hand-written, no dimos_lcm.sim_msgs.Contacts class [dimos/msgs/sim_msgs/Contacts.py:Contacts]",
   "trajectory_msgs.JointTrajectory": "hand-written, its own fingerprint 2b3c4d5e6f708192 (dimos_lcm.trajectory_msgs.JointTrajectory is another message of the same name, fingerprint ae3a209832c6d386) [dimos/msgs/trajectory_msgs/JointTrajectory.py:JointTrajectory]",
   "trajectory_msgs.TrajectoryPoint": "hand-written, no dimos_lcm.trajectory_msgs.TrajectoryPoint class [dimos/msgs/trajectory_msgs/TrajectoryPoint.py:TrajectoryPoint]",
