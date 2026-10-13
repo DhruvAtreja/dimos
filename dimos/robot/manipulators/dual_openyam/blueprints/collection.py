@@ -143,12 +143,12 @@ class DualOpenYamCollectionRecorder(CollectionRecorder):
 # Planning groups of the dual OpenYAM model, in DUAL_OPENYAM_ARM_JOINTS order.
 DUAL_OPENYAM_PLANNING_GROUPS = ("left_manipulator", "right_manipulator")
 
-# Home pose for the collection graph: both arms parked where the operator left
-# them on 2026-10-13 (joints 2 and 3 near their supports, wrists turned clear of
-# the table). Order: left_joint1..6, right_joint1..6. X redefines it at runtime.
+# Home pose for the collection graph: the parking pose the operator chose on
+# 2026-10-13 (both arms raised above the table, elbows clear of the camera post).
+# Order: left_joint1..6, right_joint1..6. X redefines it at runtime.
 DUAL_OPENYAM_COLLECTION_HOME_JOINTS = [
-    -0.315, 0.006, 0.027, 0.014, 0.213, -0.586,
-    -0.443, 0.176, 0.022, 0.361, -0.630, 0.584,
+    -0.127, 0.560, 0.489, -0.574, -0.010, -0.038,
+    -0.347, 0.695, 0.335, 0.017, -0.776, 0.144,
 ]  # fmt: skip
 
 
