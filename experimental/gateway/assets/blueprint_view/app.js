@@ -266,7 +266,7 @@ function rateRows() {
         if (!known.has(topic) && !heard.has(`${topic} ${type}`)) {
             heard.add(`${topic} ${type}`)
             known.add(topic)
-            unheard.push({ topic, type, hz: 0, bps: 0, messages: 0, lastSeen: null })
+            unheard.push({ topic, type, hz: 0, bps: 0 })
         }
     }
     return [...state.rateRows, ...unheard.sort((a, b) => a.topic.localeCompare(b.topic))]
@@ -292,10 +292,6 @@ function fillRates() {
     $("#ratesCount").textContent = rows.length ? ` · ${rows.filter((row) => row.hz > 0).length}/${rows.length} live` : ""
     const top = (key) => Math.max(...rows.map((row) => row[key] ?? 0), 0)
     const [maxHz, maxBps] = [top("hz"), top("bps")]
-    const heardText = (row) =>
-        row.lastSeen === null || row.lastSeen === undefined
-            ? "never heard"
-            : `${row.messages ?? 0} message${row.messages === 1 ? "" : "s"}, last ${row.lastSeen < 2 ? "just now" : `${Math.round(row.lastSeen)} s ago`}`
     body.replaceChildren(
         ...rows.map((row) => {
             const type = String(row.type ?? "").replace(/\//g, ".")
@@ -306,7 +302,7 @@ function fillRates() {
                     "td",
                     {
                         class: "topic",
-                        title: `${row.topic}\n${type || "unknown type"}\n${heardText(row)}`,
+                        title: `${row.topic}\n${type || "unknown type"}`,
                         "--type": `var(--bv-${typeColor(type)})`,
                         onmouseenter: (event) => showTypeTip(event.currentTarget, type || "unknown type"),
                         onmouseleave: hideTypeTip,
@@ -689,27 +685,27 @@ async function pollRuns() {
 async function pollRates() {
     let answer
     try {
-        answer = await getJson("topics/rates")
+        answer = await getJson("../api/topics/rates")
     } catch (error) {
         state.ratesError = String(error.message ?? error)
         fillRates()
         return
     }
     state.ratesError = answer.up ? null : answer.error
-    state.rateRows = answer.topics ?? []
+    state.rateRows = (answer.topics ?? []).filter((row) => !String(row.topic).startsWith("/rpc/"))
     fillRates()
     if (!state.running || !state.modules) {
         return
     }
     const rates = new Map()
-    for (const row of answer.topics ?? []) {
+    for (const row of state.rateRows) {
         const topic = String(row.topic).replace(/^\/+/, "")
         rates.set(topic, (rates.get(topic) ?? 0) + (row.hz ?? 0))
     }
     const wired = new Set(state.modules.flatMap((m) => m.streams.map(topicOf)))
     state.extras = [...rates.keys()].filter((topic) => !wired.has(topic)).sort().map((topic) => ({
         topic,
-        type: (answer.topics.find((row) => String(row.topic).replace(/^\/+/, "") === topic)?.type ?? "").replace(/\//g, "."),
+        type: (state.rateRows.find((row) => String(row.topic).replace(/^\/+/, "") === topic)?.type ?? "").replace(/\//g, "."),
     }))
     $("#extrasCount").textContent = String(state.extras.length)
     extrasBox.hidden = state.extras.length === 0

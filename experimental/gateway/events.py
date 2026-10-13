@@ -46,16 +46,12 @@ def resolve_connect(given: str | None) -> list[str]:
     return [item.strip() for item in str(value or "").split(",") if item.strip()]
 
 
-def zenoh_session(connect: list[str]) -> Any:
-    from dimos.protocol.service.zenohservice import ZenohConfig, default_session_pool
-
-    return default_session_pool.acquire(ZenohConfig(connect=connect))
-
-
 def zenoh_put(connect: list[str]) -> Callable[[str, bytes], None]:
     import zenoh
 
-    session = zenoh_session(connect)
+    from dimos.protocol.service.zenohservice import ZenohConfig, default_session_pool
+
+    session = default_session_pool.acquire(ZenohConfig(connect=connect))
 
     def put(key: str, payload: bytes) -> None:
         session.put(key, payload, encoding=zenoh.Encoding.APPLICATION_JSON)

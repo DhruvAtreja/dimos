@@ -73,14 +73,6 @@ async def source(state: GatewayState, file: str) -> dict[str, Any]:
     return {"file": file, "text": await asyncio.to_thread(path.read_text, "utf-8", "replace")}
 
 
-@router.get("/dimos/topics/rates", response_model=responses.TopicRates)
-async def topic_rates(state: GatewayState) -> dict[str, Any]:
-    if state.topics is None:
-        return {"up": False, "error": "this gateway isn't listening to the bus", "topics": []}
-    answer: dict[str, Any] = await asyncio.to_thread(state.topics.snapshot)
-    return answer
-
-
 @router.get("/dimos/msgs.js")
 async def msgs_js(request: Request) -> Response:
     try:

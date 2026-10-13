@@ -15,8 +15,6 @@
 import json
 from pathlib import Path
 import subprocess
-from types import SimpleNamespace
-from typing import Any
 
 from fastapi.testclient import TestClient
 
@@ -25,7 +23,6 @@ from dimos.msgs.geometry_msgs.Twist import Twist
 from dimos.msgs.geometry_msgs.Vector3 import Vector3
 from dimos.utils.deno import ensure_deno
 from experimental.gateway.state import State
-from experimental.gateway.topic_rates import TopicWatch
 
 VIEW = Path(__file__).parents[1] / "assets" / "blueprint_view"
 
@@ -59,53 +56,6 @@ def test_source_reads_only_python_in_the_checkout(client: TestClient, checkout: 
     assert client.get("/dimos/source?file=pyproject.toml").status_code == 400
     assert client.get("/dimos/source?file=../outside.py").status_code == 400
     assert client.get("/dimos/source?file=gone.py").status_code == 404
-
-
-def test_topic_rates_count_what_is_heard(client: TestClient, state: State) -> None:
-    assert client.get("/dimos/topics/rates").json()["up"] is False
-    now = [100.0]
-    callbacks: list[Any] = []
-    session = SimpleNamespace(declare_subscriber=lambda key, callback: callbacks.append(callback))
-    state.topics = TopicWatch(lambda: session, clock=lambda: now[0])
-    state.topics.start()
-    for _ in range(4):
-        callbacks[0](SimpleNamespace(key_expr="dimos/odom/nav_msgs.Odometry", payload=b"x" * 10))
-    callbacks[0](SimpleNamespace(key_expr="dimos/rpc/Foo/bar", payload=b""))
-    (row,) = client.get("/dimos/topics/rates").json()["topics"]
-    assert (row["topic"], row["type"], row["hz"], row["bps"]) == (
-        "/odom",
-        "nav_msgs.Odometry",
-        2.0,
-        20.0,
-    )
-    now[0] += 5
-    assert client.get("/dimos/topics/rates").json()["topics"][0]["hz"] == 0
-
-
-def test_topic_rates_keep_only_their_window_and_stop_when_unread() -> None:
-    now = [100.0]
-    callbacks: list[Any] = []
-    undeclared: list[bool] = []
-    subscriber = SimpleNamespace(undeclare=lambda: undeclared.append(True))
-
-    def declare_subscriber(key: str, callback: Any) -> Any:
-        callbacks.append(callback)
-        return subscriber
-
-    watch = TopicWatch(
-        lambda: SimpleNamespace(declare_subscriber=declare_subscriber), clock=lambda: now[0]
-    )
-    watch.start()
-    for _ in range(10_000):
-        now[0] += 0.01
-        callbacks[0](SimpleNamespace(key_expr="dimos/imu/sensor_msgs.Imu", payload=b"x"))
-    (entry,) = watch.topics.values()
-    assert len(entry.window) <= 9, "unread, it keeps a few counters for its window, not each sample"
-    assert entry.messages == 10_000
-    watch.snapshot()
-    assert not watch.stop_if_idle(), "just asked"
-    now[0] += 61
-    assert watch.stop_if_idle() and undeclared == [True] and watch.subscriber is None
 
 
 def test_login_page(client: TestClient) -> None:

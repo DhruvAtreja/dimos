@@ -64,14 +64,6 @@ const newer = await (await fetch(`../../dimos/runs/latest/log?after=${page.offse
 
 `- GET /runs/{runId}/log`
 
-## How do I list topics and their rates?
-
-```js
-const { topics } = await (await fetch("../../dimos/topics/rates")).json() // [{ topic, type, hz, bps, lastSeen }]
-```
-
-`- GET /topics/rates`
-
 ## How do I list a blueprint's modules, their streams and RPCs?
 
 ```js

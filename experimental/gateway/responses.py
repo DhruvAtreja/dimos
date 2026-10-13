@@ -551,21 +551,3 @@ class SourceFile(Body):
 
     file: str
     text: str
-
-
-class TopicRate(Body):
-    topic: str
-    type: str
-    hz: float
-    bps: float
-    messages: int
-    lastSeen: float | None
-    declared: bool
-
-
-class TopicRates(Body):
-    """Each topic's message rate and bandwidth over the last 2 s, busiest first."""
-
-    up: bool
-    error: str | None
-    topics: list[TopicRate]
