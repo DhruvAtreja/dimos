@@ -376,9 +376,6 @@ robots:
       unitree-g1-record:
         title: G1 recording
         description: Drive a G1 and record what it sees (needs the Unitree SDK).
-      unitree-g1-shm:
-        title: G1 over shared memory
-        description: G1 perception and memory with images moved over shared memory.
       unitree-g1-teleop:
         title: G1 VR teleop + recording
         description: GR00T whole-body control, WebXR arm teleop, manipulation and episode recording.
