@@ -45,7 +45,6 @@ FamilyName = Literal[
     "image_coverage",
     "largest_visible_area",
     "object_distance",
-    "camera_bearing",
     "closest_object",
 ]
 

@@ -25,16 +25,16 @@ from dimos.evals.vqa.contracts import (
     FamilyName,
     FamilySpec,
     InsufficientEvidenceError,
+    InvalidQuestionProposalError,
     ObjectMaskEstimator,
     ObjectRangeEstimator,
     QuestionProposal,
 )
-from dimos.evals.vqa.primitives.bearing import (
-    BEARING_CHOICES,
-    bearing_choice,
-    estimate_camera_bearing,
+from dimos.evals.vqa.primitives.color import (
+    COLOR_CHOICES,
+    dominant_color_in_mask,
+    object_name_mentions_color,
 )
-from dimos.evals.vqa.primitives.color import COLOR_CHOICES, dominant_color_in_bbox
 
 if TYPE_CHECKING:
     from dimos.evals.vqa.pointcloud_frame import PointCloudFrame
@@ -69,9 +69,11 @@ PRESENCE_AND_FAMILY = FamilySpec(
 OBJECT_COLOR_FAMILY = FamilySpec(
     name="object_color",
     description=(
-        "Ask for the dominant color of one clearly visible object instance with a single, "
-        "unambiguous detection."
+        "Ask for the dominant color of one clearly visible object instance. Use a plain object "
+        "name without color words (not 'red bag' or 'black couch'). Color comes from the "
+        "segmentation mask, not from the name."
     ),
+    requires_masks=True,
 )
 OBJECT_COUNT_FAMILY = FamilySpec(
     name="object_count",
@@ -102,15 +104,6 @@ OBJECT_DISTANCE_FAMILY = FamilySpec(
     description="Estimate the range to one clearly visible object instance.",
     requires_pointcloud=True,
 )
-CAMERA_BEARING_FAMILY = FamilySpec(
-    name="camera_bearing",
-    description=(
-        "Ask whether one clearly visible object instance is to the left, ahead, or right of the "
-        "camera forward direction using calibrated range evidence."
-    ),
-    requires_pointcloud=True,
-    requires_masks=True,
-)
 CLOSEST_OBJECT_FAMILY = FamilySpec(
     name="closest_object",
     description=(
@@ -134,7 +127,6 @@ AVAILABLE_FAMILIES = (
     IMAGE_COVERAGE_FAMILY,
     LARGEST_VISIBLE_AREA_FAMILY,
     OBJECT_DISTANCE_FAMILY,
-    CAMERA_BEARING_FAMILY,
     CLOSEST_OBJECT_FAMILY,
 )
 
@@ -164,7 +156,9 @@ def answer_question(
     if proposal.family == "presence_and":
         return _answer_presence_and(proposal, image, detector)
     if proposal.family == "object_color":
-        return _answer_object_color(proposal, image, detector)
+        if mask_estimator is None:
+            raise InsufficientEvidenceError("object color requires segmentation-mask evidence")
+        return _answer_object_color(proposal, image, mask_estimator)
     if proposal.family == "object_count":
         return _answer_object_count(proposal, image, detector)
     if proposal.family == "image_coverage":
@@ -183,12 +177,6 @@ def answer_question(
                 "object distance requires image-aligned point-cloud evidence"
             )
         return _answer_object_distance(proposal, pointcloud_frame, range_estimator)
-    if proposal.family == "camera_bearing":
-        if pointcloud_frame is None or mask_estimator is None:
-            raise InsufficientEvidenceError(
-                "camera bearing requires image-aligned point-cloud and segmentation-mask evidence"
-            )
-        return _answer_camera_bearing(proposal, pointcloud_frame, mask_estimator)
     if proposal.family == "closest_object":
         if pointcloud_frame is None or range_estimator is None:
             raise InsufficientEvidenceError(
@@ -328,41 +316,25 @@ def _answer_presence_and(
 
 
 def _answer_object_color(
-    proposal: QuestionProposal, image: Image, detector: VlModel
+    proposal: QuestionProposal,
+    image: Image,
+    mask_estimator: ObjectMaskEstimator,
 ) -> FamilyAnswer:
     object_name = proposal.object_names[0]
-    detections = detector.query_detections(image, object_name)
-    if len(detections) != 1:
-        raise InsufficientEvidenceError(
-            f"object color requires exactly one detected {object_name!r}, got {len(detections)}"
+    if object_name_mentions_color(object_name):
+        raise InvalidQuestionProposalError(
+            f"object_color object name must not include a color word, got {object_name!r}"
         )
-    box = detections.detections[0].bbox
-    evidence = dominant_color_in_bbox(image, object_name, box)
+    mask_evidence = mask_estimator.estimate(image, object_name)
+    evidence = dominant_color_in_mask(image, object_name, mask_evidence.mask)
     return FamilyAnswer(
         question=f"What is the dominant color of the visible {object_name}?",
         choices=COLOR_CHOICES,
         answer=evidence.dominant_bucket,
         evidence={
-            "primitive": "object_color_histogram",
-            **evidence.model_dump(mode="json"),
-        },
-    )
-
-
-def _answer_camera_bearing(
-    proposal: QuestionProposal,
-    pointcloud_frame: PointCloudFrame,
-    mask_estimator: ObjectMaskEstimator,
-) -> FamilyAnswer:
-    object_name = proposal.object_names[0]
-    evidence = estimate_camera_bearing(pointcloud_frame, mask_estimator, object_name)
-    answer = bearing_choice(evidence)
-    return FamilyAnswer(
-        question=f"Relative to the camera, in which direction is the visible {object_name}?",
-        choices=BEARING_CHOICES,
-        answer=answer,
-        evidence={
-            "primitive": "edge_tam_lidar_bearing",
+            "primitive": "object_color_mask_histogram",
+            "prompt_bbox_xyxy": list(mask_evidence.prompt_bbox_xyxy),
+            "mask_bbox_xyxy": list(mask_evidence.mask_bbox_xyxy),
             **evidence.model_dump(mode="json"),
         },
     )

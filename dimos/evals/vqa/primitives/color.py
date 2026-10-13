@@ -12,10 +12,11 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Dominant-color evidence from a detection bounding box."""
+"""Dominant-color evidence from a segmentation mask."""
 
 from __future__ import annotations
 
+import re
 from typing import TYPE_CHECKING
 
 import numpy as np
@@ -39,84 +40,131 @@ COLOR_CHOICES = (
     "gray",
 )
 
-_MIN_VALID_PIXELS = 32
+_COLOR_NAME_PATTERN = re.compile(
+    r"(?<![a-z0-9])(" + "|".join(re.escape(name) for name in COLOR_CHOICES) + r")(?![a-z0-9])",
+    re.IGNORECASE,
+)
+
+_MIN_MASK_PIXELS = 32
 _MIN_BUCKET_FRACTION = 0.4
+
+_BLACK = COLOR_CHOICES.index("black")
+_WHITE = COLOR_CHOICES.index("white")
+_GRAY = COLOR_CHOICES.index("gray")
+_RED = COLOR_CHOICES.index("red")
+_ORANGE = COLOR_CHOICES.index("orange")
+_YELLOW = COLOR_CHOICES.index("yellow")
+_GREEN = COLOR_CHOICES.index("green")
+_BLUE = COLOR_CHOICES.index("blue")
+_PURPLE = COLOR_CHOICES.index("purple")
+_BROWN = COLOR_CHOICES.index("brown")
 
 
 class ObjectColorEvidence(BaseModel):
-    """Dominant color bucket inside one detection crop."""
+    """Dominant color bucket inside one object mask."""
 
     model_config = ConfigDict(extra="forbid", frozen=True)
 
     object_name: NonEmptyString
     dominant_bucket: NonEmptyString
     bucket_fraction: float = Field(ge=0, le=1)
-    valid_pixel_count: int = Field(ge=1)
-    bbox_xyxy: tuple[float, float, float, float]
+    runner_up_bucket: NonEmptyString
+    runner_up_fraction: float = Field(ge=0, le=1)
+    mask_pixel_count: int = Field(ge=1)
 
 
-def dominant_color_in_bbox(
-    image: Image, object_name: str, bbox_xyxy: tuple[float, ...]
+def object_name_mentions_color(object_name: str) -> bool:
+    """True when an object reference already encodes a COLOR_CHOICES token."""
+    return _COLOR_NAME_PATTERN.search(object_name) is not None
+
+
+def dominant_color_in_mask(
+    image: Image, object_name: str, mask: np.ndarray
 ) -> ObjectColorEvidence:
-    """Map the largest HSV bucket inside a bbox to a fixed color choice."""
+    """Map the largest HSV bucket inside a boolean mask to a fixed color choice."""
     import cv2
 
-    x0, y0, x1, y1 = (round(v) for v in bbox_xyxy)
-    x0 = max(0, min(x0, image.width - 1))
-    x1 = max(x0 + 1, min(x1, image.width))
-    y0 = max(0, min(y0, image.height - 1))
-    y1 = max(y0 + 1, min(y1, image.height))
+    if mask.shape != (image.height, image.width):
+        raise InsufficientEvidenceError(
+            f"object color mask shape {mask.shape} does not match image "
+            f"{(image.height, image.width)}"
+        )
+    selected = np.asarray(mask, dtype=bool)
+    mask_pixel_count = int(selected.sum())
+    if mask_pixel_count < _MIN_MASK_PIXELS:
+        raise InsufficientEvidenceError(
+            f"object color requires at least {_MIN_MASK_PIXELS} mask pixels, "
+            f"got {mask_pixel_count}"
+        )
 
-    crop = image.to_rgb().data[y0:y1, x0:x1]
-    if crop.ndim != 3 or crop.shape[2] < 3:
-        raise InsufficientEvidenceError("object color requires an RGB image crop")
-
-    rgb = np.asarray(crop[:, :, :3], dtype=np.uint8)
+    rgb = np.asarray(image.to_rgb().data[:, :, :3], dtype=np.uint8)
+    if rgb.shape[:2] != selected.shape:
+        raise InsufficientEvidenceError("object color requires an RGB image matching the mask")
     hsv = cv2.cvtColor(rgb, cv2.COLOR_RGB2HSV)
-    hsv[:, :, 0].astype(np.intp)
-    sat = hsv[:, :, 1].astype(np.intp)
-    val = hsv[:, :, 2].astype(np.intp)
+    hue = hsv[:, :, 0][selected].astype(np.int16)
+    sat = hsv[:, :, 1][selected].astype(np.int16)
+    val = hsv[:, :, 2][selected].astype(np.int16)
 
-    valid = (sat >= 40) & (val >= 40)
-    if int(valid.sum()) < _MIN_VALID_PIXELS:
-        raise InsufficientEvidenceError("object color crop lacks enough saturated, well-lit pixels")
-
-    buckets = np.array([_hue_to_bucket(int(h), int(s), int(v)) for h, s, v in hsv[valid]])
+    buckets = _hsv_to_bucket_indices(hue, sat, val)
     counts = np.bincount(buckets, minlength=len(COLOR_CHOICES))
-    winner = int(counts.argmax())
-    fraction = float(counts[winner] / counts.sum())
+    ranked = np.argsort(counts)
+    winner = int(ranked[-1])
+    runner_up = int(ranked[-2])
+    total = int(counts.sum())
+    winner_count = int(counts[winner])
+    runner_up_count = int(counts[runner_up])
+    fraction = winner_count / total
+    runner_up_fraction = runner_up_count / total
+
+    if winner_count <= runner_up_count:
+        raise InsufficientEvidenceError(
+            "object color mask does not have one unambiguous dominant bucket"
+        )
     if fraction < _MIN_BUCKET_FRACTION:
         raise InsufficientEvidenceError(
-            "object color crop does not have one unambiguous dominant bucket"
+            "object color mask does not have one unambiguous dominant bucket"
         )
 
     return ObjectColorEvidence(
         object_name=object_name,
         dominant_bucket=COLOR_CHOICES[winner],
         bucket_fraction=fraction,
-        valid_pixel_count=int(valid.sum()),
-        bbox_xyxy=(float(x0), float(y0), float(x1), float(y1)),
+        runner_up_bucket=COLOR_CHOICES[runner_up],
+        runner_up_fraction=runner_up_fraction,
+        mask_pixel_count=mask_pixel_count,
     )
 
 
-def _hue_to_bucket(hue: int, saturation: int, value: int) -> int:
-    if value < 40:
-        return COLOR_CHOICES.index("black")
-    if value > 220 and saturation < 35:
-        return COLOR_CHOICES.index("white")
-    if saturation < 40:
-        return COLOR_CHOICES.index("gray")
-
-    if hue < 10 or hue >= 170:
-        return COLOR_CHOICES.index("red")
-    if hue < 25:
-        return COLOR_CHOICES.index("orange")
-    if hue < 35:
-        return COLOR_CHOICES.index("yellow")
-    if hue < 85:
-        return COLOR_CHOICES.index("green")
-    if hue < 130:
-        return COLOR_CHOICES.index("blue")
-    if hue < 150:
-        return COLOR_CHOICES.index("purple")
-    return COLOR_CHOICES.index("brown")
+def _hsv_to_bucket_indices(hue: np.ndarray, saturation: np.ndarray, value: np.ndarray) -> np.ndarray:
+    """Vectorized OpenCV-HSV (H in 0..179) → COLOR_CHOICES index."""
+    # Neutrals first so black/white/gray are counted rather than discarded.
+    # Brown uses the orange hue band with lower brightness; magenta/pink maps to purple.
+    return np.select(
+        [
+            value < 40,
+            (value > 220) & (saturation < 35),
+            saturation < 40,
+            ((hue < 10) | (hue >= 170)),
+            (hue < 25) & (value < 140),
+            hue < 25,
+            hue < 35,
+            hue < 85,
+            hue < 130,
+            hue < 150,
+            (hue < 170),
+        ],
+        [
+            _BLACK,
+            _WHITE,
+            _GRAY,
+            _RED,
+            _BROWN,
+            _ORANGE,
+            _YELLOW,
+            _GREEN,
+            _BLUE,
+            _PURPLE,
+            _PURPLE,  # magenta / pink
+        ],
+        default=_BROWN,
+    ).astype(np.intp)
