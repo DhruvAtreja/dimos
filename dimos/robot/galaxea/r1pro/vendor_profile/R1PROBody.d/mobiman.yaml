@@ -9,6 +9,7 @@ windows:
   layout: even-horizontal
   panes:
   - shell_command:
+      # extremely cursed sleeps - straight out of the galaxea stock profile though
       - sleep 10
       - ./start_mobiman_r1pro_chassis.sh
   - shell_command:
