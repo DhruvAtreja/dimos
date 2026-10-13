@@ -18,7 +18,7 @@ import asyncio
 import hashlib
 from pathlib import Path
 import re
-from typing import Any, Literal
+from typing import Any
 
 from fastapi import APIRouter, Request
 from fastapi.responses import HTMLResponse, Response
@@ -88,5 +88,5 @@ async def msgs_js(request: Request) -> Response:
 
 
 @router.get("/dimos/cloud/login/page", response_class=HTMLResponse)
-async def cloud_login_page(theme: Literal["light", "dark"] | None = None) -> str:
+async def cloud_login_page() -> str:
     return (ASSETS / "login_page.html").read_text()
