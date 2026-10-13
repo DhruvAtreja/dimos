@@ -15,11 +15,7 @@
 from __future__ import annotations
 
 import asyncio
-import json
 import os
-from pathlib import Path
-import shlex
-import subprocess
 import sys
 from typing import Any
 
@@ -27,12 +23,9 @@ from fastapi import APIRouter
 from fastapi.responses import PlainTextResponse
 
 from experimental.gateway import logs, responses, store
-from experimental.gateway.state import ApiError, GatewayState
+from experimental.gateway.state import GatewayState
 
 router = APIRouter()
-
-PROBE = "import json, sys, dimos; print(json.dumps({'version': sys.version.split()[0], 'file': dimos.__file__}))"
-EXAMPLE = "import dimos; print(dimos.__file__)"
 
 
 @router.get("/healthz", response_class=PlainTextResponse, include_in_schema=False)
@@ -76,48 +69,7 @@ async def stop_server(state: GatewayState) -> dict[str, Any]:
     return {"stopping": True}
 
 
-def probe(python: str, env: dict[str, str]) -> dict[str, Any] | None:
-    clean = {k: v for k, v in os.environ.items() if k not in ("PYTHONPATH", "PYTHONHOME")}
-    try:
-        done = subprocess.run(
-            [python, "-c", PROBE],
-            env={**clean, **env},
-            cwd="/",
-            capture_output=True,
-            text=True,
-            timeout=30,
-        )
-        answer: dict[str, Any] = json.loads(done.stdout.strip().splitlines()[-1])
-        return answer if done.returncode == 0 else None
-    except (OSError, subprocess.TimeoutExpired, ValueError, IndexError):
-        return None
-
-
-def find_python(dimos_dir: Path) -> dict[str, Any]:
-    root = dimos_dir.resolve()
-    for python in dict.fromkeys([str(store.venv_python(dimos_dir).absolute()), sys.executable]):
-        if not os.access(python, os.X_OK):
-            continue
-        for env in ({}, {"PYTHONPATH": str(dimos_dir.absolute())}):
-            found = probe(python, env)
-            if found and Path(found["file"]).resolve().is_relative_to(root):
-                prefix = "".join(f"{k}={shlex.quote(v)} " for k, v in env.items())
-                return {
-                    "python": python,
-                    "command": [python],
-                    "dimosDir": str(dimos_dir.absolute()),
-                    "version": found["version"],
-                    "dimosVersion": store.checkout_version(dimos_dir)[1],
-                    "env": env,
-                    "example": f"{prefix}{shlex.quote(python)} -c {shlex.quote(EXAMPLE)}",
-                }
-    raise ApiError(500, f"no python imports dimos from {dimos_dir}")
-
-
 @router.get("/dimos/python", response_model=responses.Python)
 async def python(state: GatewayState) -> dict[str, Any]:
-    async def compute() -> dict[str, Any]:
-        return await asyncio.to_thread(find_python, state.dimos_dir)
-
-    answer: dict[str, Any] = await state.cache.get("python", 3600.0, compute)
-    return answer
+    """The python that runs this dimos checkout (the one the gateway introspects with)."""
+    return {"python": store.python_for(state.dimos_dir)}

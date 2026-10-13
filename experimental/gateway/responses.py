@@ -62,15 +62,9 @@ class Stopping(Body):
 
 
 class Python(Body):
-    """A python that imports this dimos checkout, and how to run it."""
+    """The python that runs this dimos checkout."""
 
     python: str
-    command: list[str]
-    dimosDir: str
-    version: str
-    dimosVersion: str | None
-    env: dict[str, str]
-    example: str
 
 
 class BlueprintEntry(Body):
