@@ -3,7 +3,6 @@
 
   inputs = {
     nix-filter.url = "github:numtide/nix-filter";
-    livox-sdk2.url = "github:dimensionalOS/livox-sdk2";
     zenoh.url = "github:jeff-hykin/zenoh_flake";
     zenoh.inputs.nixpkgs.follows = "nixpkgs";
     zenoh.inputs.flake-utils.follows = "flake-utils";
@@ -32,7 +31,7 @@
     };
   };
 
-  outputs = { self, nix-filter, livox-sdk2, nixpkgs, zenoh, flake-utils, dimos-native-cpp, dimos-lcm, pfr, fast-lio, lcm-extended, ... }:
+  outputs = { self, nix-filter, nixpkgs, zenoh, flake-utils, dimos-native-cpp, dimos-lcm, pfr, fast-lio, lcm-extended, ... }:
     flake-utils.lib.eachDefaultSystem (system:
       let
         # Overlay fixes for darwin-broken nixpkgs recipes in our transitive
@@ -74,7 +73,7 @@
         zenohc = zenoh.packages.${system}.zenoh-c;
         zenohcpp = zenoh.packages.${system}.zenoh-cpp;
 
-        livox-common = livox-sdk2.packages.${system}.livox-common;
+        livox-sdk2 = import ./livox_sdk2.nix { inherit pkgs; };
 
         fastlio2_native = pkgs.stdenv.mkDerivation {
           pname = "fastlio2_native";
@@ -84,7 +83,7 @@
 
           nativeBuildInputs = [ pkgs.cmake pkgs.pkg-config ];
           buildInputs = [
-            livox-sdk2.packages.${system}.default
+            livox-sdk2
             lcm
             pkgs.glib
             pkgs.eigen
@@ -101,7 +100,6 @@
             "-DFETCHCONTENT_SOURCE_DIR_DIMOS_LCM=${dimos-lcm}"
             "-DFETCHCONTENT_SOURCE_DIR_PFR=${pfr}"
             "-DFASTLIO_DIR=${fast-lio}"
-            "-DLIVOX_COMMON_DIR=${livox-common}"
             "-DDIMOS_NATIVE_CPP_DIR=${dimos-native-cpp.packages.${system}.default}"
           ];
         };
