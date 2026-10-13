@@ -19,8 +19,8 @@ import struct
 import zlib
 
 import mujoco
-import pytest
 from pydantic import ValidationError
+import pytest
 
 from dimos.e2e_tests.dimos_cli_call import DimosCliCall
 from dimos.evals.environments.lib.benchmark_scenes import (
@@ -44,7 +44,12 @@ def _write_png(path: Path) -> None:
     compressed = zlib.compress(raw)
 
     def chunk(tag: bytes, data: bytes) -> bytes:
-        return struct.pack(">I", len(data)) + tag + data + struct.pack(">I", zlib.crc32(tag + data) & 0xFFFFFFFF)
+        return (
+            struct.pack(">I", len(data))
+            + tag
+            + data
+            + struct.pack(">I", zlib.crc32(tag + data) & 0xFFFFFFFF)
+        )
 
     path.write_bytes(
         b"\x89PNG\r\n\x1a\n"
