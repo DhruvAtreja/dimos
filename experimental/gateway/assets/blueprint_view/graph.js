@@ -374,29 +374,17 @@ export class Graph {
 
     applySpot() {
         const target = this.spot
-        const lit = new Set()
-        if (target?.module) {
-            const id = `m:${target.module}`
-            lit.add(id)
-            for (const edge of this.edges) {
-                if (edge.from === id || edge.to === id) {
-                    lit.add(edge.from === id ? edge.to : edge.from)
-                }
-            }
-        } else if (target?.topic) {
-            const id = `t:${target.topic}`
-            lit.add(id)
-            for (const edge of this.edges) {
-                if (edge.from === id || edge.to === id) {
-                    lit.add(edge.from === id ? edge.to : edge.from)
-                }
+        const focus = target?.module ? `m:${target.module}` : target?.topic ? `t:${target.topic}` : null
+        const lit = new Set(focus ? [focus] : [])
+        for (const edge of focus ? this.edges : []) {
+            if (edge.from === focus || edge.to === focus) {
+                lit.add(edge.from === focus ? edge.to : edge.from)
             }
         }
         this.svg.classList.toggle("spot", lit.size > 0)
         for (const node of this.nodes) {
             node.el?.classList.toggle("lit", lit.has(node.id))
         }
-        const focus = target?.module ? `m:${target.module}` : target?.topic ? `t:${target.topic}` : null
         for (const edge of this.edges) {
             edge.el?.classList.toggle("lit", edge.from === focus || edge.to === focus)
         }

@@ -804,7 +804,6 @@ function renderBar() {
     const phase = !launch ? "not running" : state.running ? launch.phase : launch.phase === "failed" ? "failed" : "last run"
     const stale = state.running && launchedWithOther(launch, state.saved)
     const busy = !!state.relaunching || launch?.phase === "starting" || launch?.phase === "stopping"
-    const codeOn = state.source && state.code?.file === state.source.file && state.code?.line === state.source.line
     $("#bar").replaceChildren(...[
         h("strong", { class: "name" }, NAME),
         h("span", { class: `phase ${phase.replace(/ /g, "-")}` }, phase),
@@ -845,15 +844,7 @@ function renderBar() {
                 renderBar()
             } }),
         }, "Configure"),
-        state.source && h("button", {
-            type: "button",
-            class: `btn${codeOn ? " on" : ""}`,
-            "data-bp-blueprint-code": true,
-            onclick: () => {
-                state.code = codeOn ? null : state.source
-                render()
-            },
-        }, codeOn ? "Hide code" : "Show code"),
+        state.source && codeButton(state.source, "data-bp-blueprint-code"),
         h("button", {
             type: "button",
             class: "btn",
