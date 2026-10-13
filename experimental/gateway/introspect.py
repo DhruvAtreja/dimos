@@ -51,19 +51,30 @@ class IntrospectError(Exception):
 class Cache:
     def __init__(self) -> None:
         self.values: dict[str, tuple[float, Any]] = {}
-        self.locks: dict[str, asyncio.Lock] = {}
+        self.locks: dict[str, tuple[asyncio.Lock, int]] = {}
 
     def forget(self, key: str) -> None:
         self.values.pop(key, None)
 
     async def get(self, key: str, ttl: float, compute: Callable[[], Awaitable[Any]]) -> Any:
-        async with self.locks.setdefault(key, asyncio.Lock()):
-            hit = self.values.get(key)
-            if hit and time.monotonic() - hit[0] < ttl:
-                return hit[1]
-            value = await compute()
-            self.values[key] = (time.monotonic(), value)
-            return value
+        # keys include request args, so drop expired values and idle locks or they pile up for days
+        lock, users = self.locks.get(key) or (asyncio.Lock(), 0)
+        self.locks[key] = (lock, users + 1)
+        try:
+            async with lock:
+                now = time.monotonic()
+                self.values = {k: hit for k, hit in self.values.items() if hit[0] > now}
+                if key in self.values:
+                    return self.values[key][1]
+                value = await compute()
+                self.values[key] = (time.monotonic() + ttl, value)
+                return value
+        finally:
+            users = self.locks[key][1] - 1
+            if users:
+                self.locks[key] = (lock, users)
+            else:
+                del self.locks[key]
 
 
 async def run_child(
