@@ -121,20 +121,37 @@ def test_model_exposes_twelve_arm_joints_and_fixed_finger_geometry() -> None:
         assert _joint(root, f"{side}_grasp_frame_joint").attrib["type"] == "fixed"
 
 
-def test_model_contains_no_workbench_camera_or_environment_geometry() -> None:
+def test_model_environment_is_only_the_workcell_link() -> None:
     root = _tree()
-    assert len(root.findall("link")) == 21
-    assert len(root.findall("joint")) == 20
-    xml = ET.tostring(root, encoding="unicode").lower()
-    for excluded in (
-        "camera",
+    assert len(root.findall("link")) == 22
+    assert len(root.findall("joint")) == 21
+    workcell = root.find("./link[@name='workcell']")
+    assert workcell is not None
+    assert [c.attrib["name"] for c in workcell.findall("collision")] == [
         "table",
-        "cabinet",
-        "enclosure",
-        "gate",
-        "wall",
-        "bottle",
-        "bin",
-        "<collision",
-    ):
+        "camera_post",
+        "overhead_camera",
+    ]
+    assert workcell.find("visual") is None and workcell.find("inertial") is None
+    xml = ET.tostring(root, encoding="unicode").lower()
+    for excluded in ("cabinet", "enclosure", "gate", "wall", "bottle", "bin"):
         assert excluded not in xml
+
+
+def test_every_arm_link_has_a_convex_hull_and_each_gripper_its_camera() -> None:
+    root = _tree()
+    for link in root.findall("link"):
+        name = link.attrib["name"]
+        visual = link.find("visual/geometry/mesh")
+        if visual is None:
+            continue
+        collision = link.find("collision/geometry/mesh")
+        assert collision is not None, name
+        assert collision.attrib["filename"].endswith(
+            "/collision/" + visual.attrib["filename"].rsplit("/", 1)[1]
+        )
+    for side in ("left", "right"):
+        gripper = root.find(f"./link[@name='{side}_gripper']")
+        assert gripper is not None
+        names = {c.attrib.get("name") for c in gripper.findall("collision")}
+        assert {f"{side}_wrist_camera_bracket", f"{side}_wrist_camera"} <= names

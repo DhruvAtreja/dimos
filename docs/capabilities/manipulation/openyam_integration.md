@@ -122,7 +122,10 @@ Two dual-arm model packages ship as LFS data:
   the physical workcell: arm bases 0.43 m apart (tape, 2026-10-08) and joint 1
   limits of -225 to +90 deg, inside the stops measured when the motors were
   zeroed with Anvil's `damiao-set-zero-limit` on 2026-10-12. Its zero
-  configuration is the folded rest pose on the supports.
+  configuration is the folded rest pose on the supports. Every link carries a
+  convex hull collision mesh, each gripper carries boxes for its wrist D405 and
+  bracket, and a fixed `workcell` link carries the table slab, the camera post
+  and the overhead camera, so planners see the rig without extra configuration.
 - `dual_openyam_abc_box_v2`, exported as `DUAL_OPENYAM_ABC_MODEL`, keeps the
   0.62 m spacing of the ABC simulation bench for scenes that reproduce it.
 
