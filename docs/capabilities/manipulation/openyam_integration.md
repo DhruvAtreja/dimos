@@ -91,6 +91,22 @@ The bus uses classical CAN at 1 Mbit/s. Opening the gripper decreases motor
 position. The arm and gripper are exposed together as one whole-body hardware
 component.
 
+## Model assets
+
+Two dual-arm model packages ship as LFS data:
+
+- `dual_openyam_workcell_v1` is the default, `DUAL_OPENYAM_MODEL`. It describes
+  the physical workcell: arm bases 0.43 m apart (tape, 2026-10-08) and joint 1
+  limits of -225 to +90 deg, inside the stops measured when the motors were
+  zeroed with Anvil's `damiao-set-zero-limit` on 2026-10-12. Its zero
+  configuration is the folded rest pose on the supports.
+- `dual_openyam_abc_box_v2`, exported as `DUAL_OPENYAM_ABC_MODEL`, keeps the
+  0.62 m spacing of the ABC simulation bench for scenes that reproduce it.
+
+Both packages carry the same i2rt arm geometry and meshes; only the base
+spacing and the joint 1 limits differ. Each package's `SOURCE.md` records the
+measurement or upstream commit every number comes from.
+
 ## Safety
 
 - Keep the workspace clear and the emergency stop reachable during first

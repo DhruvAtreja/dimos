@@ -45,20 +45,20 @@ def _origin_xyz(joint: ET.Element) -> tuple[float, float, float]:
 
 
 def test_model_package_is_versioned_and_self_contained() -> None:
-    assert DUAL_OPENYAM_ARTIFACT == "dual_openyam_abc_box_v2"
+    assert DUAL_OPENYAM_ARTIFACT == "dual_openyam_workcell_v1"
     assert Path(DUAL_OPENYAM_PACKAGE).name == DUAL_OPENYAM_ARTIFACT
     assert DUAL_OPENYAM_MODEL_PATH.is_file()
     assert DUAL_OPENYAM_PACKAGE_PATHS == {
-        "dual_openyam_abc_box": DUAL_OPENYAM_PACKAGE,
+        "dual_openyam_workcell": DUAL_OPENYAM_PACKAGE,
     }
     for mesh in _tree().findall("./link/visual/geometry/mesh"):
         uri = mesh.attrib["filename"]
-        prefix = "package://dual_openyam_abc_box/"
+        prefix = "package://dual_openyam_workcell/"
         assert uri.startswith(prefix)
         assert (Path(DUAL_OPENYAM_PACKAGE) / uri.removeprefix(prefix)).is_file()
 
 
-def test_model_has_one_geometry_free_root_and_only_preserves_arm_spacing() -> None:
+def test_model_has_one_geometry_free_root_and_the_measured_arm_spacing() -> None:
     root = _tree()
     shared_base = root.find("./link[@name='dual_openyam_base']")
     assert shared_base is not None
@@ -73,8 +73,19 @@ def test_model_has_one_geometry_free_root_and_only_preserves_arm_spacing() -> No
     assert link_names - child_names == {"dual_openyam_base"}
     left = _origin_xyz(_joint(root, "left_arm_fixed_joint"))
     right = _origin_xyz(_joint(root, "right_arm_fixed_joint"))
-    assert left == (0.0, 0.31, 0.0)
-    assert right == (0.0, -0.31, 0.0)
+    assert left == (0.0, 0.215, 0.0)
+    assert right == (0.0, -0.215, 0.0)
+
+
+def test_joint_one_limits_sit_inside_the_measured_stops() -> None:
+    # Stop-to-stop sweep 2026-10-12: about -232 to +93 deg on both arms. The
+    # package keeps the Anvil openyam profile, -225 to +90 deg, inside them.
+    root = _tree()
+    for side in ("left", "right"):
+        limit = _joint(root, f"{side}_joint1").find("limit")
+        assert limit is not None
+        assert float(limit.attrib["lower"]) == pytest.approx(-3.92699)
+        assert float(limit.attrib["upper"]) == pytest.approx(1.5708)
 
 
 def test_both_arm_chains_are_symmetric_and_use_two_rad_s_limits() -> None:
