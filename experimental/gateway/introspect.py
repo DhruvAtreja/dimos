@@ -264,11 +264,12 @@ def spec_topic(spec: Any) -> str | None:
     if isinstance(kwargs, dict) and isinstance(kwargs.get("topic"), str):
         return str(kwargs["topic"])
     args = getattr(spec, "args", None)
-    if isinstance(args, tuple) and args and isinstance(args[0], str):
-        return args[0]
-    topic = getattr(spec, "topic", None)
+    topic = args[0] if isinstance(args, tuple) and args else getattr(spec, "topic", None)
+    # a Topic object (LCM/Zenoh specs) carries the string; Zenoh's has its "dimos/" namespace
     topic = getattr(topic, "topic", topic)
-    return topic if isinstance(topic, str) else None
+    if not isinstance(topic, str):
+        return None
+    return "/" + topic.removeprefix("dimos/").lstrip("/")
 
 
 def blueprint_modules(bp: Any, registry_names: dict[str, str]) -> list[dict[str, Any]]:
@@ -298,6 +299,8 @@ def blueprint_modules(bp: Any, registry_names: dict[str, str]) -> list[dict[str,
                     "name": stream.name,
                     "type": type_name(stream.type),
                     "direction": stream.direction,
+                    # the name it's wired under after .remappings(): streams sharing it are one topic
+                    "wire": effective if isinstance(effective, str) else None,
                     "topic": topic,
                 }
             )

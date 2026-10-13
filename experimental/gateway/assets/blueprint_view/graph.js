@@ -436,7 +436,7 @@ function straightPath(from, to) {
 
 export const className = (module) => module.class.split(".").pop() || module.name
 export const typeName = (type) => (type ?? "").split(".").pop() || type || ""
-export const topicOf = (stream) => (stream.topic ?? stream.name).replace(/^\/+/, "")
+export const topicOf = (stream) => (stream.topic ?? stream.wire ?? stream.name).replace(/^\/+/, "")
 
 const TYPE_COLORS = {
     Image: "warn",
