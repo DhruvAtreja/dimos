@@ -309,6 +309,7 @@ jobs:
       - name: Install lint dependencies
         run: |
           uv run --no-project --with requests python scripts/prepare_message_parser.py
+          uv run --no-project --with requests python -m scripts.prepare_message_test_inputs
           uv sync --only-group lint --frozen
           uv pip install --python .venv/bin/python --no-deps ./dimos/message_codegen
       - name: Mypy
@@ -370,6 +371,7 @@ jobs:
         # that still needs a plain build: pytest imports the compiled .so.
         run: |
           uv run --no-project --with requests python scripts/prepare_message_parser.py
+          uv run --no-project --with requests python -m scripts.prepare_message_test_inputs
           uv sync --group tests --frozen
           uv pip install --python .venv/bin/python --no-deps ./dimos/message_codegen
           source .venv/bin/activate
@@ -518,6 +520,7 @@ jobs:
       - name: Install Python dependencies
         run: |
           uv run --no-project --with requests python scripts/prepare_message_parser.py
+          uv run --no-project --with requests python -m scripts.prepare_message_test_inputs
           uv sync --group tests --frozen
           uv pip install --python .venv/bin/python --no-deps ./dimos/message_codegen
       - name: Restore Hugging Face model cache
@@ -645,6 +648,7 @@ jobs:
       - name: Install dependencies
         run: |
           uv run --no-project --with requests python scripts/prepare_message_parser.py
+          uv run --no-project --with requests python -m scripts.prepare_message_test_inputs
           uv sync --group tests --group browser-tests --frozen
           uv pip install --python .venv/bin/python --no-deps ./dimos/message_codegen
       - name: Install Playwright browsers  # the e2e runs in both engines
@@ -764,6 +768,7 @@ jobs:
       - name: Install dependencies
         run: |
           uv run --no-project --with requests python scripts/prepare_message_parser.py
+          uv run --no-project --with requests python -m scripts.prepare_message_test_inputs
           uv sync --group tests --frozen
           uv pip install --python .venv/bin/python --no-deps ./dimos/message_codegen
       - name: Run tests
@@ -902,6 +907,7 @@ jobs:
       - name: Install dependencies
         run: |
           uv run --no-project --with requests python scripts/prepare_message_parser.py
+          uv run --no-project --with requests python -m scripts.prepare_message_test_inputs
           uv sync --group tests-self-hosted --frozen
           uv pip install --python .venv/bin/python --no-deps ./dimos/message_codegen
       - name: Install web_browser e2e dependencies (macOS)
@@ -909,6 +915,7 @@ jobs:
         run: |
           brew install ffmpeg libjpeg-turbo
           uv run --no-project --with requests python scripts/prepare_message_parser.py
+          uv run --no-project --with requests python -m scripts.prepare_message_test_inputs
           uv sync --group tests-self-hosted --group browser-tests --frozen
           uv pip install --python .venv/bin/python --no-deps ./dimos/message_codegen
           uv run python -c "from dimos.utils.turbojpeg import get_turbojpeg; get_turbojpeg()"
@@ -1156,6 +1163,7 @@ jobs:
       - name: Install dependencies
         run: |
           uv run --no-project --with requests python scripts/prepare_message_parser.py
+          uv run --no-project --with requests python -m scripts.prepare_message_test_inputs
           uv sync --group tests-self-hosted --frozen
           uv pip install --python .venv/bin/python --no-deps ./dimos/message_codegen
       - name: Build C++ extensions in-place

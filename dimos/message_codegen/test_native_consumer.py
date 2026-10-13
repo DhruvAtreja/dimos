@@ -24,6 +24,7 @@ import pytest
 from dimos.message_codegen.generate import generate
 from dimos.message_codegen.native_build import prepare_cpp, write_cmake_toolchain
 from dimos.message_codegen.ownership import Dependency
+from scripts.prepare_message_test_inputs import OUTPUT as TEST_INPUTS
 
 
 @pytest.fixture(autouse=True)
@@ -48,7 +49,7 @@ def test_separate_packages_share_types_and_exchange_cdr(tmp_path, monkeypatch):
     source.parent.mkdir(parents=True)
     source.write_text("std_msgs/Header header\nfloat64 value\n")
     base, custom = tmp_path / "base", tmp_path / "custom"
-    generate([], base, ["std_msgs/msg/Header"], "ownership_base", shared=True)
+    generate([TEST_INPUTS], base, ["std_msgs/msg/Header"], "ownership_base", shared=True)
     generate(
         [source.parents[2]],
         custom,

@@ -18,6 +18,7 @@ import subprocess
 import sys
 
 from dimos.message_codegen.generate import generate
+from scripts.prepare_message_test_inputs import OUTPUT as TEST_INPUTS
 
 
 def test_generated_interfaces_check_nested_fields_buffers_and_keyword_arguments(
@@ -29,7 +30,7 @@ def test_generated_interfaces_check_nested_fields_buffers_and_keyword_arguments(
         "std_msgs/Header header\ngeometry_msgs/Point position\nfloat64[] readings\nfloat64[3] axes\nuint8[] payload\n"
     )
     generate(
-        [tmp_path / "interfaces"],
+        [tmp_path / "interfaces", TEST_INPUTS],
         tmp_path / "generated",
         ["demo_msgs/msg/Reading"],
         languages=("python",),

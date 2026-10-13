@@ -23,6 +23,7 @@ import pytest
 from rosbags.typesys import Stores, get_types_from_msg, get_typestore
 
 from dimos.message_codegen.definitions import Definitions, parse_message
+from scripts.prepare_message_test_inputs import OUTPUT as TEST_INPUTS
 
 
 @pytest.fixture(autouse=True)
@@ -49,7 +50,7 @@ def write_message(root: Path, name: str, text: str) -> Path:
 def test_resolves_standard_dependencies_without_ros(tmp_path):
     write_message(tmp_path, "example_msgs/msg/Telemetry", "sensor_msgs/Image image\nstring label\n")
 
-    definitions = Definitions([tmp_path])
+    definitions = Definitions([tmp_path, TEST_INPUTS])
     closure = definitions.resolve(["example_msgs/msg/Telemetry"])
 
     assert [message.name for message in closure] == [
@@ -88,7 +89,7 @@ def test_conflicting_definition_reports_both_sources(tmp_path):
     second = write_message(tmp_path / "two", "example_msgs/msg/Value", "float64 value\n")
 
     with pytest.raises(ValueError, match="Conflicting definition") as error:
-        Definitions([tmp_path / "one", tmp_path / "two"], bundled=False)
+        Definitions([tmp_path / "one", tmp_path / "two"])
 
     assert str(first) in str(error.value)
     assert str(second) in str(error.value)
@@ -121,7 +122,7 @@ def test_equivalent_definitions_ignore_comments(tmp_path):
     write_message(tmp_path / "one", "example_msgs/msg/Value", "int32 value # comment\n")
     write_message(tmp_path / "two", "example_msgs/msg/Value", "# another comment\nint32 value\n")
 
-    closure = Definitions([tmp_path / "one", tmp_path / "two"], bundled=False).resolve()
+    closure = Definitions([tmp_path / "one", tmp_path / "two"]).resolve()
 
     assert [message.name for message in closure] == ["example_msgs/msg/Value"]
 
@@ -132,7 +133,7 @@ def test_missing_dependency_reports_source(tmp_path):
     with pytest.raises(
         ValueError, match="unresolved message dependency other_msgs/msg/Absent"
     ) as error:
-        Definitions([tmp_path], bundled=False).resolve()
+        Definitions([tmp_path]).resolve()
 
     assert str(source) in str(error.value)
 
@@ -144,7 +145,7 @@ def test_recursive_message_reports_chain(tmp_path):
     with pytest.raises(
         ValueError, match="First -> example_msgs/msg/Second -> example_msgs/msg/First"
     ):
-        Definitions([tmp_path], bundled=False).resolve()
+        Definitions([tmp_path]).resolve()
 
 
 def test_invalid_field_reports_source_line(tmp_path):
@@ -158,8 +159,8 @@ def test_invalid_field_reports_source_line(tmp_path):
     assert f"{source}:3:" in str(error.value)
 
 
-def test_all_bundled_schemas_resolve():
-    closure = Definitions([]).resolve()
+def test_prepared_upstream_schemas_resolve():
+    closure = Definitions([TEST_INPUTS]).resolve()
 
     assert "sensor_msgs/msg/PointCloud2" in {message.name for message in closure}
     assert all(
@@ -263,3 +264,9 @@ def test_nix_archive_pins_cover_the_shared_upstream_revisions():
         assert archive["revision"] == sources["repositories"][name]["revision"]
         assert len(archive["sha256"]) == 64
         assert all(character in "0123456789abcdef" for character in archive["sha256"])
+
+
+def test_standard_types_require_an_explicit_dependency(tmp_path):
+    write_message(tmp_path, "example_msgs/msg/Value", "std_msgs/Header header\n")
+    with pytest.raises(ValueError, match="unresolved message dependency std_msgs/msg/Header"):
+        Definitions([tmp_path]).resolve()

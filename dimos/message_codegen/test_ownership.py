@@ -23,11 +23,12 @@ import pytest
 
 from dimos.message_codegen.generate import generate
 from dimos.message_codegen.ownership import Dependency
+from scripts.prepare_message_test_inputs import OUTPUT as TEST_INPUTS
 
 
 def packages(tmp_path):
     base = tmp_path / "base"
-    generate([], base, ["std_msgs/msg/Header"], "base_messages", shared=True)
+    generate([TEST_INPUTS], base, ["std_msgs/msg/Header"], "base_messages", shared=True)
     dependency = Dependency.load(base)
     source = tmp_path / "interfaces/custom_msgs/msg/Reading.msg"
     source.parent.mkdir(parents=True)
@@ -48,6 +49,10 @@ def test_external_package_owns_only_custom_type_and_preserves_schema_closure(tmp
     )
     manifest = json.loads((output / "message-package.json").read_text())
     assert manifest["owned"] == ["custom_msgs/msg/Reading"]
+    licenses = dependency.root / "schemas/licenses"
+    assert list(licenses.iterdir())
+    for license in licenses.iterdir():
+        assert (output / "schemas/licenses" / license.name).read_bytes() == license.read_bytes()
     assert set(manifest["schemas"]) == {
         "custom_msgs/msg/Reading",
         "std_msgs/msg/Header",

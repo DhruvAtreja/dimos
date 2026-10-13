@@ -28,10 +28,12 @@ std_msgs/Header header
 float64 value
 ```
 
-For this low-level generator layer:
+For this low-level example, explicitly prepare its pinned standard-message inputs:
 
 ```sh skip
+python -m scripts.prepare_message_test_inputs
 python -m dimos.message_codegen.generate --package-root interfaces \
+  --package-root build/message-codegen/test-inputs \
   --type demo_msgs/msg/Reading --python-module demo_messages --output build/reading
 pip install ./build/reading/python
 ```
@@ -143,3 +145,17 @@ The [source-package walkthrough](../../docs/development/message-source-packages.
 shows explicit local inputs, ordinary setuptools PEP 517/660 builds, offline
 wheel/sdist installation, dependency-owned types and explicit upstream source
 preparation. These mechanisms have no built-in catalog or repository-path convention.
+
+### Explicit schema inputs
+
+The backend does not include standard message definitions. Pass local schema roots or declared message-package dependencies to generation.
+Prepare the pinned ROS conformance inputs before running standalone tests:
+
+```sh
+python -m scripts.prepare_message_test_inputs
+# Reuse verified archives without network access:
+python -m scripts.prepare_message_test_inputs --offline
+```
+
+The inputs live under ignored `build/message-codegen/test-inputs/`. Tests pass that directory explicitly.
+Production standard messages belong to the message-package layer. The backend wheel contains no standard `.msg` files.

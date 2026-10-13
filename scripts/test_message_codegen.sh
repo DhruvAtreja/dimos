@@ -2,6 +2,9 @@
 set -euo pipefail
 cd "$(dirname "$0")/.."
 python="${DIMOS_CODEGEN_PYTHON:-$PWD/.venv/bin/python}"
+prepare_args=()
+if [[ "${DIMOS_OFFLINE:-0}" == "1" ]]; then prepare_args+=(--offline); fi
+"$python" -m scripts.prepare_message_test_inputs "${prepare_args[@]}"
 evidence="$PWD/build/message-codegen/demo/evidence"
 mkdir -p "$evidence"
 # Run upstream assertions in their original source tree, without copying tests.

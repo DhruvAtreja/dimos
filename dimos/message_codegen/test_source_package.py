@@ -20,6 +20,7 @@ import shutil
 import subprocess
 import sys
 import tarfile
+import zipfile
 
 import pytest
 
@@ -84,6 +85,12 @@ def test_generic_cold_source_wheel_sdist_editable_and_dependency_identity(tmp_pa
         result = subprocess.run(command, cwd=cwd, env=environment, capture_output=True, text=True)
         assert result.returncode == 0, result.stdout + result.stderr
 
+    backend_source = tmp_path / "backend"
+    shutil.copytree(
+        root / "dimos/message_codegen",
+        backend_source,
+        ignore=shutil.ignore_patterns("build", "dist", "*.egg-info", "__pycache__"),
+    )
     run(
         [
             sys.executable,
@@ -94,9 +101,12 @@ def test_generic_cold_source_wheel_sdist_editable_and_dependency_identity(tmp_pa
             "--no-build-isolation",
             "--wheel-dir",
             str(wheels),
-            str(root / "dimos/message_codegen"),
+            str(backend_source),
         ]
     )
+    backend = next(wheels.glob("dimos_message_build-*.whl"))
+    with zipfile.ZipFile(backend) as archive:
+        assert not any(name.endswith(".msg") for name in archive.namelist())
     base, application = tmp_path / "base", tmp_path / "application"
     project(base, "base-messages", "shared_msgs", "int32 tick\nstring frame\n")
     project(

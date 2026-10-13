@@ -25,6 +25,7 @@ import pytest
 from dimos.message_codegen import native_build, registry
 from dimos.message_codegen.generate import generate
 from dimos.message_codegen.native_build import complete, save_complete, source_digest, stage_module
+from scripts.prepare_message_test_inputs import OUTPUT as TEST_INPUTS
 
 
 @pytest.fixture
@@ -50,7 +51,7 @@ def package(tmp_path, name, definition):
     source.write_text(definition)
     output = tmp_path / "output"
     generate(
-        [tmp_path / "interfaces"],
+        [tmp_path / "interfaces", TEST_INPUTS],
         output,
         [f"accept_msgs/msg/{name}"],
         module="accept_messages",
@@ -121,7 +122,7 @@ def test_cpp_and_rust_bounded_strings_fail_explicitly(tmp_path):
     for language in ["cpp", "rust"]:
         with pytest.raises(NotImplementedError, match="Unsupported native"):
             generate(
-                [tmp_path / "interfaces"],
+                [tmp_path / "interfaces", TEST_INPUTS],
                 tmp_path / language,
                 ["accept_msgs/msg/Limited"],
                 languages=(language,),
@@ -216,7 +217,7 @@ def test_cache_identity_tracks_selected_compilers_and_cmake(monkeypatch, platfor
 def test_original_bounded_telemetry_fixture_generates_native_sources(tmp_path, language):
     root = Path(__file__).resolve().parents[2]
     names = generate(
-        [root / "examples/message-codegen"],
+        [root / "examples/message-codegen", TEST_INPUTS],
         tmp_path / language,
         ["demo_msgs/msg/Telemetry"],
         "legacy_telemetry",

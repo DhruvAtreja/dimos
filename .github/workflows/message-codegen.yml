@@ -7,6 +7,8 @@ on:
       - examples/message-codegen/**
       - scripts/*message*codegen*
       - scripts/prepare_message_parser.py
+      - scripts/prepare_message_test_inputs.py
+      - scripts/message-test-sources.json
       - .github/workflows/message-codegen.yml
       - .github/docker/message-codegen-reference.Dockerfile
       - Cargo.toml

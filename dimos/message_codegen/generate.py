@@ -43,7 +43,6 @@ def generate(
     dependencies: tuple[Dependency, ...] = (),
     shared: bool = False,
     languages: tuple[str, ...] = ("python", "cpp", "rust"),
-    bundled: bool = True,
 ) -> tuple[str, ...]:
     if not re.fullmatch(r"[a-z][a-z0-9_]*", module) or keyword.iskeyword(module):
         raise ValueError(f"Invalid Python package module name: {module}")
@@ -52,7 +51,7 @@ def generate(
     if not languages or set(languages) - {"python", "cpp", "rust"}:
         raise ValueError("Select python, cpp and/or rust")
     definitions = Definitions(
-        roots + [dep.root / "schemas" for dep in dependencies], installed=installed, bundled=bundled
+        roots + [dep.root / "schemas" for dep in dependencies], installed=installed
     )
     messages = definitions.resolve(names)
     owners = resolve_owners(messages, definitions, dependencies)
@@ -67,7 +66,18 @@ def generate(
         path = schema_root / (message.name + ".msg")
         path.parent.mkdir(parents=True, exist_ok=True)
         path.write_text(message.text)
-    shutil.copytree(TEMPLATES.parent / "schemas/licenses", schema_root / "licenses")
+    # Preserve licenses supplied by explicit source roots and dependency packages.
+    for root in roots + [dep.root / "schemas" for dep in dependencies]:
+        licenses = root / "licenses"
+        if licenses.is_dir():
+            for source in sorted(licenses.rglob("*")):
+                if not source.is_file():
+                    continue
+                target = schema_root / "licenses" / source.relative_to(licenses)
+                if target.exists() and target.read_bytes() != source.read_bytes():
+                    raise ValueError(f"Conflicting schema license: {source}")
+                target.parent.mkdir(parents=True, exist_ok=True)
+                shutil.copyfile(source, target)
     metadata = {msg.name: definitions.schema(msg.name) for msg in messages}
     (output / "schemas.json").write_text(json.dumps(metadata, indent=2, sort_keys=True) + "\n")
     unsupported: dict[str, dict[str, str]] = {

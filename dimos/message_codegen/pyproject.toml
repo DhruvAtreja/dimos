@@ -19,6 +19,6 @@ package-dir = {"dimos_message_build" = ".", "rosidl_adapter" = ".upstream/rosidl
 include-package-data = false
 
 [tool.setuptools.package-data]
-"dimos_message_build" = ["py.typed", "schemas/**/*", "templates/*", "sources.json", "native_sources.json", "parser-source.json"]
+"dimos_message_build" = ["py.typed", "templates/*", "native_sources.json", "parser-source.json"]
 
 "rosidl_adapter" = ["resource/*.em", "LICENSE", "package.xml"]

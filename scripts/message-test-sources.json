@@ -1,0 +1,83 @@
+{
+  "format": 1,
+  "sources": [
+    {
+      "repository": "ros2/common_interfaces",
+      "revision": "a941f14bb318d8d904505ed935ccbb97f24a70a4",
+      "url": "https://codeload.github.com/ros2/common_interfaces/tar.gz/a941f14bb318d8d904505ed935ccbb97f24a70a4",
+      "sha256": "4140cc780aec296bcd88c3049ba541783d40fbb7dd0e5919e621a85e314416ba",
+      "prefix": "common_interfaces-a941f14bb318d8d904505ed935ccbb97f24a70a4/",
+      "files": {
+        "geometry_msgs/msg/Point.msg": {
+          "path": "geometry_msgs/msg/Point.msg",
+          "sha256": "eb4c07e591cf0269ccb17245dcd4f998162feb09cc8add85fa082c8a30bfc91d"
+        },
+        "sensor_msgs/msg/Image.msg": {
+          "path": "sensor_msgs/msg/Image.msg",
+          "sha256": "575cd3434771916c2b551db8ac484522ecef1d6105196e043a305887d2730704"
+        },
+        "sensor_msgs/msg/PointCloud2.msg": {
+          "path": "sensor_msgs/msg/PointCloud2.msg",
+          "sha256": "22699bfd6c68be148363a2e889408833a5a37d3464ea20032d1c757336b80f2a"
+        },
+        "sensor_msgs/msg/PointField.msg": {
+          "path": "sensor_msgs/msg/PointField.msg",
+          "sha256": "6e6d5d51d2e464d3074b44b112f219e67fcdc0b280260d93f8cefd9710ec972e"
+        },
+        "std_msgs/msg/Bool.msg": {
+          "path": "std_msgs/msg/Bool.msg",
+          "sha256": "d989b95f2ba14d15eff5b274b5d1f379b938aaea2157d8bd707f942457ae18bf"
+        },
+        "std_msgs/msg/Header.msg": {
+          "path": "std_msgs/msg/Header.msg",
+          "sha256": "d2cea14630e39ed0fa5b432ba9160a7c38855b9427d3344f99e83e83facb53c2"
+        },
+        "std_msgs/msg/MultiArrayDimension.msg": {
+          "path": "std_msgs/msg/MultiArrayDimension.msg",
+          "sha256": "94927d0ee40f1a1d9bf7bdddbca803e8b6e6d315d70c7295a9b0d2d6c380abed"
+        },
+        "std_msgs/msg/MultiArrayLayout.msg": {
+          "path": "std_msgs/msg/MultiArrayLayout.msg",
+          "sha256": "8f059b66610c5fe0532e3f12ff1022a10671caebf773f00816fd4c9303626914"
+        },
+        "std_msgs/msg/String.msg": {
+          "path": "std_msgs/msg/String.msg",
+          "sha256": "2022b3f1c32b578ff8d54a9948a51a10778761e0ad4ba60e50ae51292ca16884"
+        },
+        "std_msgs/msg/UInt32MultiArray.msg": {
+          "path": "std_msgs/msg/UInt32MultiArray.msg",
+          "sha256": "3a25d8463602c0f3eff61a14c3c17c10ef819aadf7ef19179e95cfdaea07b3ce"
+        },
+        "licenses/ros2_common_interfaces_geometry_msgs_LICENSE": {
+          "path": "geometry_msgs/LICENSE",
+          "sha256": "cfc7749b96f63bd31c3c42b5c471bf756814053e847c10f3eb003417bc523d30"
+        },
+        "licenses/ros2_common_interfaces_sensor_msgs_LICENSE": {
+          "path": "sensor_msgs/LICENSE",
+          "sha256": "cfc7749b96f63bd31c3c42b5c471bf756814053e847c10f3eb003417bc523d30"
+        },
+        "licenses/ros2_common_interfaces_std_msgs_LICENSE": {
+          "path": "std_msgs/LICENSE",
+          "sha256": "cfc7749b96f63bd31c3c42b5c471bf756814053e847c10f3eb003417bc523d30"
+        }
+      }
+    },
+    {
+      "repository": "ros2/rcl_interfaces",
+      "revision": "7aa3caf43377ea6ad615bc1040832e2c7566bfbe",
+      "url": "https://codeload.github.com/ros2/rcl_interfaces/tar.gz/7aa3caf43377ea6ad615bc1040832e2c7566bfbe",
+      "sha256": "d984942035cd4df4f60c92d6038cecbfc3f5a01a1977c1b3199cee45cd67281c",
+      "prefix": "rcl_interfaces-7aa3caf43377ea6ad615bc1040832e2c7566bfbe/",
+      "files": {
+        "builtin_interfaces/msg/Time.msg": {
+          "path": "builtin_interfaces/msg/Time.msg",
+          "sha256": "dc5a01ddde3aecffee21eb24974fe77cc969f873218a2b1811aa0ac8a456b8bd"
+        },
+        "licenses/ros2_rcl_interfaces_licenses_ros2_rcl_interfaces_LICENSE": {
+          "path": "LICENSE",
+          "sha256": "cfc7749b96f63bd31c3c42b5c471bf756814053e847c10f3eb003417bc523d30"
+        }
+      }
+    }
+  ]
+}

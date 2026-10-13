@@ -398,3 +398,12 @@ CI asserts the file is current — if it's stale, CI fails. Externally packaged 
 - Web (cockpit, web SDK, relay): `docs/web/index.md`
 - LFS data: `docs/development/large_file_management.md`
 - Agent system: `docs/capabilities/agents/`
+
+## Upstream source policy
+
+- Do not copy upstream source code or message definitions into Git when they can be obtained from upstream.
+- Fetch required inputs during an explicit preparation or build step. Pin immutable revisions and verify archive and selected-file hashes.
+- Reuse verified caches. Support offline builds and fail clearly when required inputs are missing.
+- Do not download or compile code during runtime imports. Do not silently install system dependencies.
+- Wheels and source distributions may include required upstream inputs and licenses so installation can be self-contained.
+- Keep original test fixtures in this repository. Prepare upstream conformance inputs with the same pinned-source mechanism.

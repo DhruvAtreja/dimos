@@ -114,7 +114,6 @@ def prepare(project: Path, output: Path | None = None) -> Path:
         version=config["version"],
         dependencies=config["dependencies"],
         shared=True,
-        bundled=False,
     )
     resources = output / "python" / (config["module"] + "_schemas") / "package"
     for path in config["resources"]:
