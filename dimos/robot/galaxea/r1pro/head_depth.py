@@ -33,14 +33,13 @@ def r1pro_head_depth(
     *,
     min_height_m: float | None = None,
     max_height_m: float | None = None,
-    lidar_history_s: float = LIDAR_HISTORY_S,
     **cloud: object,
 ) -> Blueprint:
     """Head depth anchored on Point-LIO's scans; height bounds (in base_link) gate only the cloud.
 
     Other keywords are Depth2DepthCloud config (e.g. decimation, max_points).
     """
-    options: dict[str, object] = dict(cloud)
+    options: dict[str, object] = {"lidar_history_s": LIDAR_HISTORY_S, **cloud}
     if min_height_m is not None or max_height_m is not None:
         options["height_frame"] = R1ProLioConfig.model_fields["base_frame"].default
     if min_height_m is not None:
@@ -51,13 +50,11 @@ def r1pro_head_depth(
     return Depth2DepthCloud.blueprint(
         max_range_m=MAX_RANGE_M,
         tf_tolerance_s=TF_TOLERANCE_S,
-        lidar_history_s=lidar_history_s,
         **options,
     ).remappings(
         [
             (Depth2DepthCloud, "image", "head_left_color"),
             (Depth2DepthCloud, "camera_info", "head_left_info"),
-            (Depth2DepthCloud, "lidar", "lidar"),
             (Depth2DepthCloud, "depth_cloud", "head_cloud"),
         ]
     )

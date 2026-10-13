@@ -76,7 +76,7 @@ def test_both_clouds_land_on_the_lidar_bus_and_the_head_is_cut_to_the_lidars_bli
     assert remaps[(key(Mid360), "lidar")] == "lidar_raw"
     assert remaps[(key(Depth2DepthCloud), "depth_cloud")] == "lidar"
     # It anchors on the same bus, and skips its own clouds there by frame.
-    assert remaps[(key(Depth2DepthCloud), "lidar")] == "lidar"
+    assert (key(Depth2DepthCloud), "lidar") not in remaps
     head = atoms[key(Depth2DepthCloud)].kwargs
     assert head["min_height_m"] == HEAD_CLOUD_MIN_HEIGHT_M
     assert head["max_height_m"] == HEAD_CLOUD_MAX_HEIGHT_M

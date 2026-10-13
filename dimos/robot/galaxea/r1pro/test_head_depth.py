@@ -44,5 +44,5 @@ def test_the_camera_and_the_lidar_are_the_connections_and_point_lios_streams() -
     remaps = blueprint.remapping_map
     assert remaps[(key, "image")] == "head_left_color"
     assert remaps[(key, "camera_info")] == "head_left_info"
-    assert remaps[(key, "lidar")] == "lidar"
+    assert (key, "lidar") not in remaps
     assert remaps[(key, "depth_cloud")] == "head_cloud"

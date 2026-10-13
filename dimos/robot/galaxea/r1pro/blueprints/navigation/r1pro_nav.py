@@ -108,7 +108,7 @@ _rerun_config = {
         "world/lidar": _render_cloud,
         # Raw sensor streams, heavy over a laptop's link and shown better by what is built from them.
         "world/lidar_raw": None,
-        "world/imu": None,
+        "world/imu_raw": None,
         "world/imu_torso": None,
         "world/r1pro/imu": None,
         "world/region_bounds": None,

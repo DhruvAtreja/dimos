@@ -138,7 +138,7 @@ def _ros_stamp_now() -> Any:
 class ArticulatedTf:
     """FK for every URDF joint, one parent -> child edge each; pinocchio because yourdfpy is absent on aarch64."""
 
-    def __init__(self, model: RobotModel, root_link: str = "") -> None:
+    def __init__(self, model: RobotModel, root_link: str) -> None:
         import xml.etree.ElementTree as ElementTree
 
         import pinocchio
@@ -147,7 +147,6 @@ class ArticulatedTf:
         self._model = pinocchio.buildModelFromXML(loaded.xml)
         self._data = self._model.createData()
         self._neutral_q = pinocchio.neutral(self._model)
-        self.root_link = root_link or loaded.root_link
         self._unknown_joints: set[str] = set()
 
         self._joint_q_index = {
@@ -155,7 +154,7 @@ class ArticulatedTf:
             for joint_id in range(1, self._model.njoints)
             if self._model.joints[joint_id].nq == 1
         }
-        rename = {loaded.root_link: self.root_link}
+        rename = {loaded.root_link: root_link}
         self._edges: list[tuple[str, str, int, int]] = []
         for joint in ElementTree.fromstring(loaded.xml).iter("joint"):
             parent = joint.find("parent").attrib["link"]  # type: ignore[union-attr]
