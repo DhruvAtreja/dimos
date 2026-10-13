@@ -24,7 +24,6 @@ from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
 from dimos.msgs.geometry_msgs.Twist import Twist
 from dimos.msgs.geometry_msgs.Vector3 import Vector3
 from dimos.utils.deno import ensure_deno
-from experimental.gateway import msgs
 from experimental.gateway.state import State
 from experimental.gateway.topic_rates import TopicWatch
 
@@ -113,21 +112,25 @@ def test_login_page(client: TestClient) -> None:
     assert "<html" in client.get("/dimos/cloud/login/page").text.lower()
 
 
-def test_msgs_js_is_current_and_served_with_an_etag(client: TestClient) -> None:
-    assert msgs.bundle_js(msgs.generate_ts(msgs.scan())) == msgs.JS_FILE.read_text()
+def test_msgs_js_is_built_once_and_served_with_an_etag(client: TestClient, home: Path) -> None:
     answer = client.get("/dimos/msgs.js")
-    assert answer.content == msgs.JS_FILE.read_bytes()
+    assert answer.status_code == 200 and b"geometry_msgs" in answer.content
+    (built,) = (home / "state" / "gateway" / "msgs").glob("msgs-*.js")
+    assert answer.content == built.read_bytes()
     again = client.get("/dimos/msgs.js", headers={"if-none-match": answer.headers["etag"]})
     assert again.status_code == 304
+    assert list(built.parent.iterdir()) == [built], "a second ask reuses the build"
 
 
-def test_msgs_js_decodes_what_python_encodes(tmp_path: Path) -> None:
+def test_msgs_js_decodes_what_python_encodes(client: TestClient, tmp_path: Path) -> None:
+    module = tmp_path / "msgs.js"
+    module.write_bytes(client.get("/dimos/msgs.js").content)
     pose = PoseStamped(
         ts=12.25, frame_id="map", position=[1.0, 2.0, 3.0], orientation=[0, 0, 0.6, 0.8]
     )
     twist = Twist(linear=Vector3(0.3, 0, 0), angular=Vector3(0, 0, 0.5))
     script = tmp_path / "round_trip.mjs"
-    script.write_text(ROUND_TRIP.replace("MODULE", msgs.JS_FILE.as_uri()))
+    script.write_text(ROUND_TRIP.replace("MODULE", module.as_uri()))
     frames = {"pose": pose.lcm_encode().hex()}
     done = subprocess.run(
         [str(ensure_deno()), "run", "--no-config", "--allow-read", str(script), json.dumps(frames)],

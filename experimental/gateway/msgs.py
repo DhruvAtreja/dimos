@@ -14,8 +14,11 @@
 
 from __future__ import annotations
 
+import asyncio
 from dataclasses import dataclass
+import hashlib
 import importlib
+import importlib.metadata
 import inspect
 import json
 from pathlib import Path
@@ -28,7 +31,7 @@ from typing import Any
 HERE = Path(__file__).parent / "assets" / "msgs"
 DIMOS_DIR = Path(__file__).parents[2] / "dimos"
 RUNTIME_FILE = HERE / "runtime.ts"
-JS_FILE = HERE / "msgs.js"
+BUILD_TIMEOUT_S = 120
 IDENTIFIER = re.compile(r"^[A-Za-z_$][A-Za-z0-9_$]*$")
 TS_SCALAR = {
     "int8_t": "number",
@@ -202,6 +205,48 @@ def bundle_js(ts_text: str) -> str:
     return "\n".join(line for line in text.splitlines() if not line.startswith("// ")) + "\n"
 
 
+def sources_hash() -> str:
+    digest = hashlib.sha256(importlib.metadata.version("dimos-lcm").encode())
+    sources = [Path(__file__), RUNTIME_FILE, DIMOS_DIR / "web" / "lcm_codec.py"]
+    for path in sources + sorted((DIMOS_DIR / "msgs").rglob("*.py")):
+        digest.update(f"\0{path.relative_to(DIMOS_DIR.parent)}\0".encode() + path.read_bytes())
+    return digest.hexdigest()[:16]
+
+
+_build_lock = asyncio.Lock()
+
+
+async def built_js(cache_dir: Path) -> Path:
+    """msgs.js for this checkout's messages, built on first ask and kept until a message changes."""
+    target = cache_dir / f"msgs-{await asyncio.to_thread(sources_hash)}.js"
+    async with _build_lock:
+        if target.is_file():
+            return target
+        cache_dir.mkdir(parents=True, exist_ok=True)
+        # a child process, so importing every message type doesn't stay in the gateway's memory
+        child = await asyncio.create_subprocess_exec(
+            sys.executable,
+            "-m",
+            "experimental.gateway.msgs",
+            str(target),
+            cwd=DIMOS_DIR.parent,
+            stdout=asyncio.subprocess.DEVNULL,
+            stderr=asyncio.subprocess.PIPE,
+        )
+        try:
+            _, err = await asyncio.wait_for(child.communicate(), BUILD_TIMEOUT_S)
+        except asyncio.TimeoutError:
+            child.kill()
+            raise RuntimeError(f"building msgs.js took over {BUILD_TIMEOUT_S} s") from None
+        if child.returncode != 0:
+            last = err.decode(errors="replace").strip().splitlines()[-1:] or ["no output"]
+            raise RuntimeError(f"building msgs.js failed: {last[0]}")
+        for old in cache_dir.glob("msgs-*.js"):
+            if old != target:
+                old.unlink(missing_ok=True)
+    return target
+
+
 if __name__ == "__main__":
     found = scan()
     for missing in found.missing:
@@ -209,4 +254,7 @@ if __name__ == "__main__":
             f"no LCM schema: {missing.type_name} ({missing.where}): {missing.reason}",
             file=sys.stderr,
         )
-    JS_FILE.write_text(bundle_js(generate_ts(found)))
+    out = Path(sys.argv[1])
+    partial = out.with_suffix(".partial")
+    partial.write_text(bundle_js(generate_ts(found)))
+    partial.replace(out)

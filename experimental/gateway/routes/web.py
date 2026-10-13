@@ -23,7 +23,7 @@ from typing import Any, Literal
 from fastapi import APIRouter, Request
 from fastapi.responses import HTMLResponse, Response
 
-from experimental.gateway.msgs import JS_FILE
+from experimental.gateway import msgs, store
 from experimental.gateway.routes.blueprints import blueprint_list, check_name
 from experimental.gateway.state import ApiError, GatewayState
 
@@ -83,9 +83,11 @@ async def topic_rates(state: GatewayState) -> dict[str, Any]:
 
 @router.get("/dimos/msgs.js")
 async def msgs_js(request: Request) -> Response:
-    if not JS_FILE.is_file():
-        raise ApiError(404, "no msgs.js in this install of dimos")
-    body = JS_FILE.read_bytes()
+    try:
+        path = await msgs.built_js(store.gateway_dir() / "msgs")
+    except RuntimeError as error:
+        raise ApiError(503, str(error)) from error
+    body = path.read_bytes()
     etag = f'"{hashlib.sha256(body).hexdigest()}"'
     headers = {"etag": etag, "cache-control": "no-cache"}
     if etag in (tag.strip() for tag in request.headers.get("if-none-match", "").split(",")):
