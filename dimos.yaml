@@ -1,7 +1,6 @@
 # What dimOS Desktop reads to install and run this version of dimos (fetched over HTTP per tag, no git needed).
 name: dimos
 version: "0.0.14"
-# env: REF (this tag/branch), COMMIT (its commit), DIMOS_DIR (checkout to create), NON_INTERACTIVE=1 when no one can answer prompts
 install: |
   set -euo pipefail
   script="$(mktemp)"
