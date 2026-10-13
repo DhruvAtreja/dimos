@@ -37,7 +37,7 @@ def test_remapped_streams_show_their_wired_topic() -> None:
     assert streams["headrightcamera", "jpeg_out"]["topic"] == "/head_right_color"
 
 
-def test_the_cache_drops_expired_values_and_idle_locks() -> None:
+def test_the_cache_shares_a_computation_and_drops_expired_ones() -> None:
     cache, computed = Cache(), []
 
     async def compute() -> int:
@@ -52,4 +52,4 @@ def test_the_cache_drops_expired_values_and_idle_locks() -> None:
 
     asyncio.run(scenario())
     assert len(computed) == 3
-    assert set(cache.values) == {"a", "c"} and cache.locks == {}
+    assert set(cache.entries) == {"a", "c"}
