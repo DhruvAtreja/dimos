@@ -64,17 +64,16 @@ def read_json(path: Path) -> Any:
         return None
 
 
-def settings_file() -> Path:
-    return gateway_dir() / "settings.json"
+def _section(value: Any) -> dict[str, Any]:
+    return value if isinstance(value, dict) else {}
 
 
 def _settings() -> dict[str, Any]:
-    value = read_json(settings_file())
-    return value if isinstance(value, dict) else {}
+    return _section(read_json(gateway_dir() / "settings.json"))
 
 
-def _section(value: Any) -> dict[str, Any]:
-    return value if isinstance(value, dict) else {}
+def _save_settings(settings: dict[str, Any]) -> None:
+    write_atomic(gateway_dir() / "settings.json", json.dumps(settings, indent=2))
 
 
 def global_config_overrides() -> dict[str, Any]:
@@ -86,7 +85,7 @@ def set_global_config_overrides(values: dict[str, Any]) -> None:
     with _settings_lock:
         settings = _settings()
         settings["global_config"] = {k: v for k, v in values.items() if v is not None}
-        write_atomic(settings_file(), json.dumps(settings, indent=2))
+        _save_settings(settings)
 
 
 def module_config(blueprint: str) -> dict[str, dict[str, Any]]:
@@ -104,19 +103,15 @@ def set_module_config(blueprint: str, modules: dict[str, dict[str, Any]]) -> Non
         else:
             saved.pop(blueprint, None)
         settings["module_config"] = saved
-        write_atomic(settings_file(), json.dumps(settings, indent=2))
+        _save_settings(settings)
 
 
 def venv_dir(dimos_dir: Path) -> Path:
     return dimos_dir / ".venv"
 
 
-def venv_python(dimos_dir: Path) -> Path:
-    return venv_dir(dimos_dir) / "bin" / "python"
-
-
 def python_for(dimos_dir: Path) -> str:
-    python = venv_python(dimos_dir)
+    python = venv_dir(dimos_dir) / "bin" / "python"
     return str(python) if python.exists() else sys.executable
 
 

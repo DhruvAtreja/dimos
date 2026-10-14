@@ -128,14 +128,12 @@ def redact(
 
 
 def keep_hidden(sent: dict[str, Any], saved: dict[str, Any]) -> dict[str, Any]:
-    kept = {}
-    for key, value in sent.items():
-        if value == HIDDEN and is_secret_name(key):
-            if saved.get(key) is not None:
-                kept[key] = saved[key]
-        else:
-            kept[key] = value
-    return kept
+    hidden = {key for key, value in sent.items() if value == HIDDEN and is_secret_name(key)}
+    return {
+        key: saved[key] if key in hidden else value
+        for key, value in sent.items()
+        if key not in hidden or saved.get(key) is not None
+    }
 
 
 def without_hidden(values: dict[str, Any]) -> dict[str, Any]:

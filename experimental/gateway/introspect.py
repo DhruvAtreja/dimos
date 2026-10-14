@@ -14,10 +14,10 @@
 
 from __future__ import annotations
 
-import ast
 import asyncio
-from collections import defaultdict
+from collections import Counter, defaultdict
 from collections.abc import Awaitable, Callable
+import contextlib
 import difflib
 import enum
 import functools
@@ -109,10 +109,8 @@ def child_command(dimos_dir: Path) -> list[str]:
 
 
 def kill_group(pid: int) -> None:
-    try:
+    with contextlib.suppress(ProcessLookupError, PermissionError):
         os.killpg(pid, signal.SIGKILL)
-    except (ProcessLookupError, PermissionError):
-        pass
 
 
 def emit(value: dict[str, Any]) -> None:
@@ -124,16 +122,6 @@ def type_name(kind: Any) -> str:
     module = getattr(kind, "__module__", "")
     name = getattr(kind, "__qualname__", None) or getattr(kind, "__name__", None) or repr(kind)
     return str(name) if module in ("builtins", "") else f"{module}.{name}"
-
-
-def class_key(cls: Any) -> str:
-    return f"{cls.__module__}.{cls.__qualname__}"
-
-
-def annotation_name(kind: Any) -> str | None:
-    if kind is None:
-        return None
-    return type_name(kind) if isinstance(kind, type) else str(kind).replace("typing.", "")
 
 
 def jsonable(value: Any) -> Any:
@@ -183,33 +171,18 @@ def source_of(obj: Any) -> dict[str, Any]:
 def blueprint_source(name: str) -> dict[str, Any]:
     from dimos.robot.all_blueprints import all_blueprints, all_modules
 
-    none: dict[str, Any] = {"file": None, "line": None}
     try:
         if name in all_modules:
             path, _, attr = all_modules[name].rpartition(".")
             return source_of(getattr(importlib.import_module(path), attr))
-        if name not in all_blueprints:
-            return none
         path, _, attr = all_blueprints[name].partition(":")
-        file = inspect.getsourcefile(importlib.import_module(path))
-        if file is None:
-            return none
-        tree = ast.parse(Path(file).read_text(encoding="utf-8"))
+        module = importlib.import_module(path)
+        lines = inspect.getsource(module).splitlines()
     except Exception:
-        return none
-    line = next(
-        (
-            node.lineno
-            for node in tree.body
-            if (
-                isinstance(node, ast.Assign)
-                and any(getattr(t, "id", None) == attr for t in node.targets)
-            )
-            or (isinstance(node, ast.AnnAssign) and getattr(node.target, "id", None) == attr)
-        ),
-        1,
-    )
-    return {"file": relative_to_checkout(file), "line": line}
+        return {"file": None, "line": None}
+    assignment = re.compile(rf"{re.escape(attr)}\s*(:|=(?!=))")
+    line = next((n for n, text in enumerate(lines, 1) if assignment.match(text)), 1)
+    return {"file": relative_to_checkout(inspect.getfile(module)), "line": line}
 
 
 def params(fn: Any) -> list[dict[str, Any]]:
@@ -278,47 +251,46 @@ def spec_topic(spec: Any) -> str | None:
 
 
 def blueprint_modules(bp: Any, registry_names: dict[str, str]) -> list[dict[str, Any]]:
-    atoms = list(bp.active_blueprints)
-    remap = dict(bp.remapping_map)
-    pinned = dict(bp.transport_map)
-    wired: dict[str, set[Any]] = {}
-    for atom in atoms:
+    remap, pinned = dict(bp.remapping_map), dict(bp.transport_map)
+    wired: dict[str, set[Any]] = defaultdict(set)
+    for atom in bp.active_blueprints:
         for stream in atom.streams:
             effective = remap.get((atom.name, stream.name), stream.name)
             if isinstance(effective, str):
-                wired.setdefault(effective, set()).add(stream.type)
-    modules = []
-    for atom in atoms:
-        streams = []
-        for stream in atom.streams:
-            effective = remap.get((atom.name, stream.name), stream.name)
-            topic = None
-            if isinstance(effective, str):
-                spec = pinned.get((effective, stream.type))
-                if spec is not None:
-                    topic = spec_topic(spec)
-                elif len(wired.get(effective, ())) == 1:
-                    topic = f"/{effective}"
-            streams.append(
+                wired[effective].add(stream.type)
+
+    def wire(atom: Any, stream: Any) -> str | None:
+        effective = remap.get((atom.name, stream.name), stream.name)
+        return effective if isinstance(effective, str) else None
+
+    def topic(atom: Any, stream: Any) -> str | None:
+        effective = wire(atom, stream)
+        if effective is None:
+            return None
+        spec = pinned.get((effective, stream.type))
+        if spec is not None:
+            return spec_topic(spec)
+        return f"/{effective}" if len(wired[effective]) == 1 else None
+
+    return [
+        {
+            "name": atom.name,
+            "class": type_name(atom.module),
+            "module": registry_names.get(type_name(atom.module), atom.module.__name__),
+            "streams": [
                 {
                     "name": stream.name,
                     "type": type_name(stream.type),
                     "direction": stream.direction,
                     # the name it's wired under after .remappings(): streams sharing it are one topic
-                    "wire": effective if isinstance(effective, str) else None,
-                    "topic": topic,
+                    "wire": wire(atom, stream),
+                    "topic": topic(atom, stream),
                 }
-            )
-        key = class_key(atom.module)
-        modules.append(
-            {
-                "name": atom.name,
-                "class": key,
-                "module": registry_names.get(key, atom.module.__name__),
-                "streams": streams,
-            }
-        )
-    return modules
+                for stream in atom.streams
+            ],
+        }
+        for atom in bp.active_blueprints
+    ]
 
 
 def blueprint(name: str) -> dict[str, Any]:
@@ -379,35 +351,31 @@ def json_safe(kind: Any, value: Any) -> bool:
 def config_args(module: Any, overrides: dict[str, Any]) -> list[dict[str, Any]]:
     from dimos.core.module import ModuleConfig
 
-    kind = typing.get_type_hints(module).get("config")
-    fields = getattr(kind, "model_fields", None)
+    fields = getattr(typing.get_type_hints(module).get("config"), "model_fields", None)
     if fields is None:
         raise TypeError(f"{type_name(module)}.config isn't a pydantic model")
     args = []
     for name, field in fields.items():
         if name in INTERNAL_FIELDS:
             continue
-        required = field.is_required()
-        if field.default_factory is not None:
-            try:
-                default = field.default_factory()  # type: ignore[call-arg]
-            except Exception:
-                default = None
-        else:
-            default = None if required else field.default
+        required, kind = field.is_required(), field.annotation
+        try:
+            default = None if required else field.get_default(call_default_factory=True)
+        except Exception:
+            default = None
         entry = {
             "name": name,
-            "type": annotation_name(field.annotation),
+            "type": type_name(kind) if isinstance(kind, type) else str(kind).replace("typing.", ""),
             "default": jsonable(default),
             "description": field.description,
             "required": required,
             "base": name in ModuleConfig.model_fields,
         }
-        options = choices(field.annotation)
+        options = choices(kind)
         if options is not None:
             entry["choices"] = options
-        schema = field_schema(field.annotation)
-        entry["json_compatible"] = schema is not None and json_safe(field.annotation, default)
+        schema = field_schema(kind)
+        entry["json_compatible"] = schema is not None and json_safe(kind, default)
         if schema is not None:
             entry["schema"] = schema
         if name in overrides:
@@ -431,7 +399,7 @@ def config(name: str) -> dict[str, Any]:
     return {"name": name, "modules": modules}
 
 
-def check_args(name: str, args: Any) -> dict[str, Any]:
+def check_args(name: str, args: list[str]) -> dict[str, Any]:
     from pydantic import TypeAdapter, ValidationError
 
     from dimos.cli.dimos import normalize_argv
@@ -445,9 +413,7 @@ def check_args(name: str, args: Any) -> dict[str, Any]:
     from dimos.robot.all_blueprints import all_modules
     from dimos.robot.get_all_blueprints import get_by_name
 
-    if not isinstance(args, list) or not all(isinstance(arg, str) for arg in args):
-        raise ValueError("args must be a list of strings")
-    tokens = normalize_argv(list(args))
+    tokens = normalize_argv(args)
     schema = BlueprintConfigParser(get_by_name(name))._get_schema()
 
     def target_of(token: str) -> tuple[Any, bool]:
@@ -465,14 +431,13 @@ def check_args(name: str, args: Any) -> dict[str, Any]:
         token = tokens[index]
         option = token.partition("=")[0]
         group = [token]
-        entry: dict[str, Any] = {"tokens": group, "target": None, "error": None}
+        entry: dict[str, Any] = {"tokens": group, "error": None}
         checked.append(entry)
         index += 1
         if option in RUN_REFUSED:
             entry["error"] = f"{option} isn't for a launch: {RUN_REFUSED[option]}"
             continue
         if option in RUN_VALUE_OPTIONS:
-            entry["target"] = f"run {option}"
             if "=" not in token:
                 if index >= len(tokens) or tokens[index].startswith("-"):
                     entry["error"] = f"{option} needs a value"
@@ -489,7 +454,6 @@ def check_args(name: str, args: Any) -> dict[str, Any]:
                 entry["error"] = f"{option}: no file {given}"
             continue
         if option in RUN_SWITCHES:
-            entry["target"] = f"run {option}"
             continue
         if not token.startswith("--") or option in ("-o", "--option"):
             entry["error"] = (
@@ -516,7 +480,6 @@ def check_args(name: str, args: Any) -> dict[str, Any]:
         try:
             merge_cli(modules, global_values, {}, tuple(group), schema)
             assert target is not None
-            entry["target"] = target.qualified_name
             if target.section == "global":
                 validate_global_values({**global_schema_defaults(), **global_values})
             elif target.section == "module":
@@ -564,7 +527,7 @@ def module_record(name: str, cls: Any) -> dict[str, Any]:
     return {
         "kind": "module",
         "name": name,
-        "class": class_key(cls),
+        "class": type_name(cls),
         "doc": first_line(cls),
         "inputs": [
             {"name": s.name, "type": s.type.__name__} for s in streams if s.direction != "out"
@@ -590,13 +553,11 @@ def scan(request: Any) -> dict[str, Any]:
             n for n in list_external_blueprint_names() if n not in all_blueprints
         ]
         emit({"kind": "names", "blueprints": names, "modules": sorted(all_modules)})
-    per_file: dict[str, int] = defaultdict(int)
-    for path in all_blueprints.values():
-        per_file[path.split(":")[0]] += 1
+    per_file = Counter(path.split(":")[0] for path in all_blueprints.values())
 
     def seen(name: str, cls: Any) -> None:
-        if class_key(cls) not in known:
-            known.add(class_key(cls))
+        if type_name(cls) not in known:
+            known.add(type_name(cls))
             try:
                 emit(module_record(name, cls))
             except Exception as error:
@@ -628,7 +589,7 @@ def scan(request: Any) -> dict[str, Any]:
                 }
             )
             for atom in bp.active_blueprints:
-                seen(registry_names.get(class_key(atom.module), atom.module.__name__), atom.module)
+                seen(registry_names.get(type_name(atom.module), atom.module.__name__), atom.module)
         except BaseException as error:
             emit(
                 {

@@ -57,12 +57,10 @@ class State:
 
     async def introspected(self, args: list[str], stdin: Any = None) -> Any:
         key = " ".join(args) + (repr(stdin) if stdin is not None else "")
-
-        async def compute() -> Any:
-            return await introspect.run_child(self.dimos_dir, args, stdin)
-
         try:
-            return await self.cache.get(key, INTROSPECT_TTL_S, compute)
+            return await self.cache.get(
+                key, INTROSPECT_TTL_S, lambda: introspect.run_child(self.dimos_dir, args, stdin)
+            )
         except introspect.IntrospectError as error:
             raise ApiError(500, str(error))
 

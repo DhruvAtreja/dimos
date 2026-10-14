@@ -194,12 +194,12 @@ class Skills:
         known_args = target["params"].get("properties") or {}
         missing = [name for name in target["required"] if name not in args]
         unknown = [name for name in args if name not in known_args]
-        if missing or unknown:
-            problems = []
-            if missing:
-                problems.append(f"missing {', '.join(missing)}")
-            if unknown:
-                problems.append(f"doesn't take {', '.join(unknown)}")
+        problems = [
+            f"{what} {', '.join(names)}"
+            for what, names in (("missing", missing), ("doesn't take", unknown))
+            if names
+        ]
+        if problems:
             takes = ", ".join(known_args) or "no arguments"
             raise SkillError(400, f"{skill}: {'; '.join(problems)} (it takes {takes})")
         through = (

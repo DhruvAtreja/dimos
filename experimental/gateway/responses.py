@@ -159,19 +159,6 @@ class BlueprintConfig(Body):
     overrides: dict[str, dict[str, Any]]
 
 
-class CheckedArg(Body):
-    tokens: list[str]
-    target: str | None
-    error: str | None
-
-
-class CheckedArgs(Body):
-    """Each group of CLI args, what it sets and why dimos would refuse it."""
-
-    name: str
-    args: list[CheckedArg]
-
-
 class GlobalConfig(Body):
     """dimos's GlobalConfig: its JSON schema, defaults, the saved overrides and which keys are secret."""
 

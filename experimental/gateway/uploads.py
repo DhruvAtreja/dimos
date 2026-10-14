@@ -12,10 +12,12 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+
 from __future__ import annotations
 
 import asyncio
 from collections.abc import Callable, Iterator
+from dataclasses import dataclass
 import json
 import math
 import os
@@ -25,9 +27,10 @@ import threading
 import time
 from typing import Any
 import urllib.error
+import urllib.request
 
-import requests
-
+from dimos.cli import cloud
+from dimos.core.global_config import global_config
 from dimos.utils.logging_config import setup_logger
 from experimental.gateway import store
 from experimental.gateway.events import Bus
@@ -38,6 +41,10 @@ FINISHED = ("done", "failed", "cancelled")
 WARMUP_S = 1.0
 TAU_S = 6.0
 ACCOUNT_TTL_S = 20.0
+IDLE_LOGIN: dict[str, Any] = {
+    "state": "idle",
+    **dict.fromkeys(("url", "urlComplete", "code", "expiresAt", "email", "error")),
+}
 
 
 def now_ms() -> int:
@@ -48,34 +55,26 @@ class CancelledUploadError(Exception):
     pass
 
 
+@dataclass
 class Rate:
-    def __init__(self) -> None:
-        self.last: tuple[float, int] | None = None
-        self.speed: float | None = None
-        self.since: float | None = None
+    """Bytes per second, a moving average over about TAU_S seconds."""
+
+    since: float
+    t: float
+    done: int
+    bps: float | None = None
 
     def tick(self, t: float, done: int) -> None:
-        if self.last is None or done < self.last[1]:
-            self.last, self.speed, self.since = (t, done), None, t
-        elif t > self.last[0]:
-            dt = t - self.last[0]
-            instant = (done - self.last[1]) / dt
-            alpha = 1.0 - math.exp(-dt / TAU_S)
-            self.speed = (
-                instant if self.speed is None else self.speed + alpha * (instant - self.speed)
-            )
-            self.last = (t, done)
+        if t > self.t:
+            instant = (done - self.done) / (t - self.t)
+            alpha = 1.0 - math.exp(-(t - self.t) / TAU_S)
+            self.bps = instant if self.bps is None else self.bps + alpha * (instant - self.bps)
+            self.t, self.done = t, done
 
-    def bps(self) -> float | None:
-        return self.speed if self.speed and self.speed > 0 else None
-
-    def eta(self, remaining: int, t: float) -> float | None:
-        bps = self.bps()
-        if bps is None or self.last is None or self.since is None:
+    def eta(self, remaining: int) -> float | None:
+        if not self.bps or self.t - self.since < WARMUP_S:
             return None
-        if self.last[0] - self.since < WARMUP_S:
-            return None
-        return max(remaining / bps - max(t - self.last[0], 0.0), 1.0 if remaining > 0 else 0.0)
+        return max(remaining / self.bps, 1.0 if remaining > 0 else 0.0)
 
 
 def check_path(text: str) -> tuple[Path, int]:
@@ -140,296 +139,121 @@ def classify(error: BaseException) -> tuple[str, str]:
 
 
 def console_datasets_url() -> str | None:
-    from dimos.core.global_config import global_config
-
     base = global_config.dimos_cloud_url.rstrip("/")
     return (
         base.replace("://api.", "://console.", 1) + "/console/data" if "://api." in base else None
     )
 
 
-def idle_login() -> dict[str, Any]:
+def new_upload(
+    id: str, path: Path, size: int, robot_id: str | None, kind: str | None
+) -> dict[str, Any]:
     return {
-        "state": "idle",
-        "url": None,
-        "urlComplete": None,
-        "code": None,
-        "expiresAt": None,
-        "email": None,
+        "id": id,
+        "path": str(path),
+        "name": path.name,
+        "size": size,
+        "robotId": robot_id or None,
+        "kind": kind or None,
+        "state": "queued",
+        "phase": None,
+        "bytesDone": 0,
+        "bytesTotal": size,
+        "rateBps": None,
+        "etaSeconds": None,
+        "uploadId": None,
+        "skipped": False,
+        "notice": None,
         "error": None,
+        "errorCode": None,
+        "log": None,
+        "createdAt": now_ms(),
+        "startedAt": None,
+        "finishedAt": None,
+        "link": None,
     }
 
 
-class Queue:
-    def __init__(self, items: list[dict[str, Any]] | None = None) -> None:
-        self.items: list[dict[str, Any]] = items or []
-        self.waiting_for_login = False
-        self.rates: dict[str, Rate] = {}
-        for item in self.items:
-            if item["state"] == "uploading":
-                item.update(state="queued", phase=None, rateBps=None, etaSeconds=None)
-        numbers = [int(u["id"][1:]) for u in self.items if u["id"][1:].isdigit()]
-        self.next = max(numbers, default=0)
-
-    def get(self, id: str) -> dict[str, Any] | None:
-        return next((u for u in self.items if u["id"] == id), None)
-
-    def update(self, id: str, **change: Any) -> dict[str, Any] | None:
-        upload = self.get(id)
-        if upload is None:
-            return None
-        upload.update(change)
-        if upload["state"] != "uploading":
-            self.rates.pop(id, None)
-        return dict(upload)
-
-    def enqueue(
-        self, path: Path, size: int, robot_id: str | None, kind: str | None
-    ) -> tuple[dict[str, Any], bool]:
-        for upload in self.items:
-            if upload["path"] == str(path) and upload["state"] in ("queued", "uploading"):
-                return dict(upload), False
-        self.next += 1
-        upload = {
-            "id": f"u{self.next}",
-            "path": str(path),
-            "name": path.name,
-            "size": size,
-            "robotId": robot_id or None,
-            "kind": kind or None,
-            "state": "queued",
-            "phase": None,
-            "bytesDone": 0,
-            "bytesTotal": size,
-            "rateBps": None,
-            "etaSeconds": None,
-            "uploadId": None,
-            "skipped": False,
-            "notice": None,
-            "error": None,
-            "errorCode": None,
-            "log": None,
-            "createdAt": now_ms(),
-            "startedAt": None,
-            "finishedAt": None,
-            "link": None,
-        }
-        self.items.append(upload)
-        return dict(upload), True
-
-    def next_queued(self) -> str | None:
-        if self.waiting_for_login or any(u["state"] == "uploading" for u in self.items):
-            return None
-        return next((u["id"] for u in self.items if u["state"] == "queued"), None)
-
-    def start(self, id: str) -> dict[str, Any] | None:
-        self.rates[id] = Rate()
-        upload = self.get(id)
-        return self.update(
-            id,
-            state="uploading",
-            phase="preparing",
-            bytesDone=0,
-            bytesTotal=upload["size"] if upload else 0,
-            rateBps=None,
-            etaSeconds=None,
-            error=None,
-            errorCode=None,
-            startedAt=now_ms(),
-            finishedAt=None,
-        )
-
-    def progress(
-        self, id: str, phase: str, done: int, total: int, t: float
-    ) -> dict[str, Any] | None:
-        upload = self.get(id)
-        if upload is None or upload["state"] != "uploading":
-            return None
-        if upload["phase"] != phase:
-            self.rates[id] = Rate()
-        if total <= 0:
-            return self.update(
-                id, phase=phase, bytesDone=0, bytesTotal=0, rateBps=None, etaSeconds=None
-            )
-        rate = self.rates.setdefault(id, Rate())
-        rate.tick(t, done)
-        eta = rate.eta(max(total - done, 0), t)
-        if phase == "upload" and done >= total:
-            phase, eta = "finishing", None
-        return self.update(
-            id, phase=phase, bytesDone=done, bytesTotal=total, rateBps=rate.bps(), etaSeconds=eta
-        )
-
-    def succeed(self, id: str, result: dict[str, Any]) -> dict[str, Any] | None:
-        upload = self.get(id)
-        if upload is None:
-            return None
-        quota: dict[str, Any] = result.get("quota") or {}
-        state = quota.get("state")
-        notice = (quota.get("message") or f"quota: {state}") if state not in (None, "ok") else None
-        return self.update(
-            id,
-            state="done",
-            phase=None,
-            uploadId=result.get("upload_id"),
-            skipped=bool(result.get("skipped")),
-            link=console_datasets_url() if result.get("upload_id") else None,
-            bytesDone=upload["bytesTotal"],
-            rateBps=None,
-            etaSeconds=None,
-            notice=notice,
-            finishedAt=now_ms(),
-        )
-
-    def fail(self, id: str, code: str, message: str) -> dict[str, Any] | None:
-        return self.update(
-            id,
-            state="failed",
-            phase=None,
-            rateBps=None,
-            etaSeconds=None,
-            error=message,
-            errorCode=code,
-            finishedAt=now_ms(),
-        )
-
-    def needs_login(self, id: str, message: str) -> dict[str, Any] | None:
-        self.waiting_for_login = True
-        return self.update(
-            id,
-            state="queued",
-            phase=None,
-            rateBps=None,
-            etaSeconds=None,
-            startedAt=None,
-            error=message,
-            errorCode="not_logged_in",
-        )
-
-    def logged_in(self) -> bool:
-        was, self.waiting_for_login = self.waiting_for_login, False
-        for upload in self.items:
-            if upload["state"] == "queued" and upload["errorCode"] == "not_logged_in":
-                upload.update(error=None, errorCode=None)
-        return was
-
-    def cancel(self, id: str) -> str | None:
-        upload = self.get(id)
-        if upload is None:
-            return None
-        if upload["state"] == "uploading":
-            return "running"
-        if upload["state"] == "queued":
-            upload.update(state="cancelled", error=None, errorCode=None, finishedAt=now_ms())
-            return "cancelled"
-        self.items.remove(upload)
-        return "removed"
-
-    def cancelled(self, id: str) -> dict[str, Any] | None:
-        return self.update(
-            id, state="cancelled", phase=None, rateBps=None, etaSeconds=None, finishedAt=now_ms()
-        )
-
-    def retry(self, id: str) -> dict[str, Any]:
-        upload = self.get(id)
-        if upload is None:
-            raise KeyError(f"no upload {id}")
-        if upload["state"] not in FINISHED:
-            raise ValueError(f'{upload["name"]} is already "{upload["state"]}"')
-        self.items.remove(upload)
-        upload.update(
-            state="queued",
-            phase=None,
-            bytesDone=0,
-            bytesTotal=upload["size"],
-            rateBps=None,
-            etaSeconds=None,
-            error=None,
-            errorCode=None,
-            notice=None,
-            skipped=False,
-            link=None,
-            startedAt=None,
-            finishedAt=None,
-            createdAt=now_ms(),
-        )
-        self.waiting_for_login = False
-        self.items.append(upload)
-        return dict(upload)
-
-    def clear_finished(self) -> None:
-        self.items = [u for u in self.items if u["state"] not in FINISHED]
-
-
-def whoami(key: str) -> requests.Response:
-    from dimos.core.global_config import global_config
-
-    return requests.get(
-        global_config.dimos_cloud_url.rstrip("/") + "/auth/whoami",
-        headers={"Authorization": f"Bearer {key}"},
-        timeout=global_config.dimos_http_timeout,
-    )
-
-
 def account() -> dict[str, Any]:
-    from dimos.cli import cloud
-    from dimos.core.global_config import global_config
-
     key = cloud.api_key()
+    base = global_config.dimos_cloud_url.rstrip("/")
     result: dict[str, Any] = {
         "loggedIn": False,
         "email": None,
         "scopes": None,
         "source": None,
-        "cloudUrl": global_config.dimos_cloud_url.rstrip("/"),
+        "cloudUrl": base,
         "error": None,
     }
     if not key:
         return result
-    result["source"] = "env" if global_config.dimos_api_key else "stored"
+    result.update(loggedIn=True, source="env" if global_config.dimos_api_key else "stored")
+    request = urllib.request.Request(
+        base + "/auth/whoami", headers={"Authorization": f"Bearer {key}"}
+    )
     try:
-        answer = whoami(key)
-    except requests.RequestException as error:
-        return {**result, "loggedIn": True, "error": f"Couldn't reach Dimensional cloud: {error}"}
-    if answer.status_code == 401:
-        return {**result, "error": "The saved login was revoked or is invalid: log in again."}
-    if not answer.ok:
-        return {
-            **result,
-            "loggedIn": True,
-            "error": f"Dimensional cloud answered {answer.status_code}",
-        }
-    who = answer.json()
-    return {**result, "loggedIn": True, "email": who.get("email"), "scopes": who.get("scopes")}
+        with urllib.request.urlopen(request, timeout=global_config.dimos_http_timeout) as answer:
+            who = json.load(answer)
+    except urllib.error.HTTPError as error:
+        if error.code == 401:
+            return {
+                **result,
+                "loggedIn": False,
+                "error": "The saved login was revoked or is invalid: log in again.",
+            }
+        return {**result, "error": f"Dimensional cloud answered {error.code}"}
+    except OSError as error:
+        return {**result, "error": f"Couldn't reach Dimensional cloud: {error}"}
+    return {**result, "email": who.get("email"), "scopes": who.get("scopes")}
 
 
 class Uploads:
+    """The upload queue, worked one at a time, and the device login it waits on."""
+
     def __init__(self, bus: Bus, file: Path | None) -> None:
         self.bus = bus
         self.file = file
-        saved = (store.read_json(file) if file else None) or []
+        self.items: list[dict[str, Any]] = (store.read_json(file) if file else None) or []
         self.uploaded_by_path: dict[str, dict[str, Any]] = (
             store.read_json(file.with_name("uploaded.json")) if file else None
         ) or {}
-        for upload in saved:
+        for upload in self.items:
             done = uploaded_entry(upload)
             if done:
                 self.uploaded_by_path.setdefault(done["path"], done)
-        self.queue = Queue(saved)
+            if upload["state"] == "uploading":
+                upload.update(state="queued", phase=None, rateBps=None, etaSeconds=None)
+        self.next = max((int(u["id"][1:]) for u in self.items if u["id"][1:].isdigit()), default=0)
+        self.waiting_for_login = False
+        self.rates: dict[str, Rate] = {}
         self.wake = asyncio.Event()
         self.loop: asyncio.AbstractEventLoop | None = None
         self.running: tuple[str, threading.Event] | None = None
-        self.login: dict[str, Any] = idle_login()
+        self.login: dict[str, Any] = dict(IDLE_LOGIN)
         self.login_cancel: threading.Event | None = None
         self.account_cache: tuple[float, dict[str, Any]] | None = None
         self.stopping = False
 
+    def get(self, id: str) -> dict[str, Any] | None:
+        return next((u for u in self.items if u["id"] == id), None)
+
+    def update(self, id: str, **change: Any) -> dict[str, Any] | None:
+        """Change an upload, clearing its progress once it isn't uploading; returns a copy."""
+        upload = self.get(id)
+        if upload is None:
+            return None
+        upload.update(change)
+        if upload["state"] != "uploading":
+            upload.update(phase=None, rateBps=None, etaSeconds=None)
+            self.rates.pop(id, None)
+        return dict(upload)
+
     def listing(self) -> dict[str, Any]:
-        return {"uploads": self.queue.items, "waitingForLogin": self.queue.waiting_for_login}
+        return {"uploads": self.items, "waitingForLogin": self.waiting_for_login}
 
     def save(self) -> None:
         if self.file:
-            store.write_atomic(self.file, json.dumps(self.queue.items, indent=2))
+            store.write_atomic(self.file, json.dumps(self.items, indent=2))
 
     def uploaded(self) -> dict[str, Any]:
         return {"byPath": {p: checked(e) for p, e in sorted(self.uploaded_by_path.items())}}
@@ -443,7 +267,7 @@ class Uploads:
             self.bus.send({"type": "upload", "upload": upload})
 
     def emit_waiting(self, **extra: Any) -> None:
-        self.bus.send({"type": "uploads", "waitingForLogin": self.queue.waiting_for_login, **extra})
+        self.bus.send({"type": "uploads", "waitingForLogin": self.waiting_for_login, **extra})
 
     def go_on(self) -> None:
         if self.loop is None:
@@ -453,38 +277,67 @@ class Uploads:
 
     def enqueue(self, path: str, robot_id: str | None, kind: str | None) -> dict[str, Any]:
         checked_path, size = check_path(path)
-        upload, added = self.queue.enqueue(checked_path, size, robot_id, kind)
-        if added:
-            self.save()
-            self.emit(upload)
-            self.wake.set()
-        return upload
+        for upload in self.items:
+            if upload["path"] == str(checked_path) and upload["state"] in ("queued", "uploading"):
+                return dict(upload)
+        self.next += 1
+        upload = new_upload(f"u{self.next}", checked_path, size, robot_id, kind)
+        self.items.append(upload)
+        self.save()
+        self.emit(dict(upload))
+        self.wake.set()
+        return dict(upload)
 
     def cancel(self, id: str) -> None:
-        outcome = self.queue.cancel(id)
-        if outcome is None:
+        upload = self.get(id)
+        if upload is None:
             raise KeyError(f"no upload {id}")
-        if outcome == "running" and self.running and self.running[0] == id:
-            self.running[1].set()
-        elif outcome == "cancelled":
-            self.emit(self.queue.get(id))
-        elif outcome == "removed":
+        if upload["state"] == "uploading":
+            if self.running and self.running[0] == id:
+                self.running[1].set()
+        elif upload["state"] == "queued":
+            self.emit(
+                self.update(id, state="cancelled", error=None, errorCode=None, finishedAt=now_ms())
+            )
+        else:
+            self.items.remove(upload)
             self.bus.send({"type": "upload-removed", "id": id})
         self.save()
 
     def retry(self, id: str) -> dict[str, Any]:
-        upload = self.queue.retry(id)
+        upload = self.get(id)
+        if upload is None:
+            raise KeyError(f"no upload {id}")
+        if upload["state"] not in FINISHED:
+            raise ValueError(f'{upload["name"]} is already "{upload["state"]}"')
+        self.items.remove(upload)
+        upload.update(
+            new_upload(id, Path(upload["path"]), upload["size"], upload["robotId"], upload["kind"]),
+            uploadId=upload["uploadId"],
+        )
+        self.items.append(upload)
+        self.waiting_for_login = False
         self.save()
-        self.emit(upload)
+        self.emit(dict(upload))
         self.emit_waiting()
         self.wake.set()
-        return upload
+        return dict(upload)
 
     def clear_finished(self) -> dict[str, Any]:
-        self.queue.clear_finished()
+        self.items = [u for u in self.items if u["state"] not in FINISHED]
         self.save()
         self.emit_waiting(cleared=True)
         return self.listing()
+
+    def logged_in(self) -> None:
+        """Stop waiting for a login, and wake the queue."""
+        if self.waiting_for_login:
+            self.waiting_for_login = False
+            self.emit_waiting()
+        for upload in self.items:
+            if upload["state"] == "queued" and upload["errorCode"] == "not_logged_in":
+                upload.update(error=None, errorCode=None)
+        self.go_on()
 
     async def account(self, fresh: bool) -> dict[str, Any]:
         cached = self.account_cache
@@ -492,17 +345,14 @@ class Uploads:
             return cached[1]
         value = await asyncio.to_thread(account)
         self.account_cache = (time.monotonic(), value)
-        if value["loggedIn"] and self.queue.logged_in():
-            self.emit_waiting()
-            self.wake.set()
+        if value["loggedIn"]:
+            self.logged_in()
         return value
 
     async def logout(self) -> dict[str, Any]:
-        from dimos.cli import cloud
-
         await asyncio.to_thread(cloud._forget)
         self.cancel_login()
-        self.login = idle_login()
+        self.login = dict(IDLE_LOGIN)
         return await self.account(True)
 
     def login_state(self) -> dict[str, Any]:
@@ -515,8 +365,6 @@ class Uploads:
         self.bus.send({"type": "cloud-login", "login": dict(self.login)})
 
     def _device_login(self, cancel: threading.Event) -> None:
-        from dimos.cli import cloud
-
         try:
             device = cloud._post("/auth/device", label=socket.gethostname())
             self.set_login(
@@ -533,9 +381,7 @@ class Uploads:
                     cloud._store(answer["api_key"])
                     self.set_login(state="approved", email=answer.get("email"))
                     self.account_cache = None
-                    if self.queue.logged_in():
-                        self.emit_waiting()
-                    self.go_on()
+                    self.logged_in()
                     return
                 if answer["status"] in ("denied", "expired"):
                     self.set_login(state=answer["status"])
@@ -551,7 +397,7 @@ class Uploads:
             return self.login_state()
         self.cancel_login()
         self.login_cancel = cancel = threading.Event()
-        self.set_login(**{**idle_login(), "state": "starting"})
+        self.set_login(**{**IDLE_LOGIN, "state": "starting"})
         threading.Thread(target=self._device_login, args=(cancel,), daemon=True).start()
         for _ in range(300):
             if self.login_state()["state"] != "starting":
@@ -564,7 +410,7 @@ class Uploads:
             self.login_cancel.set()
             self.login_cancel = None
         if self.login_state()["state"] in ("starting", "pending"):
-            self.set_login(**idle_login())
+            self.set_login(**IDLE_LOGIN)
         return self.login_state()
 
     def shutdown(self) -> None:
@@ -578,17 +424,46 @@ class Uploads:
     async def work(self) -> None:
         self.loop = asyncio.get_running_loop()
         while not self.stopping:
-            next_id = self.queue.next_queued()
-            if next_id:
-                await self.upload(next_id)
+            uploading = any(u["state"] == "uploading" for u in self.items)
+            queued = next((u for u in self.items if u["state"] == "queued"), None)
+            if queued and not uploading and not self.waiting_for_login:
+                await self.upload(queued)
             else:
                 await self.wake.wait()
                 self.wake.clear()
 
+    def record_progress(
+        self, id: str, phase: str, done: int, total: int, t: float
+    ) -> dict[str, Any] | None:
+        upload = self.get(id)
+        if upload is None or upload["state"] != "uploading":
+            return None
+        if upload["phase"] != phase:
+            self.rates.pop(id, None)
+        if total <= 0:
+            return self.update(
+                id, phase=phase, bytesDone=0, bytesTotal=0, rateBps=None, etaSeconds=None
+            )
+        rate = self.rates.get(id)
+        if rate is None or done < rate.done:
+            rate = self.rates[id] = Rate(since=t, t=t, done=done)
+        else:
+            rate.tick(t, done)
+        eta = rate.eta(max(total - done, 0))
+        if phase == "upload" and done >= total:
+            phase, eta = "finishing", None
+        return self.update(
+            id,
+            phase=phase,
+            bytesDone=done,
+            bytesTotal=total,
+            rateBps=rate.bps or None,
+            etaSeconds=eta,
+        )
+
     def _transfer(
         self, path: str, robot_id: str | None, kind: str | None, tick: Callable[..., None]
     ) -> dict[str, Any]:
-        from dimos.cli import cloud
         from dimos.cloud.data import CloudData
 
         if not Path(path).is_file():
@@ -598,21 +473,30 @@ class Uploads:
         tick("preparing", 0, 0)
         return CloudData().upload(Path(path), robot_id=robot_id, kind=kind, progress=tick)
 
-    async def upload(self, id: str) -> None:
-        upload = self.queue.start(id)
-        if upload is None:
-            return
+    async def upload(self, upload: dict[str, Any]) -> None:
+        id = upload["id"]
+        upload.update(
+            state="uploading",
+            phase="preparing",
+            bytesDone=0,
+            bytesTotal=upload["size"],
+            error=None,
+            errorCode=None,
+            startedAt=now_ms(),
+            finishedAt=None,
+        )
         self.save()
-        self.emit(upload)
+        self.emit(dict(upload))
         assert self.loop is not None
         loop, cancel, started = self.loop, threading.Event(), time.monotonic()
         self.running = (id, cancel)
-        last: list[Any] = ["", -1.0]
+        last_phase, last_emit = "", -1.0
 
         def progress(phase: str, done: int, total: int) -> None:
-            updated = self.queue.progress(id, phase, done, total, time.monotonic() - started)
-            if phase != last[0] or time.monotonic() - last[1] >= 0.4:
-                last[:] = [phase, time.monotonic()]
+            nonlocal last_phase, last_emit
+            updated = self.record_progress(id, phase, done, total, time.monotonic() - started)
+            if phase != last_phase or time.monotonic() - last_emit >= 0.4:
+                last_phase, last_emit = phase, time.monotonic()
                 self.emit(updated)
 
         def tick(phase: str, done: int, total: int) -> None:
@@ -624,33 +508,50 @@ class Uploads:
             result = await asyncio.to_thread(
                 self._transfer, upload["path"], upload["robotId"], upload["kind"], tick
             )
-            updated = self.queue.succeed(id, result)
-        except CancelledUploadError:
-            updated = self.queue.cancelled(id)
-        except PermissionError:
-            updated = self.queue.needs_login(
-                id, "Not logged in to Dimensional cloud. Log in, then retry."
+            quota: dict[str, Any] = result.get("quota") or {}
+            quota_state = quota.get("state")
+            updated = self.update(
+                id,
+                state="done",
+                uploadId=result.get("upload_id"),
+                skipped=bool(result.get("skipped")),
+                link=console_datasets_url() if result.get("upload_id") else None,
+                bytesDone=upload["bytesTotal"],
+                notice=(quota.get("message") or f"quota: {quota_state}")
+                if quota_state not in (None, "ok")
+                else None,
+                finishedAt=now_ms(),
             )
-            self.emit_waiting()
+        except CancelledUploadError:
+            updated = self.update(id, state="cancelled", finishedAt=now_ms())
         except Exception as error:
-            logger.exception("an upload failed", upload=id)
-            code, message = classify(error)
+            if isinstance(error, PermissionError):
+                code, message = (
+                    "not_logged_in",
+                    "Not logged in to Dimensional cloud. Log in, then retry.",
+                )
+            else:
+                logger.exception("an upload failed", upload=id)
+                code, message = classify(error)
             if code == "not_logged_in":
-                updated = self.queue.needs_login(id, message)
-                self.account_cache = None
+                self.waiting_for_login, self.account_cache = True, None
+                updated = self.update(
+                    id, state="queued", startedAt=None, error=message, errorCode=code
+                )
                 self.emit_waiting()
             else:
-                updated = self.queue.fail(id, code, message)
+                updated = self.update(
+                    id, state="failed", error=message, errorCode=code, finishedAt=now_ms()
+                )
         self.running = None
         if self.stopping:
             return
-        if updated is not None:
-            done = uploaded_entry(updated)
-            if done is not None and self.file:
-                self.uploaded_by_path[done["path"]] = done
-                store.write_atomic(
-                    self.file.with_name("uploaded.json"),
-                    json.dumps(dict(sorted(self.uploaded_by_path.items())), indent=2),
-                )
+        done = uploaded_entry(updated) if updated else None
+        if done is not None and self.file:
+            self.uploaded_by_path[done["path"]] = done
+            store.write_atomic(
+                self.file.with_name("uploaded.json"),
+                json.dumps(dict(sorted(self.uploaded_by_path.items())), indent=2),
+            )
         self.save()
         self.emit(updated)

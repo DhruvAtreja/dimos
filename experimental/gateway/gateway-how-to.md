@@ -1,13 +1,13 @@
 # Dimos gateway: how do I...?
 
-Snippets run in an app page served by Desktop at `/apps/<name>/`, so `../../dimos/` is the gateway. Each lists the
-line its `dimos.yaml` needs under `uses: "@dimos-gateway":` (paths relative to `/dimos`). Every route is in
-`GET /dimos/openapi.json`.
+Snippets run in an app page served by Desktop at `/apps/<name>/`, so `../../dimos/` is the gateway. An app's
+`dimos.yaml` lists each route it calls, relative to `/dimos`:
 
 ```yaml
 uses:
     "@dimos-gateway":
-        - GET /blueprints # one line per endpoint the app calls
+        - GET /blueprints
+        - POST /runs
 ```
 
 ## How do I list blueprints?
@@ -15,8 +15,6 @@ uses:
 ```js
 const { blueprints } = await (await fetch("../../dimos/blueprints")).json() // [{ name, kind, importable }]
 ```
-
-`- GET /blueprints`
 
 ## How do I launch a blueprint?
 
@@ -28,8 +26,6 @@ await fetch("../../dimos/runs", {
 }) // answers at once, phase "starting"
 ```
 
-`- POST /runs`
-
 ## How do I see what's running?
 
 ```js
@@ -37,23 +33,17 @@ const { runs, launch } = await (await fetch("../../dimos/runs")).json() // runs:
 getZenoh().subscribeDimos("launch", (launch) => show(launch.phase)) // live phase changes; getZenoh from ./dim-app/mod.js
 ```
 
-`- GET /runs`
-
 ## How do I stop a blueprint?
 
 ```js
 await fetch("../../dimos/runs/stop", { method: "POST" }) // or body { runId } for a specific run
 ```
 
-`- POST /runs/stop`
-
 ## How do I relaunch?
 
 ```js
 await fetch("../../dimos/runs/restart", { method: "POST" }) // the last launch again, with the config saved now
 ```
-
-`- POST /runs/restart`
 
 ## How do I read a run's logs?
 
@@ -62,8 +52,6 @@ const page = await (await fetch("../../dimos/runs/latest/log?level=warning&limit
 const newer = await (await fetch(`../../dimos/runs/latest/log?after=${page.offset}`)).json() // tail
 ```
 
-`- GET /runs/{runId}/log`
-
 ## How do I list a blueprint's modules, their streams and RPCs?
 
 ```js
@@ -71,23 +59,17 @@ const { modules } = await (await fetch("../../dimos/blueprints/unitree-go2")).js
 // modules[i]: { name, rpcs, skills, streams: [{ name, type, direction, topic }] }
 ```
 
-`- GET /blueprints/{name}`
-
 ## How do I list every module's inputs and outputs?
 
 ```js
 const { modules } = await (await fetch("../../dimos/catalog")).json() // [{ name, inputs, outputs, skills }]; slow the first time
 ```
 
-`- GET /catalog`
-
 ## How do I list skills?
 
 ```js
 const { skills } = await (await fetch("../../dimos/skills")).json() // the running blueprint's: [{ name, module, params }]
 ```
-
-`- GET /skills`
 
 ## How do I call a skill?
 
@@ -96,10 +78,8 @@ const result = await (await fetch("../../dimos/skills/call", {
     method: "POST",
     headers: { "content-type": "application/json" },
     body: JSON.stringify({ skill: "execute_sport_command", args: { command_name: "FrontJump" } }),
-})).json() // { ok, text }
+})).json() // { ok, text }; this acts on the robot, so call it only from a user's action
 ```
-
-`- POST /skills/call` (acts on the robot: only from a user's action)
 
 ## How do I decode dimos messages in a page?
 
@@ -111,8 +91,6 @@ app.subscribe("odom", (odom) => console.log(odom.pose.pose.position)) // decoded
 const twist = app.msgs.geometry_msgs.Twist.encode({ linear: { x: 0.3 } }) // bytes
 ```
 
-`- GET /msgs.js`
-
 ## How do I list robots and their recommended blueprints?
 
 ```js
@@ -121,15 +99,11 @@ robots.go2.recommended // ["unitree-go2-basic", ...]
 robots.go2.blueprints["unitree-go2"] // { title, description, starter, recommended_config }
 ```
 
-`- GET /robots`
-
 ## How do I get dimos's python?
 
 ```js
 const { python } = await (await fetch("../../dimos/python")).json() // run `${python} -c 'import dimos'`
 ```
-
-`- GET /python`
 
 ## How do I read a blueprint's config?
 
@@ -137,8 +111,6 @@ const { python } = await (await fetch("../../dimos/python")).json() // run `${py
 const { modules } = await (await fetch("../../dimos/blueprints/unitree-go2/config")).json()
 // modules[i]: { module, args: [{ name, type, default, value }] }
 ```
-
-`- GET /blueprints/{name}/config`
 
 ## How do I save a blueprint's config?
 
@@ -149,5 +121,3 @@ await fetch("../../dimos/blueprints/unitree-go2/config", {
     body: JSON.stringify({ overrides: { go2connection: { lidar: false } } }), // replaces the saved config; null drops a field
 }) // applies at the next launch
 ```
-
-`- PUT /blueprints/{name}/config`

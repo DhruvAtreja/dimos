@@ -15,6 +15,7 @@
 from __future__ import annotations
 
 import asyncio
+from contextlib import suppress
 from dataclasses import dataclass, field, replace
 from datetime import datetime
 import json
@@ -77,9 +78,9 @@ def registry_runs() -> list[dict[str, Any]]:
     return sorted(runs, key=lambda run: str(run["run_id"]), reverse=True)
 
 
-def group_alive(pgid: int) -> bool:
+def alive(pid: int, group: bool = True) -> bool:
     try:
-        os.killpg(pgid, 0)
+        (os.killpg if group else os.kill)(pid, 0)
         return True
     except ProcessLookupError:
         return False
@@ -131,13 +132,13 @@ def current_launch() -> dict[str, Any] | None:
     if entry and not record.get("run_id"):
         record.update(ever_ran=True, run_id=entry["run_id"], log_dir=entry["log_dir"])
         _save(record)
-    alive = group_alive(pid)
+    running = alive(pid)
     stopping = bool(record.get("stopping"))
-    if alive and (stopping or (record.get("ever_ran") and not entry)):
+    if running and (stopping or (record.get("ever_ran") and not entry)):
         phase = "stopping"
     elif entry:
         phase = "running"
-    elif alive:
+    elif running:
         phase = "starting"
     elif record.get("ever_ran") or stopping:
         phase = "stopped"
@@ -311,22 +312,6 @@ def start(dimos_dir: Path, blueprint: str, launch: LaunchConfig) -> dict[str, An
         return started
 
 
-def mark_stopping(pid: int) -> None:
-    record = _record()
-    if record is not None and record.get("pid") == pid:
-        record["stopping"] = True
-        _save(record)
-
-
-async def _until_gone(alive: Any, seconds: float) -> bool:
-    deadline = time.monotonic() + seconds
-    while alive():
-        if time.monotonic() >= deadline:
-            return False
-        await asyncio.sleep(0.1)
-    return True
-
-
 async def stop(run_id: str | None) -> str:
     launch = current_launch()
     if run_id and not (launch and launch["runId"] == run_id and launch["phase"] in ACTIVE):
@@ -342,26 +327,16 @@ async def stop(run_id: str | None) -> str:
         leads = os.getpgid(pid) == pid
     except ProcessLookupError:
         leads = True
-    mark_stopping(pid)
-
-    def alive() -> bool:
-        if leads:
-            return group_alive(pid)
-        try:
-            os.kill(pid, 0)
-            return True
-        except ProcessLookupError:
-            return False
-
+    record = _record()
+    if record is not None and record.get("pid") == pid:
+        _save({**record, "stopping": True})
     for signum, wait in STOP_WAITS:
-        try:
-            if leads:
-                os.killpg(pid, signum)
-            else:
-                os.kill(pid, signum)
-        except (ProcessLookupError, PermissionError):
-            pass
-        if await _until_gone(alive, wait):
+        with suppress(ProcessLookupError, PermissionError):
+            (os.killpg if leads else os.kill)(pid, signum)
+        deadline = time.monotonic() + wait
+        while alive(pid, leads) and time.monotonic() < deadline:
+            await asyncio.sleep(0.1)
+        if not alive(pid, leads):
             break
     else:
         raise RunError(f"{name} (pid {pid}) won't stop")

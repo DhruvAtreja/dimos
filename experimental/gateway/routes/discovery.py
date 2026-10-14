@@ -21,7 +21,7 @@ from fastapi import APIRouter
 from pydantic import BaseModel, Field
 
 from experimental.gateway import discovery, responses, store
-from experimental.gateway.state import ApiError, GatewayState, State
+from experimental.gateway.state import ApiError, GatewayState
 
 router = APIRouter()
 
@@ -29,11 +29,6 @@ router = APIRouter()
 class ExtrasInstall(BaseModel):
     extras: list[str] = Field(min_length=1)
     app: str | None = None
-
-
-async def probe(state: State) -> dict[str, Any]:
-    answer: dict[str, Any] = await state.introspected(["packages"])
-    return answer
 
 
 @router.get("/dimos/discovery", response_model=responses.DiscoveryStatus)
@@ -57,7 +52,7 @@ async def discovered(state: GatewayState) -> dict[str, Any]:
 
 @router.get("/dimos/extras", response_model=responses.Extras)
 async def extras(state: GatewayState) -> dict[str, Any]:
-    found = await probe(state)
+    found = await state.introspected(["packages"])
     listed = await asyncio.to_thread(discovery.extras_status, state.dimos_dir, found)
     mode = "checkout" if discovery.is_checkout(state.dimos_dir) else "library"
     return {"mode": mode, "python": found["python"], "extras": listed}
@@ -66,7 +61,7 @@ async def extras(state: GatewayState) -> dict[str, Any]:
 @router.post("/dimos/extras/install", response_model=responses.JobStarted)
 async def install_extras(state: GatewayState, request: ExtrasInstall) -> dict[str, Any]:
     """Install dimos extras with uv, as a job."""
-    probed = await probe(state)
+    probed = await state.introspected(["packages"])
     declared = discovery.declared(state.dimos_dir, probed)
     unknown = [name for name in request.extras if name not in declared]
     if unknown:
@@ -100,10 +95,10 @@ async def install_extras(state: GatewayState, request: ExtrasInstall) -> dict[st
 
 @router.get("/dimos/jobs/{job}/log", response_model=responses.JobLog)
 async def job_log(state: GatewayState, job: str, after: int = 0) -> dict[str, Any]:
-    try:
-        return state.jobs.get(job).log(after)
-    except KeyError as error:
-        raise ApiError(404, error.args[0])
+    found = state.jobs.get(job)
+    if found is None:
+        raise ApiError(404, f"no job {job}")
+    return found.log(after)
 
 
 @router.get("/dimos/docs/custom-robot", response_model=responses.CustomRobotGuide)

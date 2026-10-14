@@ -105,7 +105,7 @@ class Scanner:
     def refresh(self, reason: str = "requested") -> None:
         self.invalidate()
         self.status.update(state="scanning", reason=reason)
-        self.task = asyncio.get_running_loop().create_task(self.scan(reason))
+        self.task = asyncio.get_running_loop().create_task(self.scan())
 
     def invalidate(self) -> None:
         if self.task is not None:
@@ -122,36 +122,44 @@ class Scanner:
             if task is self.task:
                 return
 
-    async def scan(self, reason: str) -> None:
+    def pending(self) -> tuple[list[str], list[str]]:
+        return (
+            [n for n in self.names["blueprints"] if n not in self.blueprints],
+            [n for n in self.names["modules"] if n not in self.finished_modules],
+        )
+
+    async def scan(self) -> None:
         self.blueprints, self.modules, self.errors = {}, {}, []
         self.names, self.finished_modules = {"blueprints": [], "modules": []}, set()
-        self.status.update(
-            state="scanning",
-            reason=reason,
-            key=await asyncio.to_thread(packages_key),
-            started_at=now_iso(),
-            finished_at=None,
-            current=None,
-        )
+        key = await asyncio.to_thread(packages_key)
+        self.status.update(key=key, started_at=now_iso(), finished_at=None, current=None)
         try:
-            request: dict[str, Any] = {}
-            while True:
-                problem = await self.child(request)
-                remaining = [n for n in self.names["blueprints"] if n not in self.blueprints]
-                modules = [n for n in self.names["modules"] if n not in self.finished_modules]
-                if problem is None or not (remaining or modules):
-                    break
+            problem = await self.child(None)
+            while problem is not None and any(self.pending()):
                 current = self.status["current"]
                 self.errors.append(f"{current}: {problem}")
-                if current in remaining:
-                    self.blueprints[current] = failed_record(current, problem)
-                    remaining.remove(current)
+                if current in self.pending()[0]:
+                    self.blueprints[current] = {
+                        "name": current,
+                        "ref": None,
+                        "builtin": None,
+                        "importable": False,
+                        "optional_dependency": False,
+                        "import_error": problem,
+                        "missing_module": None,
+                        "modules": [],
+                    }
                 elif current and current.startswith("module:"):
                     self.finished_modules.add(current[7:])
-                    modules = [m for m in modules if m != current[7:]]
                 else:
                     break
-                request = {"blueprints": remaining, "modules": modules, "known": list(self.modules)}
+                blueprints, modules = self.pending()
+                request = {
+                    "blueprints": blueprints,
+                    "modules": modules,
+                    "known": list(self.modules),
+                }
+                problem = await self.child(request)
             self.status.update(state="done")
         except Exception as error:
             logger.exception("the discovery scan failed")
@@ -160,7 +168,7 @@ class Scanner:
         finally:
             self.status.update(finished_at=now_iso(), current=None)
 
-    async def child(self, request: dict[str, Any]) -> str | None:
+    async def child(self, request: dict[str, Any] | None) -> str | None:
         child = await asyncio.create_subprocess_exec(
             *self.command,
             "scan",
@@ -172,7 +180,7 @@ class Scanner:
             limit=64 * 1024 * 1024,
         )
         assert child.stdin and child.stdout and child.stderr
-        child.stdin.write(json.dumps(request or None).encode())
+        child.stdin.write(json.dumps(request).encode())
         child.stdin.close()
         tail: deque[str] = deque(maxlen=20)
 
@@ -283,19 +291,6 @@ class Scanner:
         return {"blueprints": blueprints, "modules": modules, "skills": skills, "errors": errors}
 
 
-def failed_record(name: str, problem: str) -> dict[str, Any]:
-    return {
-        "name": name,
-        "ref": None,
-        "builtin": None,
-        "importable": False,
-        "optional_dependency": False,
-        "import_error": problem,
-        "missing_module": None,
-        "modules": [],
-    }
-
-
 def packages_key() -> str:
     from importlib.metadata import distributions
 
@@ -342,9 +337,8 @@ def declared(dimos_dir: Path, probe: dict[str, Any]) -> dict[str, list[str]]:
     }
 
 
-def extras_status(dimos_dir: Path, probe: dict[str, Any]) -> list[dict[str, Any]]:
-    environment, installed = probe.get("environment", {}), probe.get("packages", {})
-    extras = declared(dimos_dir, probe)
+def parse_extras(extras: dict[str, list[str]]) -> dict[str, tuple[list[Requirement], list[str]]]:
+    """Each extra's requirements, and the other extras it includes through `dimos[...]`."""
     parsed: dict[str, tuple[list[Requirement], list[str]]] = {}
     for name, texts in extras.items():
         requirements, includes = [], []
@@ -355,9 +349,19 @@ def extras_status(dimos_dir: Path, probe: dict[str, Any]) -> list[dict[str, Any]
                 continue
             if canonicalize_name(requirement.name) == "dimos":
                 includes += sorted(requirement.extras)
-            elif applies(requirement, environment, name):
+            else:
                 requirements.append(requirement)
         parsed[name] = (requirements, includes)
+    return parsed
+
+
+def extras_status(dimos_dir: Path, probe: dict[str, Any]) -> list[dict[str, Any]]:
+    environment, installed = probe.get("environment", {}), probe.get("packages", {})
+    extras = declared(dimos_dir, probe)
+    parsed = {
+        name: ([r for r in requirements if applies(r, environment, name)], includes)
+        for name, (requirements, includes) in parse_extras(extras).items()
+    }
 
     def missing(name: str, seen: frozenset[str] = frozenset()) -> list[str]:
         requirements, includes = parsed.get(name, ([], []))
@@ -371,25 +375,30 @@ def extras_status(dimos_dir: Path, probe: dict[str, Any]) -> list[dict[str, Any]
                 found += [m for m in missing(include, seen | {name}) if m not in found]
         return found
 
+    lacking = {name: missing(name) for name in extras}
     return [
         {
             "name": name,
-            "installed": not missing(name),
+            "installed": not lacking[name],
             "applicable": bool(parsed[name][0] or parsed[name][1]),
             "requires": extras[name],
             "includes": parsed[name][1],
-            "missing": missing(name),
+            "missing": lacking[name],
             "download_bytes": None,
         }
         for name in extras
     ]
 
 
-def lock_closures(dimos_dir: Path) -> dict[str, set[str]]:
+def read_lock(dimos_dir: Path) -> dict[str, Any] | None:
     try:
-        lock = tomllib.loads((dimos_dir / "uv.lock").read_text())
+        return tomllib.loads((dimos_dir / "uv.lock").read_text())
     except (OSError, tomllib.TOMLDecodeError):
-        return {}
+        return None
+
+
+def lock_closures(dimos_dir: Path) -> dict[str, set[str]]:
+    lock = read_lock(dimos_dir) or {}
     by_name: dict[str, Any] = {canonicalize_name(e["name"]): e for e in lock.get("package", [])}
     dimos = by_name.get("dimos")
     if dimos is None:
@@ -410,24 +419,12 @@ def lock_closures(dimos_dir: Path) -> dict[str, set[str]]:
 
 
 def providing_extras(dimos_dir: Path) -> Callable[[str | None], list[str]]:
-    extras = declared(dimos_dir, {})
+    extras = parse_extras(declared(dimos_dir, {}))
     closures = lock_closures(dimos_dir)
-    direct: dict[str, set[str]] = {}
-    includes: dict[str, set[str]] = {}
-    for extra, texts in extras.items():
-        direct[extra], includes[extra] = set(), set()
-        for text in texts:
-            try:
-                requirement = Requirement(text)
-            except InvalidRequirement:
-                continue
-            if canonicalize_name(requirement.name) == "dimos":
-                includes[extra] |= set(requirement.extras)
-            else:
-                direct[extra].add(canonicalize_name(requirement.name))
+    direct = {e: {canonicalize_name(r.name) for r in reqs} for e, (reqs, _) in extras.items()}
 
     def contains(extra: str, other: str, seen: frozenset[str] = frozenset()) -> bool:
-        inner = includes.get(extra, set()) - seen
+        inner = set(extras.get(extra, ([], []))[1]) - seen
         return other in inner or any(contains(i, other, seen | {extra}) for i in inner)
 
     def providers(module: str | None) -> list[str]:
@@ -455,26 +452,13 @@ def find_uv() -> str | None:
 
 def install_command(dimos_dir: Path, extras: list[str], uv: str) -> list[str]:
     if is_checkout(dimos_dir):
-        return [
-            uv,
-            "sync",
-            "--locked",
-            "--inexact",
-            "--no-progress",
-            *(arg for e in extras for arg in ("--extra", e)),
-        ]
+        flags = [arg for extra in extras for arg in ("--extra", extra)]
+        return [uv, "sync", "--locked", "--inexact", "--no-progress", *flags]
     version = store.checkout_version(dimos_dir)[1]
-    return [
-        uv,
-        "pip",
-        "install",
-        "--no-progress",
-        "--python",
-        store.python_for(dimos_dir),
-        "--torch-backend",
-        "cu128" if "cuda" in extras else "cpu",
-        f"dimos[{','.join(extras)}]" + (f"=={version}" if version else ""),
-    ]
+    spec = f"dimos[{','.join(extras)}]" + (f"=={version}" if version else "")
+    python = ["--python", store.python_for(dimos_dir)]
+    torch = ["--torch-backend", "cu128" if "cuda" in extras else "cpu"]
+    return [uv, "pip", "install", "--no-progress", *python, *torch, spec]
 
 
 @dataclass
@@ -527,11 +511,9 @@ class Jobs:
         cutoff = time.monotonic() - JOB_KEEP_S
         self.jobs = {k: j for k, j in self.jobs.items() if j.ended is None or j.ended >= cutoff}
 
-    def get(self, job_id: str) -> Job:
+    def get(self, job_id: str) -> Job | None:
         self.prune()
-        if job_id not in self.jobs:
-            raise KeyError(f"no job {job_id}")
-        return self.jobs[job_id]
+        return self.jobs.get(job_id)
 
     def running(self, kind: str) -> Job | None:
         return next((j for j in self.jobs.values() if j.kind == kind and not j.done), None)
@@ -549,7 +531,29 @@ class Jobs:
         self.prune()
         job = Job(f"{kind}-{next(self.ids)}-{int(time.time())}", title, kind, command)
         self.jobs[job.id] = job
-        asyncio.get_running_loop().create_task(self.run(job, cwd, env, then, prepare))
+
+        async def run() -> None:
+            try:
+                ready = env
+                if prepare is not None:
+                    ready = {**env, **await prepare(lambda line: self.step(job, line, cwd, env))}
+                code = await self.step(job, command, cwd, ready)
+                job.ok = code == 0
+                if code != 0:
+                    job.error = f"{title} failed (exit {code})"
+                    job.failure = [line for line in job.lines if line.strip()][-15:]
+            except MissingForJobError as error:
+                job.ok, job.code, job.error = False, "cyclonedds_missing", str(error)
+                job.failure = [job.error]
+                job.lines.append(job.error)
+            except Exception as error:
+                job.ok = False
+                job.error = f"{title} couldn't start: {type(error).__name__}: {error}"
+                job.failure = [job.error]
+            job.done, job.finished_at, job.ended = True, now_iso(), time.monotonic()
+            then()
+
+        asyncio.get_running_loop().create_task(run())
         return job
 
     async def step(self, job: Job, command: list[str], cwd: Path, env: dict[str, str]) -> int:
@@ -567,33 +571,6 @@ class Jobs:
         async for raw in process.stdout:
             job.lines += ANSI.sub("", raw.decode("utf-8", "replace")).rstrip("\r\n").split("\r")
         return await process.wait()
-
-    async def run(
-        self,
-        job: Job,
-        cwd: Path,
-        env: dict[str, str],
-        then: Callable[[], None],
-        prepare: Prepare | None,
-    ) -> None:
-        try:
-            if prepare is not None:
-                env = {**env, **await prepare(lambda command: self.step(job, command, cwd, env))}
-            code = await self.step(job, job.command, cwd, env)
-            job.ok = code == 0
-            if code != 0:
-                job.error = f"{job.title} failed (exit {code})"
-                job.failure = [line for line in job.lines if line.strip()][-15:]
-        except MissingForJobError as error:
-            job.ok, job.code, job.error = False, "cyclonedds_missing", str(error)
-            job.failure = [job.error]
-            job.lines.append(job.error)
-        except Exception as error:
-            job.ok = False
-            job.error = f"{job.title} couldn't start: {type(error).__name__}: {error}"
-            job.failure = [job.error]
-        job.done, job.finished_at, job.ended = True, now_iso(), time.monotonic()
-        then()
 
 
 BREWED_CYCLONEDDS = (Path("/opt/homebrew/opt/cyclonedds"), Path("/usr/local/opt/cyclonedds"))
@@ -622,10 +599,7 @@ def builds_cyclonedds(dimos_dir: Path, probe: dict[str, Any], wanted: list[str])
     statuses = extras_status(dimos_dir, probe)
     if not any("cyclonedds" in e["missing"] for e in statuses if e["name"] in wanted):
         return False
-    try:
-        lock = tomllib.loads((dimos_dir / "uv.lock").read_text())
-    except (OSError, tomllib.TOMLDecodeError):
-        return True
+    lock = read_lock(dimos_dir) or {}
     entry = next((e for e in lock.get("package", []) if e["name"] == "cyclonedds"), None)
     return entry is None or not has_wheel_here(entry, probe.get("environment", {}))
 
@@ -652,20 +626,6 @@ def cyclonedds_env(home: Path) -> dict[str, str]:
     return {"CYCLONEDDS_HOME": str(home), "CMAKE_PREFIX_PATH": prefix}
 
 
-def cyclonedds_build(dimos_dir: Path, nix: str) -> list[str]:
-    link = store.venv_dir(dimos_dir) / "cyclonedds"
-    flake = f"{nixpkgs_ref(dimos_dir)}#cyclonedds"
-    return [
-        nix,
-        "--extra-experimental-features",
-        "nix-command flakes",
-        "build",
-        "--out-link",
-        str(link),
-        flake,
-    ]
-
-
 def prepare_cyclonedds(dimos_dir: Path) -> Prepare:
     async def prepare(step: Callable[[list[str]], Awaitable[int]]) -> dict[str, str]:
         given = os.environ.get("CYCLONEDDS_HOME")
@@ -673,12 +633,12 @@ def prepare_cyclonedds(dimos_dir: Path) -> Prepare:
             return cyclonedds_env(Path(given))
         link = store.venv_dir(dimos_dir) / "cyclonedds"
         nix = find_nix()
-        if (
-            nix is not None
-            and await step(cyclonedds_build(dimos_dir, nix)) == 0
-            and (link / "lib").is_dir()
-        ):
-            return cyclonedds_env(link.resolve())
+        if nix is not None:
+            features = ["--extra-experimental-features", "nix-command flakes"]
+            flake = f"{nixpkgs_ref(dimos_dir)}#cyclonedds"
+            built = await step([nix, *features, "build", "--out-link", str(link), flake]) == 0
+            if built and (link / "lib").is_dir():
+                return cyclonedds_env(link.resolve())
         for brewed in BREWED_CYCLONEDDS:
             if (brewed / "lib").is_dir():
                 return cyclonedds_env(brewed.resolve())
@@ -700,18 +660,9 @@ CUSTOM_ROBOT = (
 )
 
 
-class _AnyTagLoader(yaml.SafeLoader):
-    pass
-
-
-_AnyTagLoader.add_multi_constructor(  # type: ignore[no-untyped-call]
-    "", lambda loader, suffix, node: None
-)
-
-
 def docs_site(dimos_dir: Path) -> tuple[str | None, str | None]:
     try:
-        settings = yaml.load((dimos_dir / "mkdocs.yml").read_text(), Loader=_AnyTagLoader)
+        settings = yaml.load((dimos_dir / "mkdocs.yml").read_text(), Loader=yaml.BaseLoader)
     except (OSError, yaml.YAMLError):
         return None, None
     settings = settings if isinstance(settings, dict) else {}
@@ -748,7 +699,9 @@ def custom_robot(dimos_dir: Path) -> dict[str, Any] | None:
             parts = parts[:-1]
         return base + "".join(f"{part}/" for part in parts) if base else None
 
-    def fix(match: re.Match[str], page: Path) -> str:
+    page = pages[0]
+
+    def fix(match: re.Match[str]) -> str:
         opener, target, label = match.group(1), match.group(2), match.group(3) or ""
         if re.match(r"^[a-z][a-z0-9+.-]*:|^#", target):
             return match.group(0)
@@ -768,8 +721,7 @@ def custom_robot(dimos_dir: Path) -> dict[str, Any] | None:
             url = f"{repo.rstrip('/')}/blob/main/{resolved.relative_to(dimos_dir.resolve()).as_posix()}"
         return f"{opener}{url}{'#' + anchor if anchor else ''}{label})" if url else match.group(0)
 
-    page = pages[0]
-    markdown = LINK.sub(lambda m: fix(m, page), page.read_text())
+    markdown = LINK.sub(fix, page.read_text())
     try:
         from markdown_it import MarkdownIt
 

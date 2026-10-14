@@ -36,10 +36,6 @@ class ModuleConfigUpdate(BaseModel):
     overrides: dict[str, dict[str, JsonValue]]
 
 
-class ArgsCheckRequest(BaseModel):
-    args: list[str]
-
-
 def check_name(name: str) -> None:
     if not name or name.startswith("-") or any(c.isspace() for c in name):
         raise ApiError(400, f"bad blueprint name: {name}")
@@ -55,10 +51,11 @@ async def blueprint_list(state: State, fresh: bool = False) -> dict[str, Any]:
 async def global_config() -> dict[str, Any]:
     from dimos.core.global_config import GlobalConfig
 
-    defaults = {}
-    for key, field in GlobalConfig.model_fields.items():
-        if field.default_factory is None:
-            defaults[key] = json.loads(json.dumps(field.default, default=str))
+    defaults = {
+        key: json.loads(json.dumps(field.default, default=str))
+        for key, field in GlobalConfig.model_fields.items()
+        if field.default_factory is None
+    }
     schema = GlobalConfig.model_json_schema()
     names = [*GlobalConfig.model_fields, *schema.get("properties", {})]
     secrets = sorted({key for key in names if ov.is_secret_name(key)})
@@ -74,17 +71,19 @@ async def global_config() -> dict[str, Any]:
 def shown_config(name: str, value: dict[str, Any]) -> dict[str, Any]:
     saved = store.module_config(name)
     _, hidden = ov.redact({}, saved, ov.secret_paths({}, saved))
-    modules = []
-    for module in value.get("modules", []):
-        args = []
-        for arg in module.get("args", []):
-            secret = ov.is_secret_name(arg["name"])
-            arg = {**arg, "secret": secret}
-            if secret and arg.get("value") is not None:
-                arg["value"] = ov.HIDDEN
-            args.append(arg)
-        modules.append({**module, "args": args})
+    modules = [
+        {**module, "args": [shown_arg(arg) for arg in module["args"]]}
+        for module in value["modules"]
+    ]
     return {**value, "modules": modules, "overrides": hidden}
+
+
+def shown_arg(arg: dict[str, Any]) -> dict[str, Any]:
+    secret = ov.is_secret_name(arg["name"])
+    shown = {**arg, "secret": secret}
+    if secret and arg.get("value") is not None:
+        shown["value"] = ov.HIDDEN
+    return shown
 
 
 async def refused_args(state: State, name: str, args: list[str]) -> list[str]:
@@ -122,13 +121,6 @@ async def put_blueprint_config(
         raise ApiError(400, "; ".join(refused))
     await asyncio.to_thread(store.set_module_config, name, ov.merge_modules({}, values))
     return shown_config(name, value)
-
-
-@router.post("/dimos/blueprints/{name}/args", response_model=responses.CheckedArgs)
-async def check_blueprint_args(state: GatewayState, name: str, request: ArgsCheckRequest) -> Any:
-    """Check CLI args against the blueprint without launching it."""
-    check_name(name)
-    return await state.introspected(["args", name], request.args)
 
 
 @router.get("/dimos/catalog", response_model=responses.Catalog)
