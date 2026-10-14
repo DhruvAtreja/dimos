@@ -228,6 +228,8 @@ DUAL_OPENYAM_VIEW_TOPICS = [
     "right_wrist_color_image",
     "pointcloud",
     "tf",
+    # Scan results, drawn as boxes in the Scene.
+    "detections_3d",
 ]
 
 
