@@ -204,13 +204,14 @@ def dual_openyam_grasp_view() -> Any:
         ("world/right_wrist_color_image", "Right wrist"),
     ]
     # The overhead tile also shows the scan boxes, projected through its pinhole.
+    overhead, *wrists = cameras
     tiles = [
         rrb.Spatial2DView(
-            origin=path,
-            name=name,
-            contents=["$origin/**", "/world/detections_3d/**"] if name == "Overhead" else None,
-        )
-        for path, name in cameras
+            origin=overhead[0],
+            name=overhead[1],
+            contents=["$origin/**", "/world/detections_3d/**"],
+        ),
+        *[rrb.Spatial2DView(origin=path, name=name) for path, name in wrists],
     ]
     return rrb.Blueprint(
         rrb.Horizontal(
