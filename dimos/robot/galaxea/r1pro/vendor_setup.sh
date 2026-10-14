@@ -23,7 +23,7 @@ run() {
     done
 }
 
-# The sleeps are the stock profile's start order: mobiman waits for HDAS, the gatekeeper for mobiman.
+# extremely cursed sleeps - straight out of the galaxea stock profile though (mobiman waits for HDAS, the gatekeeper for mobiman)
 run ros_discovery system "sleep 1; ./start_discover_server.sh"
 run hdas hdas "sleep 1; ./start_hdas_r1pro.sh" "sleep 1; ./start_zed_camera.sh" "sleep 1; ./start_realsense_camera_r1pro.sh"
 run mobiman mobiman \
