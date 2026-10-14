@@ -53,11 +53,6 @@ class Owlv2Detector(HuggingFaceModel):
         super().__init__(**kwargs)
         # image-tower forwards run so far; instrumentation reads deltas
         self.forwards = 0
-        # ((camera, frame ts), label, floor) to that label's floor-filtered
-        # (boxes_kx4, scores_k); filled and read by localize
-        self.score_cache: OrderedDict[
-            tuple[tuple[str, float], str, float], tuple[np.ndarray, np.ndarray]
-        ] = OrderedDict()
         # (frame id, ts) to text-independent tower outputs; any query set scores
         # against a cached frame without rerunning the tower
         self._features: OrderedDict[
@@ -257,7 +252,6 @@ class Owlv2Detector(HuggingFaceModel):
         return out
 
     def stop(self) -> None:
-        self.score_cache.clear()
         self._features.clear()
         self._text_embeds.clear()
         if "_processor" in self.__dict__:
