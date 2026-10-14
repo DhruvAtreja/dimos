@@ -75,14 +75,14 @@ def test_an_upload_goes_through_the_queue(
     work(client)
     upload = client.post("/dimos/uploads", json={"path": str(recording)}).json()
     assert client.post("/dimos/uploads", json={"path": str(recording)}).json()["id"] == upload["id"]
-    until(lambda: state_of(client, upload["id"]) == "uploading")
+    until(lambda: client.get("/dimos/uploads").json()["uploads"][0]["bytesDone"] == 50)
     transfer.set()
     until(lambda: state_of(client, upload["id"]) == "done")
     done = client.get("/dimos/uploads").json()["uploads"][0]
     assert done["uploadId"] == "cloud-1" and done["bytesDone"] == 100
     assert client.get(f"/dimos/uploads/uploaded?path={recording}").json()["uploadId"] == "cloud-1"
     assert any(key == "ns/dimos/events/upload" for key, _ in sent)
-    assert client.app.state.gateway.uploads.queue.rates == {}  # type: ignore[attr-defined]
+    assert client.app.state.gateway.uploads.rates == {}  # type: ignore[attr-defined]
     assert client.delete("/dimos/uploads").json()["uploads"] == []
 
 
@@ -109,11 +109,9 @@ def test_only_recordings_are_uploaded(client: TestClient, tmp_path: Path) -> Non
 
 
 def test_without_a_login_the_queue_waits(
-    client: TestClient, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, transfer: threading.Event
+    client: TestClient, recording: Path, transfer: threading.Event
 ) -> None:
-    monkeypatch.setattr("dimos.cloud.data.kind_of", lambda p: "recording")
-    path = tmp_path / "nologin.mcap"
-    path.write_bytes(b"x")
+    path = recording.rename(recording.with_name("nologin.mcap"))
     work(client)
     transfer.set()
     upload = client.post("/dimos/uploads", json={"path": str(path)}).json()
@@ -172,10 +170,9 @@ def test_account_is_cached(client: TestClient, monkeypatch: pytest.MonkeyPatch) 
 
 
 def test_rate_gives_a_time_left_after_warming_up() -> None:
-    rate = uploads.Rate()
-    rate.tick(0.0, 0)
+    rate = uploads.Rate(since=0.0, t=0.0, done=0)
     rate.tick(0.5, 50)
-    assert rate.eta(50, 0.5) is None
+    assert rate.eta(50) is None
     rate.tick(2.0, 200)
-    assert rate.bps() == pytest.approx(100, rel=0.2)
-    assert rate.eta(800, 2.0) == pytest.approx(8, rel=0.3)
+    assert rate.bps == pytest.approx(100, rel=0.2)
+    assert rate.eta(800) == pytest.approx(8, rel=0.3)
