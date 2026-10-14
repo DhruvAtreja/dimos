@@ -5,77 +5,46 @@
 # config values hold. A pick sets several values at once: a `label` and `choices` that each `set:` them, e.g.
 # "Run it on": Robot / Replay / Simulator. On a blueprint, `recommended_config` replaces its robot's defaults; an entry
 # for a key the robot's defaults also name inherits that entry's fields.
-# A setting used more than once is written once with an anchor (`- &name`) and reused as `- *name`.
+# A setting or list used more than once is written once with an anchor (`&name`) and reused as `*name` (or `<<: *name`).
 # A blueprint named coordinator-*, *test* or *benchmark* is hidden unless it says `hidden: false`.
 
 # Robot types, in the order a launcher groups robots by; each robot's `type` is one of these (or null: not a robot
 # dimos drives, listed last under Other).
 types:
-  dog:
-    label: Dogs
-  humanoid:
-    label: Humanoids
-  wheeled:
-    label: Wheeled bases
-  arm:
-    label: Arms
-  drone:
-    label: Drones
+  dog: {label: Dogs}
+  humanoid: {label: Humanoids}
+  wheeled: {label: Wheeled bases}
+  arm: {label: Arms}
+  drone: {label: Drones}
 robots:
   go2:
     name: Unitree Go2
     description: 'Unitree''s quadruped: camera, lidar, WebRTC, DDS or a zenoh bridge.'
     type: dog
     manufacturer: Unitree
-    dirs:
-    - dimos/robot/unitree/go2
-    recommended:
-    - unitree-go2
-    - unitree-go2-agentic
-    - unitree-go2-basic
-    - teleop-phone-go2
+    dirs: [dimos/robot/unitree/go2]
+    recommended: [unitree-go2, unitree-go2-agentic, unitree-go2-basic, teleop-phone-go2]
     defaults:
       recommended_config:
       - &robot_replay_or_simulator
         label: Run it on
         choices:
-        - label: Robot
-          set:
-            replay: false
-            simulation: ''
-        - label: Replay
-          set:
-            replay: true
-            simulation: ''
-        - label: Simulator
-          set:
-            replay: false
-            simulation: mujoco
+        - {label: Robot, set: {replay: false, simulation: ''}}
+        - {label: Replay, set: {replay: true, simulation: ''}}
+        - {label: Simulator, set: {replay: false, simulation: mujoco}}
       - global: robot_ip
         label: Robot IP
         placeholder: 192.168.12.1
         required: true
-        docs: https://docs.dimensional.org/platforms/quadruped/go2/setup/#first-time-setup-connecting-to-wifi-finding-robot-ip
-        when:
-          replay: false
-          simulation: ''
-      - global: replay_db
-        label: Recording
-        kind: recording
-        streams:
-        - - go2_lidar
-          - lidar
-        - - go2_odom
-          - odom
-        - - color_image
-        when:
-          replay: true
-          simulation: ''
+        docs: &go2_ip_docs https://docs.dimensional.org/platforms/quadruped/go2/setup/#first-time-setup-connecting-to-wifi-finding-robot-ip
+        when: {replay: false, simulation: ''}
+      - <<: &recording {global: replay_db, label: Recording, kind: recording}
+        streams: [[go2_lidar, lidar], [go2_odom, odom], [color_image]]
+        when: {replay: true, simulation: ''}
     blueprints:
       unitree-go2-basic:
         title: Go2 basic
-        description: 'Connects to a Go2 and streams its camera, lidar and pose. The simplest way to get a Go2 going: drive
-          it from Controller.'
+        description: 'Connects to a Go2 and streams its camera, lidar and pose. The simplest way to get a Go2 going: drive it from Controller.'
         starter: 1
       unitree-go2:
         title: Go2 with map + navigation
@@ -123,13 +92,12 @@ robots:
       unitree-go2-fleet:
         title: Go2 fleet
         description: 'Several Go2s driven together: every command goes to all of them.'
-        recommended_config:
-        - &robot_ips
-          global: robot_ips
+        recommended_config: &fleet_config
+        - global: robot_ips
           label: Robot IPs
           placeholder: 192.168.12.1,192.168.12.2
           required: true
-          docs: https://docs.dimensional.org/platforms/quadruped/go2/setup/#first-time-setup-connecting-to-wifi-finding-robot-ip
+          docs: *go2_ip_docs
         - global: robot_ip
       unitree-go2-holonomic-benchmark:
         title: Go2 holonomic benchmark
@@ -160,15 +128,11 @@ robots:
       unitree-go2-multi:
         title: Several Go2s
         description: Several independent Go2s on one coordinator.
-        recommended_config:
-        - *robot_ips
-        - global: robot_ip
+        recommended_config: *fleet_config
       unitree-go2-multi-teleop:
         title: Several Go2s, keyboard driving
         description: Several Go2s, with a keyboard driving window per robot.
-        recommended_config:
-        - *robot_ips
-        - global: robot_ip
+        recommended_config: *fleet_config
       unitree-go2-nav-3d:
         title: Go2 3D navigation (Mid-360)
         description: '3D navigation with a Livox Mid-360 on the Go2: ray-traced voxel map and MLS planning.'
@@ -224,13 +188,10 @@ robots:
       teleop-phone-go2-fleet:
         title: Go2 fleet phone driving
         description: 'Drive a fleet of Go2s from a phone: every command goes to all of them.'
-        recommended_config:
-        - *robot_ips
-        - global: robot_ip
+        recommended_config: *fleet_config
       teleop-hosted-go2-multicam:
         title: Go2 remote driving (two cameras)
-        description: Drive a Go2 from anywhere through the hosted (Cloudflare) teleop broker, with a RealSense as a second
-          camera.
+        description: Drive a Go2 from anywhere through the hosted (Cloudflare) teleop broker, with a RealSense as a second camera.
         recommended_config: *robot_ip_only
       teleop-hosted-go2-transport:
         title: Go2 remote driving
@@ -239,9 +200,7 @@ robots:
       go2-localize-live:
         title: Go2 localize (recording)
         description: A Go2 recording looped as a live feed, with localization behind an agent skill.
-        recommended_config:
-        - global: replay_db
-        - global: robot_ip
+        recommended_config: [{global: replay_db}, {global: robot_ip}]
       go2-dds:
         title: 'Go2 over DDS'
         description: 'The Go2''s own streams and driving over DDS, on the Jetson wired to it; also the zenoh router a viewer dials.'
@@ -265,8 +224,7 @@ robots:
     description: Unitree's humanoid.
     type: humanoid
     manufacturer: Unitree
-    dirs:
-    - dimos/robot/unitree/g1
+    dirs: [dimos/robot/unitree/g1]
     defaults:
       recommended_config:
       - global: robot_ip
@@ -316,15 +274,10 @@ robots:
         - &robot_or_simulator
           label: Run it on
           choices:
-          - label: Robot
-            set:
-              simulation: ''
-          - label: Simulator
-            set:
-              simulation: mujoco
+          - {label: Robot, set: {simulation: ''}}
+          - {label: Simulator, set: {simulation: mujoco}}
         - global: robot_ip
-          when:
-            simulation: ''
+          when: {simulation: ''}
       unitree-g1-joystick:
         title: G1 keyboard driving
         description: The basic G1 stack plus keyboard driving.
@@ -346,8 +299,7 @@ robots:
     description: Galaxea's wheeled two-arm robot, over ROS.
     type: wheeled
     manufacturer: Galaxea
-    dirs:
-    - dimos/robot/galaxea/r1pro
+    dirs: [dimos/robot/galaxea/r1pro]
     blueprints:
       r1pro-nav:
         title: R1 Pro click-to-drive
@@ -372,8 +324,7 @@ robots:
     description: Boston Dynamics' quadruped (experimental support).
     type: dog
     manufacturer: Boston Dynamics
-    dirs:
-    - dimos/experimental/robot/bosdyn/spot
+    dirs: [dimos/experimental/robot/bosdyn/spot]
     defaults:
       recommended_config:
       - module: spothighlevel
@@ -402,24 +353,18 @@ robots:
     description: A MAVLink drone (PX4 or ArduPilot) with a video stream.
     type: drone
     manufacturer: null
-    dirs:
-    - dimos/robot/drone
+    dirs: [dimos/robot/drone]
     defaults:
       recommended_config:
       - label: Run it on
         choices:
-        - label: Robot
-          set:
-            replay: false
-        - label: Replay
-          set:
-            replay: true
+        - {label: Robot, set: {replay: false}}
+        - {label: Replay, set: {replay: true}}
       - module: droneconnectionmodule
         field: connection_string
         label: MAVLink connection
         placeholder: udp:0.0.0.0:14550
-        when:
-          replay: false
+        when: {replay: false}
     blueprints:
       drone-basic:
         title: Drone basic
@@ -434,8 +379,7 @@ robots:
     description: DeepRobotics' wheel-legged quadruped; dimos runs on the robot.
     type: dog
     manufacturer: DeepRobotics
-    dirs:
-    - dimos/robot/deeprobotics/m20
+    dirs: [dimos/robot/deeprobotics/m20]
     blueprints:
       deeprobotics-m20-kronknav-control:
         title: M20 3D navigation
@@ -450,8 +394,7 @@ robots:
     description: A DIY mobile base with a Mid-360 and a RealSense mast.
     type: wheeled
     manufacturer: null
-    dirs:
-    - dimos/robot/diy/alfred
+    dirs: [dimos/robot/diy/alfred]
     defaults:
       recommended_config:
       - module: alfredhighlevel
@@ -472,8 +415,7 @@ robots:
     description: UFactory xArm6, xArm7 and Lite6 arms.
     type: arm
     manufacturer: UFactory
-    dirs:
-    - dimos/robot/manipulators/xarm
+    dirs: [dimos/robot/manipulators/xarm]
     defaults:
       recommended_config:
       - *robot_or_simulator
@@ -481,8 +423,7 @@ robots:
         label: xArm7 IP
         placeholder: 192.168.1.185
         required: false
-        when:
-          simulation: ''
+        when: {simulation: ''}
     blueprints:
       xarm-perception-sim:
         title: xArm pick and place (sim)
@@ -500,27 +441,21 @@ robots:
       keyboard-teleop-xarm6:
         title: xArm6 keyboard driving
         description: Move an xArm6 with this computer's keyboard.
-        recommended_config:
+        recommended_config: &xarm6_config
         - *robot_or_simulator
         - &xarm6_ip
-          global: xarm6_ip
-          label: xArm6 IP
-          placeholder: 192.168.1.185
-          required: false
-          when:
-            simulation: ''
+          <<: &xarm6_ip_anywhere {global: xarm6_ip, label: xArm6 IP, placeholder: 192.168.1.185, required: false}
+          when: {simulation: ''}
       keyboard-teleop-lite6:
         title: Lite6 keyboard driving
         description: Move a UFactory Lite6 with this computer's keyboard.
-        recommended_config:
+        recommended_config: &lite6_config
         - *robot_or_simulator
-        - &lite6_ip
-          global: lite6_ip
+        - global: lite6_ip
           label: Lite6 IP
           placeholder: 192.168.1.185
           required: false
-          when:
-            simulation: ''
+          when: {simulation: ''}
       xarm-perception-sim-agent:
         title: xArm pick and place agent (sim)
         description: The simulated pick-and-place stack plus an AI agent with manipulation skills.
@@ -543,70 +478,52 @@ robots:
       lite6-planner-coordinator:
         title: Lite6 motion planning
         description: Motion planning and execution for a Lite6.
-        recommended_config:
-        - *robot_or_simulator
-        - *lite6_ip
+        recommended_config: *lite6_config
       dual-xarm6-planner-coordinator:
         title: Dual xArm6 motion planning
         description: Motion planning for two xArm6 arms.
-        recommended_config:
-        - *robot_or_simulator
+        recommended_config: [*robot_or_simulator]
       coordinator-xarm7:
         title: xArm7 coordinator
         description: An xArm7 behind a ControlCoordinator (a building block).
       coordinator-xarm6:
         title: xArm6 coordinator
         description: An xArm6 behind a ControlCoordinator (a building block).
-        recommended_config:
-        - *robot_or_simulator
-        - *xarm6_ip
+        recommended_config: *xarm6_config
       coordinator-lite6:
         title: Lite6 coordinator
         description: A Lite6 behind a ControlCoordinator (a building block).
-        recommended_config:
-        - *robot_or_simulator
-        - *lite6_ip
+        recommended_config: *lite6_config
       coordinator-dual-xarm:
         title: Dual xArm coordinator
         description: Two xArms behind one ControlCoordinator (a building block).
-        recommended_config:
-        - *robot_or_simulator
+        recommended_config: [*robot_or_simulator]
       coordinator-combined-xarm6:
         title: xArm6 combined coordinator
         description: xArm6 with trajectory and velocity tasks in one coordinator (a building block).
-        recommended_config:
-        - *robot_or_simulator
-        - *xarm6_ip
+        recommended_config: *xarm6_config
       coordinator-teleop-xarm6:
         title: xArm6 teleop coordinator
         description: The xArm6 teleop coordinator (a building block).
-        recommended_config:
-        - *robot_or_simulator
-        - *xarm6_ip
+        recommended_config: *xarm6_config
       coordinator-teleop-xarm7:
         title: xArm7 teleop coordinator
         description: The xArm7 teleop coordinator (a building block).
       coordinator-trajectory-xarm6:
         title: xArm6 trajectory coordinator
         description: xArm6 with a trajectory task (a building block).
-        recommended_config:
-        - *robot_or_simulator
-        - *xarm6_ip
+        recommended_config: *xarm6_config
       coordinator-velocity-xarm6:
         title: xArm6 velocity coordinator
         description: xArm6 with a velocity task (a building block).
-        recommended_config:
-        - *robot_or_simulator
-        - *xarm6_ip
+        recommended_config: *xarm6_config
       teleop-webxr-xarm7:
         title: xArm7 VR teleop
         description: Move an xArm7 with a VR headset's right controller (simulated with the simulator).
       teleop-webxr-xarm6:
         title: xArm6 VR teleop
         description: Move an xArm6 with a VR headset's right controller (simulated with the simulator).
-        recommended_config:
-        - *robot_or_simulator
-        - *xarm6_ip
+        recommended_config: *xarm6_config
       teleop-webxr-hand-xarm7:
         title: xArm7 VR hand teleop
         description: 'Move an xArm7 with your hand in VR: pinch to start and stop tracking.'
@@ -616,22 +533,15 @@ robots:
       teleop-hosted-xarm6:
         title: xArm6 remote teleop
         description: Move an xArm6 from anywhere through the hosted (Cloudflare) teleop broker.
-        recommended_config:
-        - &xarm6_ip_anywhere
-          global: xarm6_ip
-          label: xArm6 IP
-          placeholder: 192.168.1.185
-          required: false
+        recommended_config: [*xarm6_ip_anywhere]
       teleop-hosted-xarm7:
         title: xArm7 remote teleop
         description: Move an xArm7 from anywhere through the hosted (Cloudflare) teleop broker.
-        recommended_config:
-        - global: xarm7_ip
+        recommended_config: [{global: xarm7_ip}]
       learning-collect-webxr-xarm7:
         title: xArm7 demonstration recording
         description: Teleoperate an xArm7 in VR and record episodes for imitation learning.
-        recommended_config:
-        - global: xarm7_ip
+        recommended_config: [{global: xarm7_ip}]
       xarm-feed:
         title: xArm camera feed (recording)
         description: A depth-camera recording published at wall-clock pace, as if live.
@@ -643,8 +553,7 @@ robots:
       xarm6-worldbelief:
         title: xArm6 world belief
         description: xArm6 with a RealSense building a world belief (what is where) for an agent.
-        recommended_config:
-        - *xarm6_ip_anywhere
+        recommended_config: [*xarm6_ip_anywhere]
       xarm-sim:
         title: 'xArm7 in simulation (robot only)'
         description: 'A simulated xArm7: control and sensors as plain zenoh topics, for agents without dimOS. Needs MuJoCo.'
@@ -653,17 +562,15 @@ robots:
     description: AgileX's 6-axis arm, over CAN.
     type: arm
     manufacturer: AgileX
-    dirs:
-    - dimos/robot/manipulators/piper
+    dirs: [dimos/robot/manipulators/piper]
     defaults:
-      recommended_config:
+      recommended_config: &can_arm_config
       - *robot_or_simulator
       - &can_port
         global: can_port
         label: CAN port
         placeholder: can0
-        when:
-          simulation: ''
+        when: {simulation: ''}
     blueprints:
       keyboard-teleop-piper:
         title: Piper keyboard driving
@@ -687,19 +594,15 @@ robots:
       learning-collect-webxr-piper:
         title: Piper demonstration recording
         description: Teleoperate a Piper in VR and record episodes for imitation learning.
-        recommended_config:
-        - global: can_port
+        recommended_config: [{global: can_port}]
   openyam:
     name: OpenYAM
     description: The OpenYAM arm, over CAN.
     type: arm
     manufacturer: null
-    dirs:
-    - dimos/robot/manipulators/openyam
+    dirs: [dimos/robot/manipulators/openyam]
     defaults:
-      recommended_config:
-      - *robot_or_simulator
-      - *can_port
+      recommended_config: *can_arm_config
     blueprints:
       keyboard-teleop-openyam:
         title: OpenYAM keyboard driving
@@ -721,8 +624,7 @@ robots:
     description: Two OpenYAM arms as one robot.
     type: arm
     manufacturer: null
-    dirs:
-    - dimos/robot/manipulators/dual_openyam
+    dirs: [dimos/robot/manipulators/dual_openyam]
     blueprints:
       dual-openyam-planner-coordinator:
         title: Dual OpenYAM motion planning
@@ -738,8 +640,7 @@ robots:
     description: The bimanual OpenArm, over CAN.
     type: arm
     manufacturer: null
-    dirs:
-    - dimos/robot/manipulators/openarm
+    dirs: [dimos/robot/manipulators/openarm]
     blueprints:
       openarm-planner-coordinator:
         title: OpenArm motion planning
@@ -755,12 +656,9 @@ robots:
     description: Galaxea's A1Z arm, over CAN.
     type: arm
     manufacturer: Galaxea
-    dirs:
-    - dimos/robot/manipulators/a1z
+    dirs: [dimos/robot/manipulators/a1z]
     defaults:
-      recommended_config:
-      - *robot_or_simulator
-      - *can_port
+      recommended_config: *can_arm_config
     blueprints:
       keyboard-teleop-a1z:
         title: A1Z keyboard driving
@@ -782,8 +680,7 @@ robots:
     description: The A-750 arm, over a serial port.
     type: arm
     manufacturer: null
-    dirs:
-    - dimos/robot/manipulators/a750
+    dirs: [dimos/robot/manipulators/a750]
     blueprints:
       keyboard-teleop-a750:
         title: A-750 keyboard driving
@@ -797,31 +694,20 @@ robots:
     description: Arm combinations, mobile bases and mock hardware behind dimos's ControlCoordinator.
     type: null
     manufacturer: null
-    dirs:
-    - dimos/robot/manipulators/common
-    - dimos/control/blueprints
+    dirs: [dimos/robot/manipulators/common, dimos/control/blueprints]
     blueprints:
       coordinator-piper-xarm:
         title: Piper + xArm6 coordinator
         description: A Piper and an xArm6 behind one coordinator.
-        recommended_config:
-        - *robot_or_simulator
-        - *xarm6_ip
-        - *can_port
+        recommended_config: &piper_xarm6_config [*robot_or_simulator, *xarm6_ip, *can_port]
       coordinator-teleop-dual:
         title: Dual-arm teleop coordinator
         description: Teleop coordinator for a Piper and an xArm6 together (a building block).
-        recommended_config:
-        - *robot_or_simulator
-        - *xarm6_ip
-        - *can_port
+        recommended_config: *piper_xarm6_config
       teleop-webxr-dual:
         title: Piper + xArm6 VR teleop
         description: 'VR teleop of two arms: right controller to a Piper, left to an xArm6.'
-        recommended_config:
-        - *robot_or_simulator
-        - *xarm6_ip
-        - *can_port
+        recommended_config: *piper_xarm6_config
       coordinator-mock:
         title: Mock arm coordinator
         description: 'A ControlCoordinator on a mock arm: no robot needed.'
@@ -850,9 +736,7 @@ robots:
     description: 'Sensors on their own: Livox Mid-360 lidars, RealSense and other cameras, and the rigs that carry them.'
     type: null
     manufacturer: null
-    dirs:
-    - dimos/robot/assembly
-    - dimos/hardware/sensors
+    dirs: [dimos/robot/assembly, dimos/hardware/sensors]
     blueprints:
       mid360-fastlio:
         title: Mid-360 SLAM (FAST-LIO)
@@ -905,11 +789,7 @@ robots:
       relocalize-mid360:
         title: Mid-360 relocalization (recording)
         description: Relocalization against a saved map, driven by a recording instead of a robot.
-        recommended_config:
-        - &recording
-          global: replay_db
-          label: Recording
-          kind: recording
+        recommended_config: [*recording]
       demo-dim-slam-realsense:
         title: dimSLAM on a RealSense
         description: dimSLAM visual SLAM on a RealSense stereo camera.
@@ -921,8 +801,7 @@ robots:
     description: 'A simulated robot in Meta''s Habitat scenes: no hardware.'
     type: null
     manufacturer: null
-    dirs:
-    - dimos/simulation/habitat
+    dirs: [dimos/simulation/habitat]
     blueprints:
       habitat-nav:
         title: Habitat navigation
@@ -981,8 +860,7 @@ robots:
       replay:
         title: Replay a recording
         description: Plays every stream of a dimos recording back onto the bus, with the viewer.
-        recommended_config:
-        - *recording
+        recommended_config: [*recording]
       demo-mcp-stress-test:
         title: MCP stress test
         description: Stresses the MCP server with a test module.
