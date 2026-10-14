@@ -28,6 +28,7 @@ tf = "tf2_msgs.TFMessage"
 [package.metadata.dimos.module.pointlio.outputs]
 lidar = "sensor_msgs.PointCloud2"
 odometry = "nav_msgs.Odometry"
+pose = "geometry_msgs.PoseStamped"
 
 [dependencies]
 dimos-livox = { path = "../../livox/rust" }

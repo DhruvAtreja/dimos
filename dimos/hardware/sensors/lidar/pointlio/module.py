@@ -15,7 +15,8 @@
 """Python NativeModule wrapper for the Rust Point-LIO binary.
 
 Point-LIO consumes the Mid360 driver's raw cloud and IMU streams and publishes
-its registered cloud, odometry and the odom -> sensor tf edge. Wire the driver
+its registered cloud, odometry and the odom -> sensor tf edge (odom -> base ->
+sensor when ``base_frame_id`` and the mount are set). Wire the driver
 in with ``mid360_for_pointlio`` from ``pointlio_blueprints``::
 
     from dimos.core.coordination.blueprints import autoconnect
@@ -41,6 +42,7 @@ from pydantic import Field
 from dimos.core.core import rpc
 from dimos.core.native_module import NativeModule, NativeModuleConfig
 from dimos.core.stream import In, Out
+from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
 from dimos.msgs.nav_msgs.Odometry import Odometry
 from dimos.msgs.sensor_msgs.Imu import Imu
 from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
@@ -66,6 +68,12 @@ class PointLioConfig(NativeModuleConfig):
     # Odometry is published as frame_id (fixed) -> sensor_frame_id (moving sensor),
     # and also broadcast on TF. The point cloud is stamped with sensor_frame_id
     sensor_frame_id: str = "mid360_link"
+    # Set for an offset-mounted sensor: odometry, pose and the odom tf edge then track
+    # base_frame_id, and base_frame_id -> sensor_frame_id is published from the mount.
+    base_frame_id: str | None = None
+    # The sensor's pose in base_frame_id, as a URDF joint origin (m, rad).
+    mount_xyz: tuple[float, float, float] = (0.0, 0.0, 0.0)
+    mount_rpy: tuple[float, float, float] = (0.0, 0.0, 0.0)
 
     # Point-LIO internal processing rates (Hz)
     msr_freq: float = 50.0
@@ -140,6 +148,8 @@ class PointLio(NativeModule, perception.Lidar, perception.Odometry):
 
     lidar: Out[PointCloud2]
     odometry: Out[Odometry]
+    # The odometry's pose alone, for consumers that take a PoseStamped.
+    pose: Out[PoseStamped]
     tf: Out[TFMessage]
 
     @rpc

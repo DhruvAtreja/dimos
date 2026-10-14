@@ -47,8 +47,10 @@ from dimos.msgs.sensor_msgs.JointState import JointState
 from dimos.msgs.sensor_msgs.MotorCommandArray import MotorCommandArray
 from dimos.protocol.pubsub.impl.zenohpubsub import QOS_LATEST_WINS, Topic as ZenohTopic, Zenoh
 from dimos.robot.galaxea.r1pro.config import (
+    R1PRO_CHASSIS_LIDAR_FRAME,
     R1PRO_CHASSIS_LIDAR_HOST_IP,
     R1PRO_CHASSIS_LIDAR_IP,
+    R1PRO_CHASSIS_LIDAR_MOUNT_XYZ,
 )
 from dimos.robot.galaxea.r1pro.connection import R1PRO_UPPER_BODY_JOINTS, R1ProConnection
 from dimos.robot.galaxea.r1pro.head_cameras import (
@@ -56,7 +58,6 @@ from dimos.robot.galaxea.r1pro.head_cameras import (
     HeadLeftCamera,
     HeadRightCamera,
 )
-from dimos.robot.galaxea.r1pro.lio import R1ProLio, R1ProLioConfig
 from dimos.visualization.rerun.bridge import RerunBridgeModule
 from dimos.visualization.rerun.websocket_server import RerunWebSocketServer
 
@@ -289,24 +290,24 @@ def r1pro_control(
 
 
 def r1pro_lidar_odometry() -> Blueprint:
-    """Our Mid-360 driver (per-point times, its own IMU) into Point-LIO, plus the mount tf."""
-    lidar_frame = R1ProLioConfig.model_fields["lidar_frame"].default
+    """Our Mid-360 driver (per-point times, its own IMU) into Point-LIO, which places base_link through the mount."""
     return autoconnect(
         mid360_for_pointlio(
-            frame_id=lidar_frame,
+            frame_id=R1PRO_CHASSIS_LIDAR_FRAME,
             lidar_ip=R1PRO_CHASSIS_LIDAR_IP,
             host_ip=R1PRO_CHASSIS_LIDAR_HOST_IP,
         ),
-        PointLio.blueprint(sensor_frame_id=lidar_frame).remappings(
-            [(PointLio, "odometry", "pointlio_odometry")]
+        PointLio.blueprint(
+            sensor_frame_id=R1PRO_CHASSIS_LIDAR_FRAME,
+            base_frame_id="base_link",
+            mount_xyz=R1PRO_CHASSIS_LIDAR_MOUNT_XYZ,
+        ).remappings(
+            [
+                (PointLio, "odometry", "pointlio_odometry"),
+                # The name the chassis adapter already reads.
+                (PointLio, "pose", "chassis_odom"),
+            ]
         ),
-        R1ProLio.blueprint(),
-    ).remappings(
-        [
-            (R1ProLio, "odometry", "pointlio_odometry"),
-            # The name the planners already read.
-            (R1ProLio, "pose", "chassis_odom"),
-        ]
     )
 
 

@@ -33,6 +33,9 @@ from dimos.robot.galaxea.r1pro.joints import (
 # Chassis Mid-360 and host NIC addresses from the vendor's livox_ros_driver2 config.
 R1PRO_CHASSIS_LIDAR_IP = "192.168.2.100"
 R1PRO_CHASSIS_LIDAR_HOST_IP = "192.168.2.150"
+# The URDF's lidar_chassis_left_joint (rpy is zero); a constant so importing a blueprint fetches no URDF.
+R1PRO_CHASSIS_LIDAR_FRAME = "lidar_chassis_left_link"
+R1PRO_CHASSIS_LIDAR_MOUNT_XYZ = (0.15711, 0.21215, 0.29465)
 
 
 R1PRO_DESCRIPTION_SOURCE = RobotDescriptionSource(

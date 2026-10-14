@@ -14,12 +14,14 @@
 
 //! Point-LIO native module: PointCloud2 + Imu in, odometry + body cloud + tf out.
 
-use dimos_module::nalgebra::{Isometry3, Quaternion, Translation3, UnitQuaternion};
+use dimos_module::nalgebra::{Isometry3, Quaternion, Translation3, UnitQuaternion, Vector3 as V3};
 use dimos_module::{native_config, Input, Module, Output, Tf, Transform};
 
 /// The driver publishes linear acceleration in m/s^2; Point-LIO wants it in g.
 const GRAVITY_MS2: f64 = 9.80665;
-use lcm_msgs::geometry_msgs::{Point, Pose, PoseWithCovariance, Twist, TwistWithCovariance};
+use lcm_msgs::geometry_msgs::{
+    Point, Pose, PoseStamped, PoseWithCovariance, Twist, TwistWithCovariance,
+};
 use lcm_msgs::geometry_msgs::{Quaternion as QuatMsg, Vector3};
 use lcm_msgs::nav_msgs::Odometry;
 use lcm_msgs::sensor_msgs::{Imu, PointCloud2, PointField};
@@ -45,6 +47,9 @@ pub struct Config {
     frame_id: String,
     frame_id_prefix: Nullable<String>,
     sensor_frame_id: String,
+    base_frame_id: Nullable<String>,
+    mount_xyz: [f64; 3],
+    mount_rpy: [f64; 3],
     #[validate(range(exclusive_min = 0.0))]
     pointcloud_freq: f64,
     #[validate(range(exclusive_min = 0.0))]
@@ -129,6 +134,9 @@ pub struct PointLioModule {
     #[output(encode = Odometry::encode)]
     odometry: Output<Odometry>,
 
+    #[output(encode = PoseStamped::encode)]
+    pose: Output<PoseStamped>,
+
     #[tf]
     tf: Tf,
 
@@ -149,6 +157,7 @@ impl PointLioModule {
         tracing::info!(
             frame_id = %self.config.frame_id,
             sensor_frame_id = %self.config.sensor_frame_id,
+            base_frame = %self.config.body_frame(),
             odom_freq = self.config.odom_freq,
             pointcloud_freq = self.config.pointcloud_freq,
             "pointlio started"
@@ -203,21 +212,26 @@ impl PointLioModule {
         let lio = self.lio.as_ref().expect("setup ran");
         let o = lio.odometry();
         if due(&mut self.last_odom_ts, o.ts, self.config.odom_freq) {
-            let msg = odometry_message(&self.config, &o);
+            let body = body_odometry(&o, self.config.mount());
+            let world = self.config.world_frame();
+            let child = self.config.body_frame();
+            let msg = odometry_message(&world, &child, o.ts, &body);
             let _ = self.odometry.publish(&msg).await;
-            let iso = Isometry3::from_parts(
-                Translation3::new(o.pos[0], o.pos[1], o.pos[2]),
-                UnitQuaternion::from_quaternion(Quaternion::new(
-                    o.quat[3], o.quat[0], o.quat[1], o.quat[2],
-                )),
-            );
-            let t = Transform::new(
-                self.config.world_frame(),
-                self.config.sensor_frame(),
-                o.ts,
-                iso,
-            );
-            let _ = self.tf.publish(&[t]).await;
+            let pose = PoseStamped {
+                header: msg.header.clone(),
+                pose: msg.pose.pose.clone(),
+            };
+            let _ = self.pose.publish(&pose).await;
+            let mut tf = vec![Transform::new(world, child.clone(), o.ts, body.iso)];
+            if let Some(mount) = self.config.mount() {
+                tf.push(Transform::new(
+                    child,
+                    self.config.sensor_frame(),
+                    o.ts,
+                    mount,
+                ));
+            }
+            let _ = self.tf.publish(&tf).await;
         }
         if due(&mut self.last_cloud_ts, o.ts, self.config.pointcloud_freq) {
             let cloud = lio.body_cloud();
@@ -352,37 +366,92 @@ impl Config {
     fn sensor_frame(&self) -> String {
         self.namespaced(&self.sensor_frame_id)
     }
+    /// The frame odometry, pose and the odom tf edge describe: the base when one is set.
+    fn body_frame(&self) -> String {
+        match &self.base_frame_id.0 {
+            Some(base) => self.namespaced(base),
+            None => self.sensor_frame(),
+        }
+    }
+    /// base -> sensor, i.e. the sensor's pose in the base frame (URDF xyz/rpy).
+    fn mount(&self) -> Option<Isometry3<f64>> {
+        self.base_frame_id.0.as_ref()?;
+        let [x, y, z] = self.mount_xyz;
+        let [roll, pitch, yaw] = self.mount_rpy;
+        Some(Isometry3::from_parts(
+            Translation3::new(x, y, z),
+            UnitQuaternion::from_euler_angles(roll, pitch, yaw),
+        ))
+    }
 }
 
-fn odometry_message(cfg: &Config, o: &pointlio_core::Odom) -> Odometry {
-    let v = |a: [f64; 3]| Vector3 {
-        x: a[0],
-        y: a[1],
-        z: a[2],
+/// Pose and velocity of the tracked body (the base if mounted, else the sensor).
+struct BodyOdometry {
+    iso: Isometry3<f64>,
+    /// World-frame linear velocity, as Point-LIO reports the sensor's.
+    vel: V3<f64>,
+    /// Body-frame angular velocity.
+    omg: V3<f64>,
+}
+
+/// Point-LIO's sensor odometry carried through the mount: odom->base = odom->sensor * mount^-1.
+fn body_odometry(o: &pointlio_core::Odom, mount: Option<Isometry3<f64>>) -> BodyOdometry {
+    let sensor = Isometry3::from_parts(
+        Translation3::new(o.pos[0], o.pos[1], o.pos[2]),
+        UnitQuaternion::from_quaternion(Quaternion::new(
+            o.quat[3], o.quat[0], o.quat[1], o.quat[2],
+        )),
+    );
+    let vel = V3::from(o.vel);
+    let omg = V3::from(o.omg);
+    let Some(mount) = mount else {
+        return BodyOdometry {
+            iso: sensor,
+            vel,
+            omg,
+        };
     };
+    let iso = sensor * mount.inverse();
+    // Rigid body: the base moves with the sensor plus the spin about the sensor's lever arm.
+    let lever = iso.translation.vector - sensor.translation.vector;
+    BodyOdometry {
+        iso,
+        vel: vel + (sensor.rotation * omg).cross(&lever),
+        omg: mount.rotation * omg,
+    }
+}
+
+fn odometry_message(world: &str, child: &str, ts: f64, body: &BodyOdometry) -> Odometry {
+    let v = |a: &V3<f64>| Vector3 {
+        x: a.x,
+        y: a.y,
+        z: a.z,
+    };
+    let t = &body.iso.translation.vector;
+    let q = body.iso.rotation.coords;
     Odometry {
-        header: header(&cfg.world_frame(), o.ts),
-        child_frame_id: cfg.sensor_frame(),
+        header: header(world, ts),
+        child_frame_id: child.to_string(),
         pose: PoseWithCovariance {
             pose: Pose {
                 position: Point {
-                    x: o.pos[0],
-                    y: o.pos[1],
-                    z: o.pos[2],
+                    x: t.x,
+                    y: t.y,
+                    z: t.z,
                 },
                 orientation: QuatMsg {
-                    x: o.quat[0],
-                    y: o.quat[1],
-                    z: o.quat[2],
-                    w: o.quat[3],
+                    x: q.x,
+                    y: q.y,
+                    z: q.z,
+                    w: q.w,
                 },
             },
             covariance: [0.0; 36],
         },
         twist: TwistWithCovariance {
             twist: Twist {
-                linear: v(o.vel),
-                angular: v(o.omg),
+                linear: v(&body.vel),
+                angular: v(&body.omg),
             },
             covariance: [0.0; 36],
         },
@@ -567,8 +636,112 @@ mod tests {
         assert!(bad.validate().is_err());
     }
 
+    fn odom(pos: [f64; 3], quat: [f64; 4], vel: [f64; 3], omg: [f64; 3]) -> pointlio_core::Odom {
+        pointlio_core::Odom {
+            ts: 5.0,
+            pos,
+            quat,
+            vel,
+            omg,
+        }
+    }
+
+    fn mounted(xyz: [f64; 3], rpy: [f64; 3]) -> Config {
+        let mut cfg: Config = serde_json::from_str(SAMPLE).unwrap();
+        cfg.base_frame_id = Nullable(Some("base_link".into()));
+        cfg.mount_xyz = xyz;
+        cfg.mount_rpy = rpy;
+        cfg
+    }
+
+    fn assert_close(a: &[f64], b: &[f64]) {
+        for (x, y) in a.iter().zip(b) {
+            assert!((x - y).abs() < 1e-9, "{a:?} != {b:?}");
+        }
+    }
+
+    #[test]
+    fn no_base_frame_publishes_the_sensor_unchanged() {
+        let cfg: Config = serde_json::from_str(SAMPLE).unwrap();
+        assert!(cfg.mount().is_none());
+        assert_eq!(cfg.body_frame(), "mid360_link");
+        let o = odom(
+            [1.0, 2.0, 3.0],
+            [0.0, 0.0, 0.6, 0.8],
+            [0.1, 0.2, 0.3],
+            [0.4, 0.5, 0.6],
+        );
+        let msg = odometry_message("odom", "mid360_link", o.ts, &body_odometry(&o, cfg.mount()));
+        let p = &msg.pose.pose;
+        assert_close(&[p.position.x, p.position.y, p.position.z], &o.pos);
+        let q = &p.orientation;
+        assert_close(&[q.x, q.y, q.z, q.w], &o.quat);
+        let t = &msg.twist.twist;
+        assert_close(&[t.linear.x, t.linear.y, t.linear.z], &o.vel);
+        assert_close(&[t.angular.x, t.angular.y, t.angular.z], &o.omg);
+    }
+
+    #[test]
+    fn base_pose_matches_the_r1_mount_glue_it_replaces() {
+        // Sample run through the R1's former lio.py base_pose with the URDF chassis lidar mount.
+        let cfg = mounted([0.15711, 0.21215, 0.29465], [0.0; 3]);
+        assert_eq!(cfg.body_frame(), "base_link");
+        let quat = [
+            0.048817000800753275,
+            -0.027139746683915847,
+            0.5647917285490216,
+            0.8233411431146634,
+        ];
+        let body = body_odometry(
+            &odom([1.0, 2.0, 0.5], quat, [0.0; 3], [0.0; 3]),
+            cfg.mount(),
+        );
+        let t = body.iso.translation.vector;
+        assert_close(
+            &[t.x, t.y, t.z],
+            &[1.1381431545583176, 1.8112261013737276, 0.1809534812192511],
+        );
+        let q = body.iso.rotation.coords;
+        assert_close(&[q.x, q.y, q.z, q.w], &quat);
+    }
+
+    #[test]
+    fn rotated_mount_composes_back_to_the_sensor() {
+        let cfg = mounted([0.3, -0.1, 0.5], [0.1, -0.2, 0.7]);
+        let mount = cfg.mount().unwrap();
+        let o = odom(
+            [1.0, 2.0, 3.0],
+            [0.1, 0.2, 0.3, 0.927_361_849_549_570_4],
+            [0.0; 3],
+            [0.0; 3],
+        );
+        let body = body_odometry(&o, Some(mount));
+        let sensor = body.iso * mount;
+        assert_close(sensor.translation.vector.as_slice(), &o.pos);
+        let q = UnitQuaternion::from_quaternion(Quaternion::new(
+            o.quat[3], o.quat[0], o.quat[1], o.quat[2],
+        ));
+        assert!(sensor.rotation.angle_to(&q) < 1e-9);
+        // URDF rpy: fixed-axis roll, then pitch, then yaw.
+        let (r, p, y) = mount.rotation.euler_angles();
+        assert_close(&[r, p, y], &[0.1, -0.2, 0.7]);
+    }
+
+    #[test]
+    fn spinning_in_place_moves_an_offset_base() {
+        // Sensor 1 m ahead of the base along x, yawing at 1 rad/s, still at its own origin:
+        // the base swings round behind it at 1 m/s along -y.
+        let cfg = mounted([1.0, 0.0, 0.0], [0.0; 3]);
+        let o = odom([0.0; 3], [0.0, 0.0, 0.0, 1.0], [0.0; 3], [0.0, 0.0, 1.0]);
+        let body = body_odometry(&o, cfg.mount());
+        assert_close(body.iso.translation.vector.as_slice(), &[-1.0, 0.0, 0.0]);
+        assert_close(body.vel.as_slice(), &[0.0, -1.0, 0.0]);
+        assert_close(body.omg.as_slice(), &[0.0, 0.0, 1.0]);
+    }
+
     const SAMPLE: &str = r#"{
-        "frame_id":"odom","sensor_frame_id":"mid360_link","pointcloud_freq":10.0,"odom_freq":30.0,
+        "frame_id":"odom","sensor_frame_id":"mid360_link",
+        "base_frame_id":null,"mount_xyz":[0.0,0.0,0.0],"mount_rpy":[0.0,0.0,0.0],"pointcloud_freq":10.0,"odom_freq":30.0,
         "msr_freq":50.0,"main_freq":5000.0,"con_frame":false,"con_frame_num":1,"cut_frame":false,
         "cut_frame_time_interval":0.1,"time_lag_imu_to_lidar":0.0,"scan_line":4,"scan_rate":10,
         "blind":0.7,"point_filter_num":3,"use_imu_as_input":false,"prop_at_freq_of_imu":true,
