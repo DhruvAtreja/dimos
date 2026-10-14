@@ -1,4 +1,4 @@
-import { compileLcmDecoder, type LcmField as Field } from "../../../../web/sdk/src/decoders/lcm.ts"
+import { compileLcmDecoder, type LcmField as Field } from "lcm-decoder"
 
 type MsgValue = Record<string, unknown>
 export interface MsgType<T = MsgValue> {

@@ -29,7 +29,6 @@ from typing import Any
 
 DIMOS_DIR = Path(__file__).parents[2] / "dimos"
 RUNTIME_FILE = Path(__file__).parent / "assets" / "msgs" / "runtime.ts"
-SDK_DECODER = DIMOS_DIR.parent / "web" / "sdk" / "src" / "decoders" / "lcm.ts"
 BUILD_TIMEOUT_S = 120
 
 
@@ -110,12 +109,23 @@ export const {{ {package_names} }} = packages(TYPES, registry.lookup)
 """
 
 
+def sdk_decoder() -> Path:
+    from dimos.web.relay_bridge.locate import find_web_dir
+
+    return find_web_dir() / "sdk" / "src" / "decoders" / "lcm.ts"
+
+
 def bundle_js(ts_text: str) -> str:
     from dimos.utils.deno import ensure_deno
 
     with tempfile.TemporaryDirectory() as tmp:
-        source, target = Path(tmp) / "msgs.ts", Path(tmp) / "msgs.js"
+        source, target, config = (
+            Path(tmp) / "msgs.ts",
+            Path(tmp) / "msgs.js",
+            Path(tmp) / "deno.json",
+        )
         source.write_text(ts_text)
+        config.write_text(json.dumps({"imports": {"lcm-decoder": sdk_decoder().as_uri()}}))
         subprocess.run(
             [
                 str(ensure_deno()),
@@ -123,6 +133,7 @@ def bundle_js(ts_text: str) -> str:
                 "--quiet",
                 "--platform=browser",
                 "--format=esm",
+                f"--config={config}",
                 "-o",
                 str(target),
                 str(source),
@@ -137,7 +148,7 @@ def bundle_js(ts_text: str) -> str:
 
 def sources_hash() -> str:
     digest = hashlib.sha256(importlib.metadata.version("dimos-lcm").encode())
-    sources = [Path(__file__), RUNTIME_FILE, SDK_DECODER, DIMOS_DIR / "web" / "lcm_codec.py"]
+    sources = [Path(__file__), RUNTIME_FILE, sdk_decoder(), DIMOS_DIR / "web" / "lcm_codec.py"]
     for path in sources + sorted((DIMOS_DIR / "msgs").rglob("*.py")):
         digest.update(f"\0{path.relative_to(DIMOS_DIR.parent)}\0".encode() + path.read_bytes())
     return digest.hexdigest()[:16]
