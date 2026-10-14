@@ -98,10 +98,8 @@ def test_mcp_speaks_json_rpc(client: TestClient, bus: FakeBus) -> None:
         return client.post("/dimos/mcp", json=body).json()
 
     assert rpc("initialize")["result"]["serverInfo"]["name"] == "dimos-skills"
-    assert [t["name"] for t in rpc("tools/list")["result"]["tools"]] == [
-        "list_skills",
-        "call_skill",
-    ]
+    tools = rpc("tools/list")["result"]["tools"]
+    assert [tool["name"] for tool in tools] == ["list_skills", "call_skill"]
     listed = rpc("tools/call", {"name": "list_skills", "arguments": {"query": "say"}})
     assert json.loads(listed["result"]["content"][0]["text"])["skills"][0]["name"] == "speak"
     called = rpc(
@@ -110,9 +108,5 @@ def test_mcp_speaks_json_rpc(client: TestClient, bus: FakeBus) -> None:
     )
     assert called["result"] == {"content": [{"type": "text", "text": "said yo"}], "isError": False}
     assert rpc("nope")["error"]["code"] == -32601
-    assert (
-        client.post(
-            "/dimos/mcp", json={"jsonrpc": "2.0", "method": "notifications/initialized"}
-        ).status_code
-        == 202
-    )
+    notification = {"jsonrpc": "2.0", "method": "notifications/initialized"}
+    assert client.post("/dimos/mcp", json=notification).status_code == 202
