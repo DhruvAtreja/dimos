@@ -203,9 +203,18 @@ def dual_openyam_grasp_view() -> Any:
         ("world/left_wrist_color_image", "Left wrist"),
         ("world/right_wrist_color_image", "Right wrist"),
     ]
+    # The overhead tile also shows the scan boxes, projected through its pinhole.
+    tiles = [
+        rrb.Spatial2DView(
+            origin=path,
+            name=name,
+            contents=["$origin/**", "/world/detections_3d/**"] if name == "Overhead" else None,
+        )
+        for path, name in cameras
+    ]
     return rrb.Blueprint(
         rrb.Horizontal(
-            rrb.Vertical(*[rrb.Spatial2DView(origin=path, name=name) for path, name in cameras]),
+            rrb.Vertical(*tiles),
             rrb.Spatial3DView(
                 origin="world",
                 name="Scene",
@@ -224,11 +233,13 @@ def dual_openyam_grasp_view() -> Any:
 # Streams the Rerun bridge forwards; everything else stays off the viewer link.
 DUAL_OPENYAM_VIEW_TOPICS = [
     "color_image",
+    # Intrinsics give the overhead tile a pinhole, so 3D boxes project into it.
+    "camera_info",
     "left_wrist_color_image",
     "right_wrist_color_image",
     "pointcloud",
     "tf",
-    # Scan results, drawn as boxes in the Scene.
+    # Scan results, drawn as boxes in the Scene and the overhead tile.
     "detections_3d",
 ]
 
