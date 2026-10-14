@@ -129,12 +129,10 @@ async def watch_blueprints(
         now = await asyncio.to_thread(snapshot, dimos_dir, site_dirs)
         if now == seen:
             continue
-        while True:
-            await asyncio.sleep(settle)
-            later = await asyncio.to_thread(snapshot, dimos_dir, site_dirs)
-            if later == now:
-                break
+        await asyncio.sleep(settle)
+        while (later := await asyncio.to_thread(snapshot, dimos_dir, site_dirs)) != now:
             now = later
+            await asyncio.sleep(settle)
         seen = now
         try:
             listed = await relist()
