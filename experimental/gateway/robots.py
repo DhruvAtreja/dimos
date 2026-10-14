@@ -36,28 +36,21 @@ def load(path: Path = SOURCE_FILE) -> dict[str, Any]:
     return source
 
 
-def blueprint_file(ref: str) -> str:
-    return ref.split(":")[0].replace(".", "/") + ".py"
-
-
-def _inside(path: str, directory: str) -> bool:
-    return path == directory or path.startswith(directory.rstrip("/") + "/")
-
-
 def owner_of(doc: dict[str, Any], path: str) -> str | None:
-    best: tuple[int, str] | None = None
-    for robot_id, robot in doc["robots"].items():
-        for directory in robot.get("dirs", []):
-            if _inside(path, directory) and (best is None or len(directory) > best[0]):
-                best = (len(directory), robot_id)
-    return best[1] if best else None
+    owners = [
+        (len(directory), str(robot_id))
+        for robot_id, robot in doc["robots"].items()
+        for directory in robot.get("dirs", [])
+        if path == directory or path.startswith(directory.rstrip("/") + "/")
+    ]
+    return max(owners, key=lambda owner: owner[0])[1] if owners else None
 
 
 def robot_of(doc: dict[str, Any], name: str, ref: str | None) -> str | None:
     for robot_id, robot in doc["robots"].items():
         if name in robot.get("blueprints", {}):
             return str(robot_id)
-    return owner_of(doc, blueprint_file(ref)) if ref else None
+    return owner_of(doc, ref.split(":")[0].replace(".", "/") + ".py") if ref else None
 
 
 def setting_key(spec: dict[str, Any]) -> str | None:
@@ -69,11 +62,8 @@ def setting_key(spec: dict[str, Any]) -> str | None:
 
 
 def settings_keys(settings: list[dict[str, Any]]) -> set[str]:
-    keys: set[str] = set()
+    keys = {key for setting in settings if (key := setting_key(setting)) is not None}
     for setting in settings:
-        key = setting_key(setting)
-        if key is not None:
-            keys.add(key)
         for choice in setting.get("choices", []):
             keys.update(choice.get("set", {}))
     return keys
@@ -122,93 +112,67 @@ def reflected(field_name: str) -> dict[str, Any]:
     return out
 
 
-def _generated_setting(
-    entry: dict[str, Any], inherited: dict[str, Any] | None, keys: set[str]
+def _setting(
+    index: int, entry: dict[str, Any], inherited: dict[str, Any] | None, keys: set[str]
 ) -> dict[str, Any]:
     from dimos.core.global_config import GlobalConfig
 
     key = setting_key(entry)
     if key is None:
-        return copy.deepcopy(entry)
-    inherited = dict(inherited or {})
-    if "when" in inherited and not set(inherited["when"]) <= keys:
-        del inherited["when"]
-    base = reflected(entry["global"]) if entry.get("global") in GlobalConfig.model_fields else {}
-    merged = {**base, **copy.deepcopy(inherited), **copy.deepcopy(entry)}
-    if "label" not in merged:
-        words = key.rsplit(".", 1)[-1].replace("_", " ")
-        merged["label"] = words[:1].upper() + words[1:]
-    ordered = {k: merged.pop(k) for k in ("global", "module", "field", "label") if k in merged}
-    return {**ordered, **merged}
-
-
-def generate(source: dict[str, Any]) -> dict[str, Any]:
-    out = copy.deepcopy(source)
-    for robot in out["robots"].values():
-        defaults = robot.get("defaults", {}).get("recommended_config", [])
-        by_key = {setting_key(entry): entry for entry in defaults if setting_key(entry)}
-        if defaults:
-            keys = settings_keys(defaults)
-            robot["defaults"]["recommended_config"] = [
-                _generated_setting(e, None, keys) for e in defaults
-            ]
-        for blueprint in robot["blueprints"].values():
-            if "recommended_config" in blueprint:
-                own = blueprint["recommended_config"]
-                keys = settings_keys(own)
-                blueprint["recommended_config"] = [
-                    _generated_setting(e, by_key.get(setting_key(e) or ""), keys) for e in own
-                ]
-    return out
-
-
-def _resolved_setting(index: int, spec: dict[str, Any]) -> dict[str, Any]:
-    key = setting_key(spec)
-    if key is None:
-        options = copy.deepcopy(spec["choices"])
         return {
             "id": f"pick-{index}",
             "key": None,
             "scope": None,
             "kind": "pick",
-            "label": spec["label"],
+            "label": entry["label"],
             "required": False,
-            "docs": spec.get("docs"),
-            "default": spec.get("default", options[0]["label"]),
-            "choices": options,
-            "when": copy.deepcopy(spec.get("when")),
+            "docs": entry.get("docs"),
+            "default": entry.get("default", entry["choices"][0]["label"]),
+            "choices": entry["choices"],
+            "when": entry.get("when"),
         }
+    inherited = dict(inherited or {})
+    if "when" in inherited and not set(inherited["when"]) <= keys:
+        del inherited["when"]
+    base = reflected(entry["global"]) if entry.get("global") in GlobalConfig.model_fields else {}
+    merged = {**base, **inherited, **entry}
+    if "label" not in merged:
+        words = key.rsplit(".", 1)[-1].replace("_", " ")
+        merged["label"] = words[:1].upper() + words[1:]
+    ordered: dict[str, Any] = {
+        k: merged.pop(k) for k in ("global", "module", "field", "label") if k in merged
+    }
     return {
         "id": key,
         "key": key,
-        "scope": "global" if "global" in spec else "module",
+        "scope": "global" if "global" in ordered else "module",
         "kind": "text",
         "required": False,
         "docs": None,
-        **copy.deepcopy(spec),
-        "choices": copy.deepcopy(spec.get("choices")),
-        "when": copy.deepcopy(spec.get("when")),
+        **ordered,
+        **merged,
+        "choices": merged.get("choices"),
+        "when": merged.get("when"),
     }
 
 
 def resolved(source: dict[str, Any], registry: Collection[str]) -> dict[str, Any]:
-    doc = generate(source)
-    out = copy.deepcopy(doc)
+    out = copy.deepcopy(source)
     out["about"] = None
     for robot_id, robot in out["robots"].items():
-        original = doc["robots"][robot_id]
+        defaults = robot.pop("defaults", {}).get("recommended_config", [])
+        by_key = {setting_key(entry): entry for entry in defaults if setting_key(entry)}
         for name, blueprint in robot["blueprints"].items():
-            own = original["blueprints"][name]
-            settings = own.get("recommended_config")
-            if settings is None:
-                settings = original.get("defaults", {}).get("recommended_config", [])
+            own = blueprint.get("recommended_config")
+            settings = defaults if own is None else own
+            keys = settings_keys(settings)
             blueprint["robot"] = robot_id
             blueprint["recommended_config"] = [
-                _resolved_setting(index, setting) for index, setting in enumerate(settings)
+                _setting(i, e, None if own is None else by_key.get(setting_key(e) or ""), keys)
+                for i, e in enumerate(settings)
             ]
             blueprint.setdefault("starter", None)
             blueprint.setdefault("hidden", HIDDEN_NAME.search(name) is not None)
             blueprint["registered"] = name in registry
-        robot.pop("defaults", None)
         robot.setdefault("recommended", [])
     return out

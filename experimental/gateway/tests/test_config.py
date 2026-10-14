@@ -55,7 +55,7 @@ def introspected(state: State, monkeypatch: pytest.MonkeyPatch) -> list[Any]:
         if args[0] == "config":
             return CONFIG
         bad = [a for a in stdin or [] if "fps=fast" in a]
-        return {"args": [{"tokens": [a], "target": None, "error": "not an int"} for a in bad]}
+        return {"args": [{"tokens": [a], "error": "not an int"} for a in bad]}
 
     monkeypatch.setattr(state, "introspected", fake)
     return calls
