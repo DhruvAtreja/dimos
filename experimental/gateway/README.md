@@ -9,8 +9,8 @@ discovery. `--port 8123` also serves it on `127.0.0.1:8123`; `--detach` starts i
   `cloud-login`); the namespace is `--zenoh-namespace` or `$DIMOS_ZENOH_NAMESPACE`, with no namespace there are no events.
 - Saved GlobalConfig and module config live in `$XDG_STATE_HOME/dimos/gateway/settings.json`.
 - `annotations.yaml` describes every robot and its blueprints (`GET /dimos/robots`).
-- `routes/` holds the routers; the rest is what they call. Anything that imports a blueprint runs in a child process
-  (`introspect.py`), so a blueprint that hangs or crashes can't take the gateway down.
+- Anything that imports a blueprint runs in a child process (`introspect.py`), so a blueprint that hangs or crashes
+  can't take the gateway down.
 
 See [gateway-how-to.md](gateway-how-to.md) for examples.
 
