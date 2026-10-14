@@ -15,7 +15,6 @@
 from __future__ import annotations
 
 import asyncio
-import hashlib
 from pathlib import Path
 import re
 from typing import Any
@@ -79,12 +78,11 @@ async def msgs_js(request: Request) -> Response:
         path = await msgs.built_js(store.gateway_dir() / "msgs")
     except RuntimeError as error:
         raise ApiError(503, str(error)) from error
-    body = path.read_bytes()
-    etag = f'"{hashlib.sha256(body).hexdigest()}"'
+    etag = f'"{path.stem}"'  # the file name holds the hash of everything it's built from
     headers = {"etag": etag, "cache-control": "no-cache"}
     if etag in (tag.strip() for tag in request.headers.get("if-none-match", "").split(",")):
         return Response(status_code=304, headers=headers)
-    return Response(body, media_type="text/javascript; charset=utf-8", headers=headers)
+    return Response(path.read_bytes(), media_type="text/javascript; charset=utf-8", headers=headers)
 
 
 @router.get("/dimos/cloud/login/page", response_class=HTMLResponse)

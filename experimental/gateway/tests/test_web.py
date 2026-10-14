@@ -28,12 +28,11 @@ VIEW = Path(__file__).parents[1] / "assets" / "blueprint_view"
 
 ROUND_TRIP = """
 import { decode, decodeChannel, geometry_msgs } from "MODULE"
-const input = JSON.parse(Deno.args[0])
 const bytes = (hex) => Uint8Array.from(hex.match(/../g), (b) => parseInt(b, 16))
 const hex = (b) => Array.from(b, (x) => x.toString(16).padStart(2, "0")).join("")
 console.log(JSON.stringify({
-    pose: decode(bytes(input.pose)),
-    byKey: decodeChannel("dimos/odom/geometry_msgs.PoseStamped", bytes(input.pose)),
+    pose: decode(bytes(Deno.args[0])),
+    byKey: decodeChannel("dimos/odom/geometry_msgs.PoseStamped", bytes(Deno.args[0])),
     twist: hex(geometry_msgs.Twist.encode({ linear: { x: 0.3 }, angular: { z: 0.5 } })),
 }, (_, v) => typeof v === "bigint" ? String(v) : v))
 """
@@ -62,28 +61,30 @@ def test_login_page(client: TestClient) -> None:
     assert "<html" in client.get("/dimos/cloud/login/page").text.lower()
 
 
-def test_msgs_js_is_built_once_and_served_with_an_etag(client: TestClient, home: Path) -> None:
+def test_msgs_js_is_cached_and_decodes_what_python_encodes(
+    client: TestClient, home: Path, tmp_path: Path
+) -> None:
     answer = client.get("/dimos/msgs.js")
-    assert answer.status_code == 200 and b"geometry_msgs" in answer.content
     (built,) = (home / "state" / "gateway" / "msgs").glob("msgs-*.js")
-    assert answer.content == built.read_bytes()
+    assert answer.status_code == 200 and answer.content == built.read_bytes()
     again = client.get("/dimos/msgs.js", headers={"if-none-match": answer.headers["etag"]})
     assert again.status_code == 304
     assert list(built.parent.iterdir()) == [built], "a second ask reuses the build"
-
-
-def test_msgs_js_decodes_what_python_encodes(client: TestClient, tmp_path: Path) -> None:
-    module = tmp_path / "msgs.js"
-    module.write_bytes(client.get("/dimos/msgs.js").content)
     pose = PoseStamped(
         ts=12.25, frame_id="map", position=[1.0, 2.0, 3.0], orientation=[0, 0, 0.6, 0.8]
     )
     twist = Twist(linear=Vector3(0.3, 0, 0), angular=Vector3(0, 0, 0.5))
     script = tmp_path / "round_trip.mjs"
-    script.write_text(ROUND_TRIP.replace("MODULE", module.as_uri()))
-    frames = {"pose": pose.lcm_encode().hex()}
+    script.write_text(ROUND_TRIP.replace("MODULE", built.as_uri()))
     done = subprocess.run(
-        [str(ensure_deno()), "run", "--no-config", "--allow-read", str(script), json.dumps(frames)],
+        [
+            str(ensure_deno()),
+            "run",
+            "--no-config",
+            "--allow-read",
+            str(script),
+            pose.lcm_encode().hex(),
+        ],
         capture_output=True,
         text=True,
         timeout=60,

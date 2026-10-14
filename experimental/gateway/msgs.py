@@ -15,7 +15,6 @@
 from __future__ import annotations
 
 import asyncio
-from dataclasses import dataclass
 import hashlib
 import importlib
 import importlib.metadata
@@ -28,46 +27,10 @@ import sys
 import tempfile
 from typing import Any
 
-HERE = Path(__file__).parent / "assets" / "msgs"
 DIMOS_DIR = Path(__file__).parents[2] / "dimos"
-RUNTIME_FILE = HERE / "runtime.ts"
+RUNTIME_FILE = Path(__file__).parent / "assets" / "msgs" / "runtime.ts"
+SDK_DECODER = DIMOS_DIR.parent / "web" / "sdk" / "src" / "decoders" / "lcm.ts"
 BUILD_TIMEOUT_S = 120
-IDENTIFIER = re.compile(r"^[A-Za-z_$][A-Za-z0-9_$]*$")
-TS_SCALAR = {
-    "int8_t": "number",
-    "int16_t": "number",
-    "int32_t": "number",
-    "int64_t": "bigint",
-    "float": "number",
-    "double": "number",
-    "byte": "number",
-    "boolean": "boolean",
-    "string": "string",
-}
-TS_ARRAY = {
-    "byte": "Uint8Array",
-    "int8_t": "Int8Array",
-    "int16_t": "Int16Array",
-    "int32_t": "Int32Array",
-    "int64_t": "BigInt64Array",
-    "float": "Float32Array",
-    "double": "Float64Array",
-    "boolean": "boolean[]",
-    "string": "string[]",
-}
-
-
-@dataclass(frozen=True)
-class Missing:
-    type_name: str
-    where: str
-    reason: str
-
-
-@dataclass(frozen=True)
-class Scan:
-    schemas: dict[str, dict[str, Any]]
-    missing: list[Missing]
 
 
 def message_classes() -> list[tuple[str, type[Any]]]:
@@ -100,17 +63,18 @@ def reason(type_name: str, error: str) -> str:
     return error
 
 
-def scan() -> Scan:
+def scan() -> tuple[dict[str, dict[str, Any]], dict[str, str]]:
+    """Every message type's LCM schema, and why each type without one has none."""
     from dimos.web.lcm_codec import export_schema, schema_class_for
 
     schemas: dict[str, dict[str, Any]] = {}
-    missing: dict[str, Missing] = {}
+    missing: dict[str, str] = {}
     for where, cls in message_classes():
         type_name = getattr(cls, "msg_name", None) or cls.__name__
         try:
             schema = export_schema(schema_class_for(cls))
         except ValueError as error:
-            missing[type_name] = Missing(type_name, where, reason(type_name, str(error)))
+            missing[type_name] = f"{reason(type_name, str(error))} [{where}]"
             continue
         multi = [
             f"{struct}.{field}"
@@ -119,65 +83,31 @@ def scan() -> Scan:
             if dims is not None and len(dims) > 1
         ]
         if multi:
-            why = f"multi-dimensional arrays aren't supported ({', '.join(multi)})"
-            missing[type_name] = Missing(type_name, where, why)
+            missing[type_name] = (
+                f"multi-dimensional arrays aren't supported ({', '.join(multi)}) [{where}]"
+            )
             continue
         schemas[schema["type"]] = schema
-    for name in schemas:
-        missing.pop(name, None)
-    return Scan(schemas, sorted(missing.values(), key=lambda m: m.type_name))
+    return schemas, {name: why for name, why in sorted(missing.items()) if name not in schemas}
 
 
-def field_type(kind: str, dims: list[Any] | None) -> str:
-    if dims is None:
-        return TS_SCALAR.get(kind, kind)
-    return TS_ARRAY.get(kind, f"{kind}[]")
-
-
-def generate_ts(found: Scan) -> str:
+def generate_ts(schemas: dict[str, dict[str, Any]], missing: dict[str, str]) -> str:
     structs: dict[str, list[list[Any]]] = {}
-    for schema in found.schemas.values():
+    for schema in schemas.values():
         for name, rows in schema["structs"].items():
             if structs.setdefault(name, rows) != rows:
                 raise ValueError(f"two schemas define the struct {name} differently")
-    types = {name: found.schemas[name]["fp"] for name in sorted(found.schemas)}
-    missing = {m.type_name: f"{m.reason} [{m.where}]" for m in found.missing}
-    out = [
-        RUNTIME_FILE.read_text().rstrip("\n"),
-        "",
-        "const STRUCTS: Record<string, Field[]> = {",
-        *(f"    {json.dumps(name)}: {json.dumps(structs[name])}," for name in sorted(structs)),
-        "}",
-        "const TYPES: Record<string, string> = {",
-        *(f"    {json.dumps(name)}: {json.dumps(fp)}," for name, fp in types.items()),
-        "}",
-        "const MISSING: Record<string, string> = {",
-        *(f"    {json.dumps(name)}: {json.dumps(why)}," for name, why in missing.items()),
-        "}",
-        "",
-        "const registry = createRegistry(STRUCTS, TYPES, MISSING)",
-        "export const { decode, decodeChannel, decodeMessage, typeOfChannel, lookup, register, getTypeNames, getMissingTypes } =",
-        "    registry",
-        "",
-    ]
-    packages: dict[str, list[str]] = {}
-    for name in sorted(structs):
-        packages.setdefault(name.split(".")[0], []).append(name)
-    for package, names in packages.items():
-        out.append(f"export namespace {package} {{")
-        for name in names:
-            short = name.split(".")[1]
-            out.append(f"    export interface {short} {{")
-            for field, kind, dims in structs[name]:
-                key = field if IDENTIFIER.match(field) else json.dumps(field)
-                out.append(f"        {key}: {field_type(kind, dims)}")
-            out.append("    }")
-            if name in types:
-                out.append(
-                    f"    export const {short} = lookup({json.dumps(name)}) as MsgType<{short}>"
-                )
-        out.append("}")
-    return "\n".join(out) + "\n"
+    structs = dict(sorted(structs.items()))
+    types = {name: schemas[name]["fp"] for name in sorted(schemas)}
+    package_names = ", ".join(sorted({name.split(".")[0] for name in types}))
+    return f"""import {{ createRegistry, packages }} from {json.dumps(RUNTIME_FILE.as_uri())}
+const STRUCTS = {json.dumps(structs)}
+const TYPES = {json.dumps(types)}
+const registry = createRegistry(STRUCTS, TYPES, {json.dumps(missing)})
+export {{ createRegistry }}
+export const {{ decode, decodeChannel, decodeMessage, typeOfChannel, lookup, register, getTypeNames, getMissingTypes }} = registry
+export const {{ {package_names} }} = packages(TYPES, registry.lookup)
+"""
 
 
 def bundle_js(ts_text: str) -> str:
@@ -207,7 +137,7 @@ def bundle_js(ts_text: str) -> str:
 
 def sources_hash() -> str:
     digest = hashlib.sha256(importlib.metadata.version("dimos-lcm").encode())
-    sources = [Path(__file__), RUNTIME_FILE, DIMOS_DIR / "web" / "lcm_codec.py"]
+    sources = [Path(__file__), RUNTIME_FILE, SDK_DECODER, DIMOS_DIR / "web" / "lcm_codec.py"]
     for path in sources + sorted((DIMOS_DIR / "msgs").rglob("*.py")):
         digest.update(f"\0{path.relative_to(DIMOS_DIR.parent)}\0".encode() + path.read_bytes())
     return digest.hexdigest()[:16]
@@ -248,13 +178,10 @@ async def built_js(cache_dir: Path) -> Path:
 
 
 if __name__ == "__main__":
-    found = scan()
-    for missing in found.missing:
-        print(
-            f"no LCM schema: {missing.type_name} ({missing.where}): {missing.reason}",
-            file=sys.stderr,
-        )
+    schemas, missing = scan()
+    for type_name, why in missing.items():
+        print(f"no LCM schema: {type_name}: {why}", file=sys.stderr)
     out = Path(sys.argv[1])
     partial = out.with_suffix(".partial")
-    partial.write_text(bundle_js(generate_ts(found)))
+    partial.write_text(bundle_js(generate_ts(schemas, missing)))
     partial.replace(out)
